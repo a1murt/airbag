@@ -67,6 +67,7 @@ enum PreviewRenderer {
                                                     snapshotLabel: "Before `rm -rf src/legacy`", snapshotTime: now - 600_000, paths: [], liveAgents: 1)
             render(RestoreWindow().environmentObject(model), size: NSSize(width: 520, height: 520), to: dir + "/restore.png", settle: 1.5)
         }
+        render(OnboardingView().environmentObject(model), size: NSSize(width: 560, height: 480), to: dir + "/welcome.png", settle: 1.5)
         try? FileManager.default.removeItem(atPath: work)
         print("rendered previews into \(dir)")
     }

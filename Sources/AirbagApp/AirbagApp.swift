@@ -11,10 +11,14 @@ struct AirbagApp: App {
         MenuBarExtra {
             PopoverView().environmentObject(model)
         } label: {
-            Image(nsImage: MenuBarIcon.image(model.iconState, badge: model.badge))
-                .accessibilityLabel(Text("Airbag"))
+            MenuBarLabel(model: model)
         }
         .menuBarExtraStyle(.window)
+
+        Window(Text("Welcome to Airbag"), id: "welcome") {
+            OnboardingView().environmentObject(model)
+        }
+        .windowResizability(.contentSize)
 
         Window(Text("Airbag"), id: "main") {
             MainWindow().environmentObject(model)

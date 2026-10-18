@@ -139,9 +139,10 @@ final class AppModel: ObservableObject {
             wakeServer = server
         } catch { Log.shared.warn("wake socket: \(error)") }
         hourly = Timer.scheduledTimer(withTimeInterval: 3600, repeats: true) { [weak self] _ in Task { @MainActor in self?.runRetention() } }
+        // Stores created while the app was busy (CLI, another user session) show up within a minute.
+        Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in Task { @MainActor in self?.refreshProjects(); self?.refreshGuard() } }
         work.asyncAfter(deadline: .now() + 30) { [weak self] in Task { @MainActor in self?.runRetention() } }
         scheduleRadar()
-        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
     }
 
     func stop() {
@@ -385,6 +386,8 @@ final class AppModel: ObservableObject {
     }
 
     private func notifyOrphans(_ list: [RadarProcess]) {
+        // Ask for permission at the first event that warrants a notification, not at launch (spec §8).
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
         let bySession = Dictionary(grouping: list) { $0.attribution?.agentSessionID ?? "?" }
         for (sid, procs) in bySession where !notifiedSessions.contains(sid) {
             notifiedSessions.insert(sid)
@@ -505,6 +508,64 @@ final class AppModel: ObservableObject {
             do { if newValue { try SMAppService.mainApp.register() } else { try SMAppService.mainApp.unregister() } }
             catch { lastMessage = String(describing: error) }
             objectWillChange.send()
+        }
+    }
+
+    // MARK: onboarding
+
+    var needsOnboarding: Bool {
+        guard !demo, !frozen, let reg = registry else { return false }
+        return !reg.setting("onboarding.done", default: false)
+    }
+
+    func finishOnboarding() {
+        try? registry?.setSetting("onboarding.done", true)
+        refreshAll()
+    }
+
+    /// Project roots from recent Claude Code and Codex transcripts (their `cwd`), newest first.
+    func suggestedProjects() async -> [String] {
+        let paths = self.paths
+        return await withCheckedContinuation { cont in
+            work.async {
+                let fm = FileManager.default
+                let home = NSHomeDirectory()
+                var found: [(String, Date)] = []
+                func scan(_ dir: String, depth: Int) {
+                    guard depth >= 0, let names = try? fm.contentsOfDirectory(atPath: dir) else { return }
+                    for n in names {
+                        let p = dir + "/" + n
+                        var isDir: ObjCBool = false
+                        guard fm.fileExists(atPath: p, isDirectory: &isDir) else { continue }
+                        if isDir.boolValue { scan(p, depth: depth - 1); continue }
+                        guard n.hasSuffix(".jsonl"), let attrs = try? fm.attributesOfItem(atPath: p), let m = attrs[.modificationDate] as? Date,
+                              m > Date().addingTimeInterval(-30 * 86400) else { continue }
+                        guard let h = FileHandle(forReadingAtPath: p) else { continue }
+                        let head = String(decoding: h.readData(ofLength: 64 * 1024), as: UTF8.self)
+                        try? h.close()
+                        if let r = head.range(of: #""cwd"\s*:\s*"([^"]+)""#, options: .regularExpression) {
+                            let match = String(head[r])
+                            if let q = match.range(of: #":\s*""#, options: .regularExpression) {
+                                let cwd = String(match[q.upperBound...].dropLast())
+                                found.append((cwd, m))
+                            }
+                        }
+                    }
+                }
+                scan(home + "/.claude/projects", depth: 1)
+                scan(home + "/.codex/sessions", depth: 3)
+                var seen = Set<String>()
+                var out: [String] = []
+                for (cwd, _) in found.sorted(by: { $0.1 > $1.1 }) {
+                    guard fm.fileExists(atPath: cwd) else { continue }
+                    let root = RootResolver.resolve(cwd: cwd)
+                    guard (try? SnapshotStore.validateRoot(root, paths: paths)) != nil, !root.contains("/.claude/worktrees/"),
+                          !root.contains("/.codex/worktrees/"), !root.contains("/scratch-workspaces/"), seen.insert(root).inserted else { continue }
+                    out.append(root)
+                    if out.count >= 12 { break }
+                }
+                cont.resume(returning: out)
+            }
         }
     }
 

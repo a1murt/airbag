@@ -19,6 +19,7 @@ enum SnapshotCommands {
         let trigger = a.has("initial") ? .initial : (a.value("trigger").flatMap(SnapshotTrigger.init(rawValue:)) ?? .manual)
         let outcome = store.snapshot(SnapshotRequest(trigger: trigger, label: a.value("label"), sessionKey: a.value("session"),
                                                      lockWaitMs: 10_000, force: a.has("force")))
+        if case .created = outcome { WakeSocket.notify(paths: .resolve(), message: ["op": "snapshot", "root": store.root]) }
         switch outcome {
         case .created(let s, let stats):
             if a.has("json") { Out.encodable(["snapshot": AnyEncodable(s), "stats": AnyEncodable(stats)]) } else {
