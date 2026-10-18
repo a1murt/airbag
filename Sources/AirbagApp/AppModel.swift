@@ -242,7 +242,7 @@ final class AppModel: ObservableObject {
     private func startWatching() {
         watcher?.stop()
         guard !watchedRoots.isEmpty, pausedUntil == nil else { watcher = nil; return }
-        let w = FileWatcher(roots: watchedRoots, quietSeconds: 3, maxSeconds: 30, queue: snapshotQueue) { [weak self] root in
+        let w = FileWatcher(roots: watchedRoots, quietSeconds: 3, maxSeconds: 30, queue: snapshotQueue) { [weak self] root, _ in
             self?.snapshotSync(root: root, trigger: .fsevents, label: nil)
         }
         w.start()

@@ -128,13 +128,16 @@ import Testing
         let printed = Box<[String]>([])
         let slot = OutputSlot(initial: "{}") { s in printed.with { $0.append(s) } }
         var cfg = HookBridgeConfig(paths: h.paths, environment: [:])
-        cfg.spawnBackground = false; cfg.home = h.userHome; cfg.lockWaitMs = 1500
+        cfg.spawnBackground = false; cfg.home = h.userHome; cfg.lockWaitMs = 4000
         let data = try JSONSerialization.data(withJSONObject: h.claudePre("git reset --hard"))
         let bridge = HookBridge(config: cfg)
         let done = Box(false)
         DispatchQueue.global().async { _ = bridge.handle(payload: data, declared: .claudeCode, eventHint: nil, slot: slot); done.with { $0 = true } }
-        try await Task.sleep(nanoseconds: 600_000_000) // the snapshot is waiting for the lock
+        // Wait (by condition, not by clock) until the bridge has prepared its fallback; the snapshot then waits for the lock.
+        for _ in 0..<100 where slot.decidedText == "{}" && !done.with({ $0 }) { try await Task.sleep(nanoseconds: 50_000_000) }
+        #expect(!done.with { $0 }, "the hook must still be waiting for the store lock")
         #expect(slot.decidedText?.contains("\"ask\"") == true, "watchdog fallback was \(slot.decidedText ?? "nil")")
+        store.lock.release()
         while !done.with({ $0 }) { try await Task.sleep(nanoseconds: 50_000_000) }
         #expect(printed.with { $0 }.count == 1)
     }
