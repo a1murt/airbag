@@ -41,7 +41,7 @@ checks listed. Status markers: ☐ todo, ◐ in progress, ☑ done.
   is ready but blocked: the Claude CLI on this Mac is not logged in (only the desktop app is); run it after
   `claude /login`.
 
-## M5 ☐ Process radar
+## M5 ☑ Process radar
 - libproc scanner, `KERN_PROCARGS2` reader, attribution ladder, orphan state, stopper, `airbag ports`, `airbag stop`.
 - Accept: fake agent tree test (server spawned under a fake session, agent exits, server is reported orphan with
   the session); full poll < 3 ms; stop never touches protected processes.
