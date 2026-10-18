@@ -68,3 +68,17 @@ it stable (Codex trust hashes the command string).
 
 **ADR-020 User-scope hook configs only.** Project-level configs trigger trust prompts and get committed by
 accident; Airbag never writes them.
+
+**ADR-021 Pause keeps hard blocks.** Pausing skips snapshots and questions, but catastrophic commands stay blocked:
+blocking costs nothing and is the one thing a user never wants to lose by accident.
+
+**ADR-022 Paths are stored in NFC.** Swift compares strings by canonical equivalence, SQLite by bytes; APFS/HFS+
+resolve both forms to one file. Normalising every key to NFC keeps the three in agreement (independent review, blocker).
+
+**ADR-023 Timeline actions are about the change, not the snapshot id.** A card lists what changed *into* a snapshot;
+"Undo these changes" restores those paths to the previous snapshot, "Restore project to this moment" restores to
+the card's own snapshot.
+
+**ADR-024 The reply is printed before persistence.** The agent waits only for the decision and the snapshot; registry
+writes, spool ingestion and the app ping follow. A watchdog timeout prints the conservative reply prepared before
+the snapshot started, never a bare allow.

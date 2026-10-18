@@ -113,9 +113,11 @@ enum SnapshotCommands {
             stores = [try openStore(a)]
         }
         var total = PruneReport()
+        let registry = try? Registry(paths: .resolve(), role: .cli)
         for s in stores {
             let r = try s.prune(policy: policy, dryRun: a.has("dry-run"))
             total.deletedSnapshots += r.deletedSnapshots; total.deletedObjects += r.deletedObjects; total.freedBytes += r.freedBytes
+            if !a.has("dry-run") { registry?.reconcileSnapshots(rootID: s.rootID, existing: Set(((try? s.list(limit: 100_000)) ?? []).map(\.id))) }
         }
         if a.has("json") { Out.encodable(total); return 0 }
         print("\(a.has("dry-run") ? "would delete" : "deleted") \(total.deletedSnapshots) snapshot(s), \(total.deletedObjects) object(s), freed \(Out.bytes(total.freedBytes))")

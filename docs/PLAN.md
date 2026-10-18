@@ -57,7 +57,7 @@ checks listed. Status markers: ☐ todo, ◐ in progress, ☑ done.
 - First run: detect agents → preview + one-click hook install → protected projects → done (< 60 s).
 - All user-facing strings EN/RU; app icon and menu bar glyph; VoiceOver labels; empty/error states.
 
-## M8 ◐ Packaging and CI
+## M8 ☑ Packaging and CI
 - Universal build, ad-hoc and Developer ID signing paths, notarization script, zip + DMG, Homebrew cask draft,
   GitHub Actions (CI on PR, release on tag), README, SECURITY.md, CONTRIBUTING.md, LICENSE.
 - Status 2026-10-18: all done and the universal zip/DMG build locally (ad-hoc signed). Remaining, needs the owner:
@@ -65,12 +65,16 @@ checks listed. Status markers: ☐ todo, ◐ in progress, ☑ done.
   repository and a tap for the cask. The release workflow expects secrets `DEVELOPER_ID_P12_BASE64`,
   `DEVELOPER_ID_P12_PASSWORD`, `SIGN_IDENTITY`, `NOTARY_APPLE_ID`, `NOTARY_TEAM_ID`, `NOTARY_APP_PASSWORD`.
 
-## M9 ☐ MVP acceptance (market report readiness criteria)
+## M9 ☑ MVP acceptance (market report readiness criteria)
 - Destructive scripts (`rm -rf` dir, `mv`, `sed -i`, `git checkout -- .`, `git reset --hard`, `git clean -fdx`)
   rolled back from the menu bar without a lost file.
 - 3–5 parallel agent sessions in worktrees: every dev server attributed to its session, including survivors.
 - Idle CPU < 1 %.
 - Independent review pass (correctness + security) with fixes.
+- Status 2026-10-18: destructive-script restores covered by tests and `Scripts/e2e-hooks.py`; 5 parallel sessions in
+  worktrees attributed correctly incl. survivors (`Scripts/acceptance/parallel-sessions.py`); idle app 0 % CPU / 19 MB;
+  independent review found 5 blockers, 22 major, 19 minor issues — all fixed with regression tests
+  (`docs/research/08-independent-review.md`).
 
 ## Deliberately skipped in v1
 Usage/limit counters, "agent is waiting" notifications, orchestration, OAuth, Agent SDK, telemetry, project-level
