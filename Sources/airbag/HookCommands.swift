@@ -132,7 +132,8 @@ enum HookCommands {
         let a = try Args(argv, valueOptions: ["limit"])
         let reg = try Registry(paths: .resolve(), role: .cli)
         let rows = try reg.db.all("""
-        SELECT e.id, e.ts, e.agent, e.kind, coalesce(e.command, ''), coalesce(e.decision, ''), coalesce(e.snapshot_id, ''),
+        SELECT e.id, e.ts, e.agent, e.kind, coalesce(e.command, ''), coalesce(e.decision, ''),
+               CASE WHEN sn.deleted_at IS NULL THEN coalesce(e.snapshot_id, '') ELSE '' END,
                coalesce(sn.root_path, p.root_path, e.cwd, '')
         FROM events e LEFT JOIN snapshots sn ON sn.id = e.snapshot_id LEFT JOIN projects p ON p.id = e.project_id
         WHERE e.kind IN ('pre_shell', 'permission_request', 'pre_edit') ORDER BY e.ts DESC, e.id DESC LIMIT ?
