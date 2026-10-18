@@ -639,6 +639,20 @@ public final class SnapshotStore {
         return report
     }
 
+    /// Preview of `restore(to:scope:)` for the confirmation window.
+    public func planRestore(to id: String, scope: RestoreScope) throws -> RestorePlan {
+        let target = try requireInfo(id)
+        var plan = RestorePlan()
+        plan.complete = target.complete
+        for c in try diff(from: id, to: nil) where isInScope(c.path, scope) {
+            switch c.status {
+            case .added: if target.complete { plan.moveAside.append(c.path) }
+            case .modified, .deleted, .typeChanged: plan.write.append(c.path)
+            }
+        }
+        return plan
+    }
+
     // MARK: retention
 
     public func prune(policy: RetentionPolicy, nowMs: Int64 = Clock.nowMsInt(), dryRun: Bool = false, lockWaitMs: Int = 5000) throws -> PruneReport {

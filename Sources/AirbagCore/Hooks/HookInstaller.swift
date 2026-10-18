@@ -22,6 +22,11 @@ public struct HookInstaller {
         /// Airbag entries pointing at another binary (the app moved or an old version is referenced).
         public let staleCommand: Bool
         public let note: String?
+
+        public init(agent: AgentKind, detected: Bool, configPath: String, installed: Bool, current: Bool, staleCommand: Bool, note: String?) {
+            self.agent = agent; self.detected = detected; self.configPath = configPath; self.installed = installed
+            self.current = current; self.staleCommand = staleCommand; self.note = note
+        }
     }
 
     public struct Change: Sendable {

@@ -175,8 +175,10 @@ public struct HookBridge {
         switch env.kind {
         case .preShell, .permissionRequest:
             guard let command = env.command, !command.isEmpty else { reply = .allow; break }
+            let disabled = Set(registry.flatMap { $0.setting("rules.disabled", as: [String].self) } ?? [])
             let context = GuardContext(cwd: cwd, home: config.home, roots: roots, environment: config.environment,
-                                       airbagHome: FileSystem.canonicalPath(config.paths.home.path) ?? config.paths.home.path)
+                                       airbagHome: FileSystem.canonicalPath(config.paths.home.path) ?? config.paths.home.path,
+                                       disabledRules: disabled)
             var verdict = RuleEngine().evaluate(command, context: context)
             timing["rules"] = Clock.elapsedMs(since: t0)
             // Paused by the user: blocks stay (they cost nothing), snapshots and questions are skipped.

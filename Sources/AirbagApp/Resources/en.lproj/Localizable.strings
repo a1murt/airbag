@@ -1,5 +1,1 @@
-/* Menu bar */
-"menubar.accessibility" = "Airbag";
-"popover.title" = "Airbag";
-"popover.subtitle" = "Safety net for AI coding agents";
-"popover.quit" = "Quit Airbag";
+/* English strings are the keys themselves; only plural rules live in Localizable.stringsdict. */

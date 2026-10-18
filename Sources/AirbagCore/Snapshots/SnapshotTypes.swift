@@ -149,3 +149,12 @@ public struct StoreLocation: Sendable, Equatable, Codable {
     public let root: String
     public let rootExists: Bool
 }
+
+/// What a restore would do, computed against the live tree without changing anything.
+public struct RestorePlan: Sendable, Equatable {
+    public var write: [String] = []      // files that will be put back or overwritten
+    public var moveAside: [String] = []  // files created after the snapshot (moved into the store, not deleted)
+    public var complete = true           // the target snapshot is complete (otherwise nothing is moved aside)
+    public init() {}
+    public var isEmpty: Bool { write.isEmpty && moveAside.isEmpty }
+}
