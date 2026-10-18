@@ -159,7 +159,7 @@ func decode(_ s: String?) -> [String: Any] {
         let a = h.run(.claudeCode, p)
         let b = h.run(.claudeCode, p)
         #expect(a.finalDecision == "allow" && b.finalDecision == "allow")
-        #expect(b.snapshotSkipped == "duplicate_route")
+        #expect(a.snapshot != nil && b.snapshot == nil) // the second route replays the first decision
         #expect(try h.registry().db.scalarInt("SELECT count(*) FROM events WHERE kind = 'pre_shell'") == 1)
     }
 

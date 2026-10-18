@@ -2,6 +2,22 @@ import Foundation
 
 /// Installs, removes and inspects Airbag's hooks in each agent's user-level configuration (ADR-020: never project
 /// files). Edits keep every foreign key and handler and the original key order; a backup is written first.
+public enum HookInstallError: Error, CustomStringConvertible, Sendable {
+    case hasComments(String)
+    case unexpectedShape(String, String)
+    case readOnly(String)
+    case unreadable(String, String)
+
+    public var description: String {
+        switch self {
+        case .hasComments(let p): return "\(p) contains comments, which an automatic edit would remove. Add the Airbag entries by hand (see the preview) or remove the comments."
+        case .unexpectedShape(let p, let what): return "\(p): \(what). Fix the file by hand; Airbag did not change it."
+        case .readOnly(let p): return "\(p) is read-only (managed by a dotfile tool such as home-manager?). Add the Airbag entries in its source instead."
+        case .unreadable(let p, let why): return "cannot read \(p): \(why)"
+        }
+    }
+}
+
 public struct HookInstaller {
     public let home: String
     /// Absolute path of the `airbag` CLI written into configs. Keep it stable: Codex trusts hooks by command hash.
@@ -70,8 +86,10 @@ public struct HookInstaller {
 
     // MARK: desired entries
 
+    /// The binary path for shell-form hooks, quoted unless it only contains characters no shell treats specially.
     var shellCommand: String {
-        command.contains(" ") || command.contains("'") ? "'" + command.replacingOccurrences(of: "'", with: "'\\''") + "'" : command
+        if command.range(of: #"^[A-Za-z0-9_./+-]+$"#, options: .regularExpression) != nil { return command }
+        return "'" + command.replacingOccurrences(of: "'", with: "'\\''") + "'"
     }
 
     func cmd(_ agent: AgentKind, _ event: String?) -> String {
@@ -204,13 +222,65 @@ public struct HookInstaller {
 
     // MARK: read / plan / write
 
-    func load(_ path: String) throws -> (text: String?, json: OrderedJSON) {
-        guard let data = FileManager.default.contents(atPath: path) else { return (nil, .object([])) }
+    func load(_ path: String, forWriting: Bool = false) throws -> (text: String?, json: OrderedJSON) {
+        guard FileManager.default.fileExists(atPath: path) else { return (nil, .object([])) }
+        guard let data = FileManager.default.contents(atPath: path) else { throw HookInstallError.unreadable(path, "permission denied") }
         let text = String(decoding: data, as: UTF8.self)
-        if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return (text, .object([])) }
-        let json = try OrderedJSON.parse(text)
-        guard json.isObject else { throw SnapshotError.io("\(path) is not a JSON object") }
-        return (text, json)
+        if text.trimmingCharacters(in: .whitespacesAndNewlines.union(CharacterSet(charactersIn: "\u{FEFF}"))).isEmpty { return (text, .object([])) }
+        let parsed = try OrderedJSON.parseReportingComments(text)
+        guard parsed.value.isObject else { throw HookInstallError.unexpectedShape(path, "the top level is not a JSON object") }
+        if forWriting && parsed.hadComments { throw HookInstallError.hasComments(path) }
+        if let hooks = parsed.value["hooks"] {
+            guard case .object(let events) = hooks else { throw HookInstallError.unexpectedShape(path, "\"hooks\" is not an object") }
+            for (event, v) in events where v.arrayValue == nil { throw HookInstallError.unexpectedShape(path, "\"hooks.\(event)\" is not a list") }
+        }
+        return (text, parsed.value)
+    }
+
+    /// Merges Airbag's entries in place: an existing Airbag group keeps its position (Codex trusts hooks by position),
+    /// stale Airbag handlers are removed, missing ones are appended. Foreign handlers are never touched.
+    func merge(_ hooks: OrderedJSON, desired: [Entry], nestedGroups: Bool) -> OrderedJSON {
+        guard case .object(let events) = hooks else { return hooks }
+        var pending = desired
+        var out: [(String, OrderedJSON)] = []
+        func take(_ event: String, matcher: String?) -> OrderedJSON? {
+            guard let i = pending.firstIndex(where: { $0.event == event && (nestedGroups ? $0.group["matcher"]?.stringValue == matcher : true) }) else { return nil }
+            return pending.remove(at: i).group
+        }
+        for (event, value) in events {
+            guard case .array(let items) = value else { out.append((event, value)); continue }
+            var kept: [OrderedJSON] = []
+            for item in items {
+                if nestedGroups, case .array(let handlers)? = item["hooks"] {
+                    guard handlers.contains(where: Self.isAirbagHandler) else { kept.append(item); continue }
+                    let others = handlers.filter { !Self.isAirbagHandler($0) }
+                    if let replacement = take(event, matcher: item["matcher"]?.stringValue) {
+                        var g = item
+                        let mine = replacement["hooks"]?.arrayValue ?? []
+                        // Airbag's handler goes where the first Airbag handler was.
+                        let firstMine = handlers.firstIndex(where: Self.isAirbagHandler) ?? handlers.count
+                        var merged = others
+                        merged.insert(contentsOf: mine, at: min(firstMine, merged.count))
+                        g["hooks"] = .array(merged)
+                        kept.append(g)
+                    } else if !others.isEmpty {
+                        var g = item; g["hooks"] = .array(others); kept.append(g)
+                    }
+                } else if !nestedGroups && Self.isAirbagHandler(item) {
+                    if let replacement = take(event, matcher: nil) { kept.append(replacement) }
+                } else {
+                    kept.append(item)
+                }
+            }
+            for e in pending where e.event == event { kept.append(e.group) }
+            pending.removeAll { $0.event == event }
+            if !kept.isEmpty { out.append((event, .array(kept))) }
+        }
+        for e in pending {
+            if let i = out.firstIndex(where: { $0.0 == e.event }), case .array(var a) = out[i].1 { a.append(e.group); out[i].1 = .array(a) }
+            else { out.append((e.event, .array([e.group]))) }
+        }
+        return .object(out)
     }
 
     /// The file content after installing (or removing, with `install: false`) Airbag's hooks.
@@ -227,27 +297,17 @@ public struct HookInstaller {
             let after = OrderedJSON.object([("version", .number("1")), ("hooks", .object(hooks))]).serialized()
             return Change(agent: agent, path: path, before: before, after: after, backup: nil)
         }
-        let loaded = try load(path)
+        let loaded = try load(path, forWriting: true)
         let before = loaded.text
         var json = loaded.json
-        let nestedGroups = usesNestedGroups(agent)
-        let (cleaned, _) = strip(json["hooks"] ?? .object([]), nestedGroups: nestedGroups)
-        var hooks = cleaned
-        if install {
-            for (event, group) in desired(agent, strict: strict) {
-                var arr = hooks[event]?.arrayValue ?? []
-                arr.append(group)
-                hooks[event] = .array(arr)
-            }
-        }
-        if case .object(let kv) = hooks, kv.isEmpty { json["hooks"] = nil } else { json["hooks"] = hooks }
+        let merged = merge(json["hooks"] ?? .object([]), desired: install ? desired(agent, strict: strict) : [], nestedGroups: usesNestedGroups(agent))
+        if case .object(let kv) = merged, kv.isEmpty { json["hooks"] = nil } else { json["hooks"] = merged }
         if agent == .cursor && install && json["version"] == nil {
             if case .object(let kv) = json { json = .object([("version", .number("1"))] + kv) }
         }
         if before == nil && !install { return Change(agent: agent, path: path, before: nil, after: nil, backup: nil) }
-        let after = json.serialized()
         if let b = before, (try? OrderedJSON.parse(b)) == json { return Change(agent: agent, path: path, before: b, after: b, backup: nil) }
-        return Change(agent: agent, path: path, before: before, after: after, backup: nil)
+        return Change(agent: agent, path: path, before: before, after: json.serialized(), backup: nil)
     }
 
     @discardableResult
@@ -277,11 +337,14 @@ public struct HookInstaller {
 
     func apply(_ change: Change, backupDirectory: String?) throws -> Change {
         guard change.changed, let after = change.after else { return change }
+        // Dotfile managers (stow, chezmoi, home-manager) symlink settings files: edit the file the link points at.
+        let target = FileSystem.canonicalPath(change.path) ?? change.path
+        if FileManager.default.fileExists(atPath: target) && access(target, W_OK) != 0 { throw HookInstallError.readOnly(change.path) }
         var backup: String?
         if let before = change.before { backup = try backupFile(change.path, content: before, agent: change.agent, backupDirectory: backupDirectory) }
-        let dir = (change.path as NSString).deletingLastPathComponent
+        let dir = (target as NSString).deletingLastPathComponent
         if !FileManager.default.fileExists(atPath: dir) { try FileSystem.ensureDirectory(dir, mode: 0o755) }
-        try FileSystem.writeAtomically(Data(after.utf8), to: change.path, mode: change.before == nil ? 0o600 : nil)
+        try FileSystem.writeAtomically(Data(after.utf8), to: target, mode: change.before == nil ? 0o600 : nil)
         return Change(agent: change.agent, path: change.path, before: change.before, after: after, backup: backup)
     }
 

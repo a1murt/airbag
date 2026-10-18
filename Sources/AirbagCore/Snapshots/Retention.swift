@@ -5,7 +5,7 @@ public enum Retention {
     /// their size. Stores whose project folder is gone are pruned too (their snapshots can still restore it).
     @discardableResult
     public static func run(paths: AirbagPaths = .resolve(), policy: RetentionPolicy = RetentionPolicy(),
-                           globalBudgetBytes: Int64 = 5 << 30, nowMs: Int64 = Clock.nowMsInt()) -> PruneReport {
+                           globalBudgetBytes: Int64 = 5 << 30, nowMs: Int64 = Clock.nowMsInt(), registry: Registry? = nil) -> PruneReport {
         var total = PruneReport()
         var stores: [SnapshotStore] = []
         for loc in SnapshotStore.allStores(paths: paths) {
@@ -22,6 +22,9 @@ public enum Retention {
                 if let r = try? s.prune(policy: p, nowMs: nowMs) { total.merge(r) }
             }
         }
+        if let registry {
+            for s in stores { registry.reconcileSnapshots(rootID: s.rootID, existing: Set(((try? s.list(limit: 100_000)) ?? []).map(\.id))) }
+        }
         return total
     }
 }
@@ -37,6 +40,7 @@ extension SnapshotStore {
     /// Opens a store from its location, also when the project folder no longer exists (for pruning and for
     /// restoring a deleted project, which recreates the folder).
     public static func openLocation(_ loc: StoreLocation, paths: AirbagPaths = .resolve()) throws -> SnapshotStore {
-        try open(root: loc.root, paths: paths, create: false, recreateMissingRoot: !loc.rootExists)
+        // Never recreates a deleted project folder; `restore` does that when the user asks for it.
+        try open(root: loc.root, paths: paths, create: false, allowMissingRoot: !loc.rootExists)
     }
 }

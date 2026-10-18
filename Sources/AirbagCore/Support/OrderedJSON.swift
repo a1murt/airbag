@@ -58,24 +58,34 @@ public indirect enum OrderedJSON: Equatable, Sendable {
         public var description: String { "JSON parse error at byte \(offset): \(message)" } }
 
     public static func parse(_ text: String) throws -> OrderedJSON {
-        var p = Parser(bytes: Array(text.utf8))
+        try parseReportingComments(text).value
+    }
+
+    /// Parses JSON (tolerating a UTF-8 BOM, comments and trailing commas) and says whether comments were present —
+    /// a rewrite would drop them.
+    public static func parseReportingComments(_ text: String) throws -> (value: OrderedJSON, hadComments: Bool) {
+        var bytes = Array(text.utf8)
+        if bytes.starts(with: [0xEF, 0xBB, 0xBF]) { bytes.removeFirst(3) }
+        var p = Parser(bytes: bytes)
         p.skipWS()
         let v = try p.value()
         p.skipWS()
         guard p.i == p.bytes.count else { throw ParseError(offset: p.i, message: "trailing characters") }
-        return v
+        return (v, p.sawComments)
     }
 
     struct Parser {
         let bytes: [UInt8]
         var i = 0
+        var sawComments = false
         mutating func skipWS() {
             while i < bytes.count {
                 let c = bytes[i]
                 if c == 0x20 || c == 0x0A || c == 0x0D || c == 0x09 { i += 1; continue }
                 // Tolerate // and /* */ comments (some users keep them in settings files).
-                if c == 0x2F, i + 1 < bytes.count, bytes[i + 1] == 0x2F { while i < bytes.count && bytes[i] != 0x0A { i += 1 }; continue }
+                if c == 0x2F, i + 1 < bytes.count, bytes[i + 1] == 0x2F { sawComments = true; while i < bytes.count && bytes[i] != 0x0A { i += 1 }; continue }
                 if c == 0x2F, i + 1 < bytes.count, bytes[i + 1] == 0x2A {
+                    sawComments = true
                     i += 2
                     while i + 1 < bytes.count && !(bytes[i] == 0x2A && bytes[i + 1] == 0x2F) { i += 1 }
                     i += 2; continue

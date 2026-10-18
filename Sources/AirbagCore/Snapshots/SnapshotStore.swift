@@ -57,8 +57,16 @@ public final class SnapshotStore {
     }
 
     public static func open(root: String, paths: AirbagPaths = .resolve(), exclusions: Exclusions? = nil,
-                            create: Bool = true, recreateMissingRoot: Bool = false) throws -> SnapshotStore {
+                            create: Bool = true, recreateMissingRoot: Bool = false, allowMissingRoot: Bool = false,
+                            busyTimeoutMs: Int32 = 5000) throws -> SnapshotStore {
         let canonical: String
+        if FileSystem.canonicalPath(root) == nil, allowMissingRoot, !recreateMissingRoot {
+            // The project folder is gone; open its store as it is (for listing, pruning, diffs). Nothing is created.
+            let resolved = FileSystem.resolvedPath(root)
+            let dir = storeDirectory(forCanonicalRoot: resolved, paths: paths)
+            guard FileManager.default.fileExists(atPath: dir + "/manifest.sqlite") else { throw SnapshotError.rootMissing(root) }
+            return try SnapshotStore(root: resolved, directory: dir, exclusions: exclusions ?? .standard, busyTimeoutMs: busyTimeoutMs)
+        }
         if FileSystem.canonicalPath(root) == nil, recreateMissingRoot {
             // The whole project directory is gone (e.g. `rm -rf project`). If we hold a store for it, recreate the
             // directory so it can be restored.
@@ -76,7 +84,7 @@ public final class SnapshotStore {
         let manifest = dir + "/manifest.sqlite"
         if !create && !FileManager.default.fileExists(atPath: manifest) { throw SnapshotError.notFound("store for \(canonical)") }
         for d in [dir, dir + "/objects", dir + "/tmp", dir + "/aside"] { try FileSystem.ensureDirectory(d, mode: 0o700) }
-        return try SnapshotStore(root: canonical, directory: dir, exclusions: exclusions ?? .standard)
+        return try SnapshotStore(root: canonical, directory: dir, exclusions: exclusions ?? .standard, busyTimeoutMs: busyTimeoutMs)
     }
 
     /// Every store on disk with the root it belongs to (read from store.json).
@@ -93,7 +101,7 @@ public final class SnapshotStore {
         }
     }
 
-    private init(root: String, directory: String, exclusions: Exclusions) throws {
+    private init(root: String, directory: String, exclusions: Exclusions, busyTimeoutMs: Int32 = 5000) throws {
         self.root = root
         self.rootID = SnapshotStore.rootID(for: root)
         self.directory = directory
@@ -103,7 +111,7 @@ public final class SnapshotStore {
         if !same { ex.maxFileBytes = min(ex.maxFileBytes, 20 << 20) }
         self.exclusions = ex
         self.lock = StoreLock(path: directory + "/lock")
-        self.db = try SQLiteConnection(path: directory + "/manifest.sqlite", busyTimeoutMs: 5000)
+        self.db = try SQLiteConnection(path: directory + "/manifest.sqlite", busyTimeoutMs: busyTimeoutMs)
         try db.execute("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA temp_store=MEMORY;")
         try db.execute(Manifest.ddl)
         if (try db.scalarInt("PRAGMA application_id")) != Int64(Manifest.applicationID) {
@@ -156,15 +164,25 @@ public final class SnapshotStore {
     }
 
     func loadCurrent() throws -> [String: CurrentRow] {
+        try loadCurrentWithStrays().rows
+    }
+
+    /// `current` keyed by NFC path, plus raw rows stored under another normalisation form (older stores, or a rename
+    /// between forms) that must be dropped from the table.
+    func loadCurrentWithStrays() throws -> (rows: [String: CurrentRow], strays: [String]) {
         var out: [String: CurrentRow] = [:]
+        var strays: [String] = []
         try db.query("""
         SELECT c.path, c.size, c.mtime_ns, c.ctime_ns, c.ino, c.mode, i.id, i.kind, i.size, i.mode, i.hash, i.target
         FROM current c JOIN items i ON i.id = c.item
         """) { r in
+            let raw = r.text(0)
+            let path = raw.precomposedStringWithCanonicalMapping
+            if Array(raw.utf8) != Array(path.utf8) { strays.append(raw) }
             let key = StatKey(size: r.int(1), mtimeNs: r.int(2), ctimeNs: r.int(3), ino: r.int(4), mode: r.int(5))
-            out[r.text(0)] = CurrentRow(item: Self.item(from: r, offset: 6), key: key)
+            out[path] = CurrentRow(item: Self.item(from: r, offset: 6), key: key)
         }
-        return out
+        return (out, strays)
     }
 
     /// Full state at a snapshot: path → item.
@@ -174,7 +192,7 @@ public final class SnapshotStore {
         SELECT c.path, i.id, i.kind, i.size, i.mode, i.hash, i.target
         FROM changes c JOIN items i ON i.id = c.item
         WHERE c.seq = (SELECT max(seq) FROM changes WHERE path = c.path AND seq <= ?1)
-        """, [seq]) { r in out[r.text(0)] = Self.item(from: r, offset: 1) }
+        """, [seq]) { r in out[r.text(0).precomposedStringWithCanonicalMapping] = Self.item(from: r, offset: 1) }
         return out
     }
 
@@ -229,9 +247,14 @@ public final class SnapshotStore {
     func snapshotLocked(_ request: SnapshotRequest, hints: [String: Hint]) throws -> SnapshotOutcome {
         let start = Clock.monotonicNs()
         cleanTmp()
+        var isDir: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: root, isDirectory: &isDir), isDir.boolValue else {
+            return .failed("project folder \(root) is missing")
+        }
         var ex = exclusions
         if let avail = FileSystem.availableBytes(at: directory) {
-            if avail < (1 << 30) { return .lowDisk(availableBytes: avail) }
+            let floor: Int64 = request.ignoreLowDiskFloor ? 100 << 20 : 1 << 30
+            if avail < floor { return .lowDisk(availableBytes: avail) }
             let total = FileSystem.totalBytes(at: directory) ?? 0
             if avail < max(2 << 30, total / 50) {
                 ex.maxFileBytes = min(ex.maxFileBytes, 1 << 20)
@@ -239,8 +262,11 @@ public final class SnapshotStore {
             }
         }
         var stats = SnapshotStats()
-        var current = try loadCurrent()
+        var (current, strayRows) = try loadCurrentWithStrays()
         let walk = Walker.walk(root: root, exclusions: ex, deadlineNs: request.deadlineNs)
+        // Paths that exist but were not captured this time: never recorded as deleted.
+        var uncaptured = Set(walk.skippedLarge + walk.unreadableFiles)
+        let unreadablePrefixes = walk.unreadableDirs.map { $0 + "/" }
         stats.walked = walk.entries.count
         stats.skippedLarge = walk.skippedLarge.count
         stats.errors = walk.errors
@@ -287,17 +313,24 @@ public final class SnapshotStore {
             }
             // Regular file: clone (or copy) straight into the object store, then hash the captured bytes, which
             // cannot change under us. A crash before commit leaves an object without a row; prune sweeps it.
-            let id = newObjectID()
-            let dest = objectPath(id)
-            let bucket = (dest as NSString).deletingLastPathComponent
-            if !knownBuckets.contains(bucket) {
-                if mkdir(bucket, 0o700) != 0 && errno != EEXIST { stats.errors += 1; continue }
-                knownBuckets.insert(bucket)
-            }
-            if !capture(abs, to: dest) {
-                let e = errno
+            var id = newObjectID()
+            var dest = objectPath(id)
+            var captured = false
+            var captureErrno: Int32 = 0
+            for _ in 0..<4 {
+                let bucket = (dest as NSString).deletingLastPathComponent
+                if !knownBuckets.contains(bucket) {
+                    if mkdir(bucket, 0o700) != 0 && errno != EEXIST { captureErrno = errno; break }
+                    knownBuckets.insert(bucket)
+                }
+                if capture(abs, to: dest) { captured = true; break }
+                captureErrno = errno
+                if captureErrno == EEXIST { id = newObjectID(); dest = objectPath(id); continue } // never touch an existing object
                 unlink(dest)
-                if e == ENOENT || e == ENOTDIR { seen.remove(path) } else { stats.errors += 1 }
+                break
+            }
+            if !captured {
+                if captureErrno == ENOENT || captureErrno == ENOTDIR { seen.remove(path) } else { stats.errors += 1; uncaptured.insert(path) }
                 continue
             }
             var st = stat()
@@ -335,17 +368,29 @@ public final class SnapshotStore {
             current[path] = CurrentRow(item: item, key: entry.key)
         }
 
-        let complete = !reachedDeadline && walk.complete
+        let walkComplete = !reachedDeadline && walk.complete
         var deletes: [String] = []
-        if complete {
+        if walkComplete {
             for path in current.keys where !seen.contains(path) {
+                // Present but unreadable, over the size cap or not capturable: unknown, not deleted.
+                if uncaptured.contains(path) || unreadablePrefixes.contains(where: { path.hasPrefix($0) }) { continue }
                 deletes.append(path)
                 changeRows.append((path, nil))
             }
             stats.tombstones = deletes.count
         }
         for p in deletes { current.removeValue(forKey: p) }
+        // A snapshot that missed something cannot be used to decide which files did not exist at that moment.
+        let complete = walkComplete && walk.unreadableDirs.isEmpty && !uncaptured.contains(where: { p in !walk.skippedLarge.contains(p) })
 
+        // Rows stored under another normalisation form are rewritten under their NFC key.
+        if !strayRows.isEmpty {
+            let upserted = Set(upserts.map(\.0))
+            for raw in strayRows {
+                let nfc = raw.precomposedStringWithCanonicalMapping
+                if !upserted.contains(nfc), let cur = current[nfc] { upserts.append((nfc, cur.item.id, cur.key)) }
+            }
+        }
         let hasChanges = !changeRows.isEmpty
         let createdID = ULID.make()
         var created: SnapshotInfo?
@@ -363,6 +408,7 @@ public final class SnapshotStore {
                 """, [path, itemID, key.size, key.mtimeNs, key.ctimeNs, key.ino, key.mode])
             }
             for p in deletes { try db.run("DELETE FROM current WHERE path = ?", [p]) }
+            for raw in strayRows { try db.run("DELETE FROM current WHERE path = ?", [raw]) }
             guard hasChanges || request.force else { return }
             let seq = (try db.scalarInt("SELECT max(seq) FROM snapshots") ?? 0) + 1
             let now = Clock.nowMsInt()
@@ -464,7 +510,8 @@ public final class SnapshotStore {
     }
 
     /// Line diff of one file between two snapshots (or snapshot → live file).
-    public func fileDiff(path: String, from: String, to: String?) throws -> TextDiff {
+    public func fileDiff(path rawPath: String, from: String, to: String?) throws -> TextDiff {
+        let path = rawPath.precomposedStringWithCanonicalMapping
         let a = try requireInfo(from)
         let oldItem = try state(of: path, atSeq: a.seq)
         let oldData = oldItem.flatMap { readItem($0) }
@@ -539,20 +586,31 @@ public final class SnapshotStore {
     }
 
     /// Restores the given scope to the state of snapshot `id`. Never deletes: anything in the way is moved into
-    /// the store's aside directory. A forced pre-restore snapshot is the undo point.
-    public func restore(to id: String, scope: RestoreScope, lockWaitMs: Int = 5000) throws -> RestoreReport {
+    /// the store's aside directory. A forced pre-restore snapshot is the undo point. Never follows a symlink out of
+    /// the root. For an incomplete snapshot only the files it captured are written and nothing is moved aside.
+    public func restore(to id: String, scope requested: RestoreScope, lockWaitMs: Int = 5000) throws -> RestoreReport {
         guard lock.acquire(waitMs: lockWaitMs) else { throw SnapshotError.busy }
         defer { lock.release() }
         let target = try requireInfo(id)
+        let scope = normalized(requested)
         var report = RestoreReport()
+        // A deleted project folder is recreated so it can be filled again.
+        var isDir: ObjCBool = false
+        if !FileManager.default.fileExists(atPath: root, isDirectory: &isDir) { try FileSystem.ensureDirectory(root, mode: 0o755) }
         let label = "Before restoring to \(target.label ?? target.id)"
-        let pre = try snapshotLocked(SnapshotRequest(trigger: .preRestore, label: label, force: true), hints: [:])
+        var preRequest = SnapshotRequest(trigger: .preRestore, label: label, force: true)
+        preRequest.ignoreLowDiskFloor = true
+        let pre = try snapshotLocked(preRequest, hints: [:])
+        if case .lowDisk(let avail) = pre { throw SnapshotError.io("only \(avail / 1_000_000) MB free: free some disk space first; nothing was changed") }
         guard let preInfo = pre.snapshot, preInfo.complete else {
-            throw SnapshotError.io("could not take a complete pre-restore snapshot; nothing was changed")
+            throw SnapshotError.io("could not take a complete pre-restore snapshot (some files are unreadable); nothing was changed")
         }
         report.undoSnapshotId = preInfo.id
         let current = try loadCurrent()
         let stateS = try state(atSeq: target.seq)
+        // Files an incomplete snapshot actually captured (changed at its seq); others keep their current version.
+        let capturedAtTarget: Set<String>? = target.complete ? nil
+            : Set(try db.all("SELECT path FROM changes WHERE seq = ?", [target.seq]) { $0.text(0).precomposedStringWithCanonicalMapping })
         let restoreID = ULID.make()
         let aside = "\(asideDir)/\(restoreID)"
 
@@ -560,14 +618,26 @@ public final class SnapshotStore {
         var writes: [String] = []
         for (p, cur) in current where isInScope(p, scope) {
             if let s = stateS[p] {
-                if !s.sameContent(as: cur.item) { writes.append(p) }
+                if !s.sameContent(as: cur.item), capturedAtTarget?.contains(p) ?? true { writes.append(p) }
             } else if target.complete {
                 removals.append(p)
             }
         }
-        for p in stateS.keys where current[p] == nil && isInScope(p, scope) { writes.append(p) }
+        for p in stateS.keys where current[p] == nil && isInScope(p, scope) && (capturedAtTarget?.contains(p) ?? true) { writes.append(p) }
+
+        /// Every component above `rel` is a real directory inside the root (no symlink, no file).
+        func realParents(_ rel: String) -> Bool {
+            var prefix = ""
+            for c in rel.split(separator: "/").dropLast() {
+                prefix = prefix.isEmpty ? String(c) : prefix + "/" + c
+                var st = stat()
+                guard lstat(absolute(prefix), &st) == 0, (st.st_mode & S_IFMT) == S_IFDIR else { return false }
+            }
+            return true
+        }
 
         func moveAside(_ rel: String) throws {
+            guard realParents(rel) else { throw SnapshotError.io("\(rel): a parent folder is a symlink; left untouched") }
             var dest = "\(aside)/\(rel)"
             while FileManager.default.fileExists(atPath: dest) { dest += "~" }
             try FileManager.default.createDirectory(atPath: (dest as NSString).deletingLastPathComponent, withIntermediateDirectories: true)
@@ -582,16 +652,16 @@ public final class SnapshotStore {
             report.asideDirectory = aside
         }
 
+        /// Makes every parent of `rel` a real directory, moving aside a file or symlink that stands in the way.
         func ensureParents(_ rel: String) throws {
-            let comps = rel.split(separator: "/").dropLast()
             var prefix = ""
-            for c in comps {
+            for c in rel.split(separator: "/").dropLast() {
                 prefix = prefix.isEmpty ? String(c) : prefix + "/" + c
                 let abs = absolute(prefix)
                 var st = stat()
                 if lstat(abs, &st) == 0 {
                     if (st.st_mode & S_IFMT) == S_IFDIR { continue }
-                    try moveAside(prefix) // a file or symlink stands where a directory must be
+                    try moveAside(prefix) // a file or a symlink stands where a directory must be: never write through it
                 }
                 if mkdir(abs, 0o755) != 0 && errno != EEXIST {
                     throw SnapshotError.io("mkdir \(prefix): \(String(cString: strerror(errno)))")
@@ -609,7 +679,9 @@ public final class SnapshotStore {
 
         for p in removals.sorted(by: { $0.split(separator: "/").count > $1.split(separator: "/").count }) {
             beforeApplyHook?(p)
-            guard let cur = current[p], Walker.lstatKey(absolute(p)) == cur.key else { report.conflicts.append(p); continue }
+            guard realParents(p), let cur = current[p], Walker.lstatKey(absolute(p)).map({ $0.sameFile(cur.key) }) == true else {
+                report.conflicts.append(p); continue
+            }
             do { try moveAside(p); pruneEmptyParents(p) } catch { report.failed.append(p) }
         }
 
@@ -619,9 +691,13 @@ public final class SnapshotStore {
             beforeApplyHook?(p)
             do {
                 if let cur = current[p] {
-                    guard Walker.lstatKey(absolute(p)) == cur.key else { report.conflicts.append(p); continue }
-                } else if Walker.lstatKey(absolute(p)) != nil {
-                    try moveAside(p) // untracked file or directory in the way
+                    // Changed since the pre-restore snapshot (an agent is still writing), or reached through a symlink.
+                    guard realParents(p), Walker.lstatKey(absolute(p)).map({ $0.sameFile(cur.key) }) == true else {
+                        report.conflicts.append(p); continue
+                    }
+                } else {
+                    try ensureParents(p)
+                    if Walker.lstatKey(absolute(p)) != nil { try moveAside(p) } // untracked file or directory in the way
                 }
                 try ensureParents(p)
                 if let k = Walker.lstatKey(absolute(p)), (k.mode & Int64(S_IFMT)) == Int64(S_IFDIR) { try moveAside(p) }
@@ -634,20 +710,30 @@ public final class SnapshotStore {
             }
         }
 
-        let post = try snapshotLocked(SnapshotRequest(trigger: .postRestore, label: "Restored to \(target.label ?? target.id)", force: true), hints: hints)
+        var postRequest = SnapshotRequest(trigger: .postRestore, label: "Restored to \(target.label ?? target.id)", force: true)
+        postRequest.ignoreLowDiskFloor = true
+        let post = try snapshotLocked(postRequest, hints: hints)
         report.postSnapshotId = post.snapshot?.id
         return report
     }
 
+    func normalized(_ scope: RestoreScope) -> RestoreScope {
+        if case .paths(let p) = scope { return .paths(p.map { $0.precomposedStringWithCanonicalMapping }) }
+        return scope
+    }
+
     /// Preview of `restore(to:scope:)` for the confirmation window.
-    public func planRestore(to id: String, scope: RestoreScope) throws -> RestorePlan {
+    public func planRestore(to id: String, scope requested: RestoreScope) throws -> RestorePlan {
         let target = try requireInfo(id)
+        let scope = normalized(requested)
         var plan = RestorePlan()
         plan.complete = target.complete
+        let captured: Set<String>? = target.complete ? nil
+            : Set(try db.all("SELECT path FROM changes WHERE seq = ?", [target.seq]) { $0.text(0).precomposedStringWithCanonicalMapping })
         for c in try diff(from: id, to: nil) where isInScope(c.path, scope) {
             switch c.status {
             case .added: if target.complete { plan.moveAside.append(c.path) }
-            case .modified, .deleted, .typeChanged: plan.write.append(c.path)
+            case .modified, .deleted, .typeChanged: if captured?.contains(c.path) ?? true { plan.write.append(c.path) }
             }
         }
         return plan
@@ -679,7 +765,17 @@ public final class SnapshotStore {
             }
         }
         sweepOrphanObjects()
+        pruneAside(olderThanMs: nowMs - policy.maxAgeMs)
         return report
+    }
+
+    /// Removes moved-aside items of restores older than the retention window (their names are restore ULIDs).
+    func pruneAside(olderThanMs cutoff: Int64) {
+        guard let names = try? FileManager.default.contentsOfDirectory(atPath: asideDir) else { return }
+        for n in names {
+            guard let ts = ULID.timestampMs(n), Int64(ts) < cutoff else { continue }
+            try? FileManager.default.removeItem(atPath: "\(asideDir)/\(n)")
+        }
     }
 
     /// Deletes snapshots `del` while keeping every state in `keep` reconstructible (doc 10 §7).
