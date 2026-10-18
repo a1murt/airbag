@@ -63,6 +63,8 @@ public struct HookRecord: Codable, Sendable {
     public var dedupeKey: String?
     public var background = false
     public var decision: String?
+    /// Agent-facing reason of a deny or ask (replayed when the same call arrives through a second route).
+    public var reason: String?
     public var guardEntry: GuardRef?
     public var snapshot: SnapshotRef?
     public var snapshotSkipped: String?
@@ -76,6 +78,14 @@ extension Registry {
     /// Decision already stored for a dedupe key (another route of the same command was processed first).
     public func existingDecision(dedupeKey: String) -> String? {
         try? db.scalarText("SELECT decision FROM events WHERE dedupe_key = ?", [dedupeKey])
+    }
+
+    public struct PriorEvent: Sendable { public let decision: String?; public let reason: String? }
+
+    public func existingEvent(dedupeKey: String) -> PriorEvent? {
+        (try? db.first("SELECT decision, json_extract(payload, '$.reason') FROM events WHERE dedupe_key = ?", [dedupeKey]) {
+            PriorEvent(decision: $0.textOrNil(0), reason: $0.textOrNil(1))
+        }) ?? nil
     }
 
     /// Consumes an unused, unexpired one-shot allowance for this exact command in this session.
@@ -98,9 +108,11 @@ extension Registry {
     @discardableResult
     public func allowOnce(guardID: String, ttlMs: Int64 = 600_000) throws -> Bool {
         try db.transaction(.immediate) {
-            guard let row = try db.first("SELECT session_id, command_hash, rule_id FROM guard_log WHERE id = ?", [guardID], {
-                ($0.textOrNil(0), $0.text(1), $0.text(2))
+            guard let row = try db.first("SELECT session_id, command_hash, rule_id, decision FROM guard_log WHERE id = ?", [guardID], {
+                ($0.textOrNil(0), $0.text(1), $0.text(2), $0.text(3))
             }), let sid = row.0 else { return false }
+            // Hard blocks are not overridable; a native ask is answered in the agent's own prompt.
+            guard row.3 == "deny_fallback" else { throw RegistryError.notAllowable(row.3) }
             let now = Clock.nowMsInt()
             let token = ULID.make()
             try db.run("""
@@ -144,6 +156,7 @@ extension Registry {
                       s.changedCount, s.bytesAdded, s.durationMs, s.complete, s.label, now])
             }
             var payload: [String: Any] = ["timing": r.timing]
+            if let reason = r.reason { payload["reason"] = reason }
             if let skipped = r.snapshotSkipped { payload["snapshot_skipped"] = skipped }
             if let a = r.agentProcess { payload["agent_pid"] = a.pid }
             try db.run("""

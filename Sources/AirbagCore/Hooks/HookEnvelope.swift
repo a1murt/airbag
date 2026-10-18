@@ -65,13 +65,12 @@ public struct HookEnvelope: Sendable {
 
     /// Stable key so the same shell command seen through two hook routes is processed once (doc 11 §4.9).
     public var dedupeKey: String? {
-        let cmdHash = command.map { String(Hashing.sha256Hex($0).prefix(16)) } ?? "-"
         switch kind {
-        case .preShell, .postShell, .shellFailed, .permissionRequest:
-            if let t = toolUseID, !t.isEmpty { return "\(agent.rawValue):\(t):\(kind.rawValue)" }
-            if let s = sessionID, let t = turnID { return "\(agent.rawValue):\(s):\(t):\(cmdHash):\(kind.rawValue)" }
-            if let s = sessionID { return "\(agent.rawValue):\(s):\(cmdHash):\(Clock.nowMs() / 3000):\(kind.rawValue)" }
-            return nil
+        case .preShell, .postShell, .shellFailed, .permissionRequest, .preEdit:
+            // Only a real per-call id identifies "the same call through another route"; command text is not unique
+            // (an agent may run the same command twice in one turn, and each run needs its own snapshot).
+            guard let t = toolUseID, !t.isEmpty else { return nil }
+            return "\(agent.rawValue):\(t):\(kind.rawValue)"
         default:
             guard let s = sessionID else { return nil }
             return "\(agent.rawValue):\(s):\(kind.rawValue):\(Clock.nowMs() / 1000)"

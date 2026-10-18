@@ -82,6 +82,13 @@ extension Registry {
         return Dictionary(rows.compactMap { k, v in k.map { ($0, v) } }, uniquingKeysWith: +)
     }
 
+    /// Marks registry snapshot rows whose store snapshot was pruned.
+    public func reconcileSnapshots(rootID: String, existing: Set<String>) {
+        guard let ids = try? db.all("SELECT id FROM snapshots WHERE root_id = ? AND deleted_at IS NULL", [rootID], { $0.text(0) }) else { return }
+        let now = Clock.nowMsInt()
+        for id in ids where !existing.contains(id) { try? db.run("UPDATE snapshots SET deleted_at = ? WHERE id = ?", [now, id]) }
+    }
+
     // MARK: pause
 
     public var pausedUntilMs: Int64? {

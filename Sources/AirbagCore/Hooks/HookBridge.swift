@@ -44,9 +44,16 @@ public final class OutputSlot: @unchecked Sendable {
     private let lock = NSLock()
     private var decided: String?
     private var printed = false
-    public init(initial: String?) { decided = initial }
+    private let sink: (String) -> Void
+    public init(initial: String?, sink: @escaping (String) -> Void = { FileHandle.standardOutput.write(Data(($0 + "\n").utf8)) }) {
+        decided = initial
+        self.sink = sink
+    }
 
     public func setDecided(_ s: String?) { lock.lock(); decided = s; lock.unlock() }
+
+    /// The reply the watchdog would print right now.
+    public var decidedText: String? { lock.lock(); defer { lock.unlock() }; return decided }
 
     /// Prints the decided reply once. Returns false if a reply was already printed.
     @discardableResult
@@ -65,7 +72,7 @@ public final class OutputSlot: @unchecked Sendable {
     private func emit(_ text: String?) -> Bool {
         guard !printed else { return false }
         printed = true
-        if let text { FileHandle.standardOutput.write(Data((text + "\n").utf8)) }
+        if let text { sink(text) }
         return true
     }
 }
@@ -138,13 +145,22 @@ public struct HookBridge {
         }
         timing["locate"] = Clock.elapsedMs(since: t0)
         let sessionKey = env.sessionID.map { "\(env.agent.rawValue):\($0)" }
-        let duplicate = env.dedupeKey.flatMap { k in registry?.existingDecision(dedupeKey: k) } != nil
+        let prior = env.dedupeKey.flatMap { k in registry?.existingEvent(dedupeKey: k) }
+        let duplicate = prior != nil
+        let priorDecision: (reply: HookReply, decision: String)? = prior.map { p in
+            let reason = p.reason ?? "Airbag already decided on this command."
+            switch p.decision ?? "allow" {
+            case "deny", "deny_fallback": return (.deny(agentReason: reason, userMessage: reason), p.decision ?? "deny")
+            case "ask": return (.ask(agentReason: reason, userMessage: reason), "ask")
+            default: return (.allow, p.decision ?? "allow")
+            }
+        }
 
         func takeSnapshot(_ trigger: SnapshotTrigger, label: String?) -> (SnapshotInfo?, String?) {
             guard let r = snapshotRoot else { return (nil, "no_root") }
             if duplicate { return (nil, "duplicate_route") }
             let exists = SnapshotStore.storeExists(root: r, paths: config.paths)
-            guard let store = try? SnapshotStore.open(root: r, paths: config.paths) else { return (nil, "store_error") }
+            guard let store = try? SnapshotStore.open(root: r, paths: config.paths, busyTimeoutMs: Int32(min(config.snapshotDeadlineMs, 1000))) else { return (nil, "store_error") }
             let deadline = Clock.monotonicNs() + UInt64(config.snapshotDeadlineMs) * 1_000_000
             let outcome = store.snapshot(SnapshotRequest(trigger: exists ? trigger : .initial, label: label, sessionKey: sessionKey,
                                                          deadlineNs: deadline, lockWaitMs: config.lockWaitMs))
@@ -174,21 +190,20 @@ public struct HookBridge {
         var reply: HookReply = .neutral
         switch env.kind {
         case .preShell, .permissionRequest:
-            guard let command = env.command, !command.isEmpty else { reply = .allow; break }
+            guard let command = env.command, !command.isEmpty else { reply = env.kind == .permissionRequest ? .neutral : .allow; break }
+            // The same call seen through a second hook route: replay the first decision verbatim (no second
+            // snapshot, no second token consumption).
+            if let prior = priorDecision {
+                reply = prior.reply
+                record.decision = prior.decision
+                break
+            }
             let disabled = Set(registry.flatMap { $0.setting("rules.disabled", as: [String].self) } ?? [])
             let context = GuardContext(cwd: cwd, home: config.home, roots: roots, environment: config.environment,
                                        airbagHome: FileSystem.canonicalPath(config.paths.home.path) ?? config.paths.home.path,
                                        disabledRules: disabled)
             var verdict = RuleEngine().evaluate(command, context: context)
             timing["rules"] = Clock.elapsedMs(since: t0)
-            // Paused by the user: blocks stay (they cost nothing), snapshots and questions are skipped.
-            if registry?.pausedUntilMs != nil && verdict.decision != .block {
-                reply = .allow
-                record.decision = "allow"
-                record.snapshotSkipped = "paused"
-                outcome.verdict = verdict
-                break
-            }
             let primary = verdict.primary
             func guardRef(_ decision: String) -> HookRecord.GuardRef? {
                 guard let p = primary else { return nil }
@@ -200,8 +215,48 @@ public struct HookBridge {
                 reply = .deny(agentReason: msg, userMessage: userMessage(verdict, command: command, blocked: true))
                 slot?.setDecided(AgentAdapter.encode(reply, as: declared, event: env))
                 record.decision = "deny"
+                record.reason = msg
                 record.guardEntry = guardRef("deny")
                 break
+            }
+            // Codex raises PermissionRequest after PreToolUse, right where it shows its own approval prompt: the
+            // breaker already ran for this call, so only hard blocks answer here; everything else is Codex's to ask.
+            if env.kind == .permissionRequest { reply = .neutral; record.decision = "allow"; outcome.verdict = verdict; break }
+            // Paused by the user: blocks stay (they cost nothing), snapshots and questions are skipped.
+            if registry?.pausedUntilMs != nil {
+                reply = .allow
+                record.decision = "allow"
+                record.snapshotSkipped = "paused"
+                outcome.verdict = verdict
+                break
+            }
+            let bypass = env.permissionMode == "bypassPermissions"
+            let mode: AskMode = bypass ? config.askUnderBypass
+                : (readSetting("hook.askFallback.\(env.agent.rawValue)").flatMap(AskMode.init(rawValue:)) ?? config.askFallback[env.agent] ?? .denyWithAllowance)
+            let canNative = AgentAdapter.supportsNativeAsk(declared, kind: env.kind, permissionMode: env.permissionMode)
+                && !(env.agent == .cursor && declared == .claudeCode) // Cursor's preToolUse does not enforce ask
+
+            /// The question (or its deny fallback) for an ask verdict.
+            func askReply(_ v: GuardVerdict, snapshotID: String?) -> (HookReply, String) {
+                if mode == .native && canNative {
+                    return (.ask(agentReason: v.agentMessage(command: command, snapshotId: snapshotID),
+                                 userMessage: userMessage(v, command: command, blocked: false)), "ask")
+                }
+                let msg = v.agentMessage(command: command, snapshotId: snapshotID)
+                    + " The user can approve it once in Airbag (menu bar → Guard → Allow once); after that, run exactly the same command again."
+                return (.deny(agentReason: msg, userMessage: userMessage(v, command: command, blocked: false)), "deny_fallback")
+            }
+            func unavailable(_ why: String) -> GuardVerdict {
+                let finding = GuardFinding(ruleId: "snapshot.unavailable", decision: .ask, snapshot: .required,
+                                           reason: "it is destructive and Airbag could not take a complete snapshot first (\(why.replacingOccurrences(of: "_", with: " "))).",
+                                           matched: primary?.matched ?? command)
+                return GuardVerdict(decision: .ask, snapshot: .required, findings: verdict.findings + [finding])
+            }
+            // If the watchdog fires during the snapshot, the conservative answer is printed, never a bare allow.
+            if verdict.decision == .ask {
+                slot?.setDecided(AgentAdapter.encode(askReply(verdict, snapshotID: nil).0, as: declared, event: env))
+            } else if verdict.snapshot == .required {
+                slot?.setDecided(AgentAdapter.encode(askReply(unavailable("timeout"), snapshotID: nil).0, as: declared, event: env))
             }
             // Snapshot before anything that may run (allow, or ask that the user may approve).
             var snap: SnapshotInfo?
@@ -215,39 +270,26 @@ public struct HookBridge {
                 timing["snapshot"] = Clock.elapsedMs(since: t0)
             }
             // A destructive-but-recoverable command needs a usable snapshot; without one, escalate to ask.
-            if verdict.decision == .allow && verdict.snapshot == .required && (skipped != nil || snap == nil) && skipped != "duplicate_route" {
-                let why = skipped ?? "unknown"
-                let finding = GuardFinding(ruleId: "snapshot.unavailable", decision: .ask, snapshot: .required,
-                                           reason: "it is destructive and Airbag could not take a complete snapshot first (\(why.replacingOccurrences(of: "_", with: " "))).",
-                                           matched: primary?.matched ?? command)
-                verdict = GuardVerdict(decision: .ask, snapshot: .required, findings: verdict.findings + [finding])
+            if verdict.decision == .allow && verdict.snapshot == .required && (skipped != nil || snap == nil) {
+                verdict = unavailable(skipped ?? "unknown")
             }
             if verdict.decision == .ask {
-                let bypass = env.permissionMode == "bypassPermissions"
-                let mode: AskMode = bypass ? config.askUnderBypass
-                    : (readSetting("hook.askFallback.\(env.agent.rawValue)").flatMap(AskMode.init(rawValue:)) ?? config.askFallback[env.agent] ?? .denyWithAllowance)
-                let canNative = AgentAdapter.supportsNativeAsk(declared, kind: env.kind, permissionMode: env.permissionMode)
-                    && !(env.agent == .cursor && declared == .claudeCode) // Cursor's preToolUse does not enforce ask
                 if let reg = registry, let sid = env.sessionID, let hash = record.commandHash,
                    reg.consumeAllowToken(agent: env.agent.rawValue, agentSessionID: sid, commandHash: hash) {
                     reply = .allow
                     record.decision = "allow_once"
                     record.guardEntry = guardRef("allow_once")
-                } else if mode == .native && canNative {
-                    reply = .ask(agentReason: verdict.agentMessage(command: command, snapshotId: snap?.id),
-                                 userMessage: userMessage(verdict, command: command, blocked: false))
-                    record.decision = "ask"
-                    record.guardEntry = guardRef("ask")
                 } else if mode == .allowSnapshot && snap != nil {
                     reply = .allow
                     record.decision = "allow_fallback"
                     record.guardEntry = guardRef("allow_fallback")
                 } else {
-                    let msg = verdict.agentMessage(command: command, snapshotId: snap?.id)
-                        + " The user can approve it once in Airbag (menu bar → Guard → Allow once); after that, run exactly the same command again."
-                    reply = .deny(agentReason: msg, userMessage: userMessage(verdict, command: command, blocked: false))
-                    record.decision = "deny_fallback"
-                    record.guardEntry = guardRef("deny_fallback")
+                    let (r, decision) = askReply(verdict, snapshotID: snap?.id)
+                    reply = r
+                    record.decision = decision
+                    if case .ask(let reason, _) = r { record.reason = reason }
+                    if case .deny(let reason, _) = r { record.reason = reason }
+                    record.guardEntry = guardRef(decision)
                 }
             } else {
                 reply = .allow
@@ -280,6 +322,8 @@ public struct HookBridge {
         outcome.output = AgentAdapter.encode(reply, as: declared, event: env)
         timing["total"] = Clock.elapsedMs(since: t0)
         record.timing = timing
+        // Answer the agent first; persistence, spool ingestion and the app ping happen after.
+        slot?.printFinal(outcome.output)
 
         // Persist (never blocks the decision).
         if !duplicate {

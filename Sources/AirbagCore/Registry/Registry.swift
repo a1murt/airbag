@@ -4,10 +4,14 @@ import SQLite3
 public enum RegistryError: Error, CustomStringConvertible {
     case schemaNewer(found: Int, supported: Int)
     case foreignFile(String)
+    case notAllowable(String)
     public var description: String {
         switch self {
         case .schemaNewer(let f, let s): return "registry schema \(f) is newer than this build supports (\(s)); update Airbag"
         case .foreignFile(let p): return "\(p) is not an Airbag registry"
+        case .notAllowable(let d): return d == "deny"
+            ? "this command was blocked by a hard rule; allowing it once is not possible (turn the rule off in Guard if you really need it)"
+            : "this entry cannot be allowed once (decision: \(d)); the agent's own prompt handles it"
         }
     }
 }

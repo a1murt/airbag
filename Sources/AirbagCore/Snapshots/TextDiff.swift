@@ -52,37 +52,64 @@ public struct TextDiff: Sendable, Equatable {
         return out
     }
 
-    /// Edit script via Myers' algorithm, returned as (kind, oldIndex, newIndex).
+    /// Largest edit distance computed exactly; beyond it the changed middle is shown as one replaced block.
+    static let maxEditDistance = 1500
+
+    /// Edit script, returned as (kind, oldIndex, newIndex). Common prefix and suffix are matched first; the middle uses
+    /// Myers' O(ND) algorithm with a trace of only the diagonals each step touched (O(D²) memory, not O(D·(N+M))).
     static func script(_ a: [Substring], _ b: [Substring]) -> [(Kind, Int, Int)] {
+        var prefix = 0
+        while prefix < a.count && prefix < b.count && a[prefix] == b[prefix] { prefix += 1 }
+        var suffix = 0
+        while suffix < a.count - prefix && suffix < b.count - prefix && a[a.count - 1 - suffix] == b[b.count - 1 - suffix] { suffix += 1 }
+        var out: [(Kind, Int, Int)] = (0..<prefix).map { (.same, $0, $0) }
+        let midA = Array(a[prefix..<(a.count - suffix)]), midB = Array(b[prefix..<(b.count - suffix)])
+        let middle = myers(midA, midB) ?? (midA.indices.map { (Kind.removed, $0, 0) } + midB.indices.map { (Kind.added, midA.count, $0) })
+        out += middle.map { ($0.0, $0.1 + prefix, $0.2 + prefix) }
+        out += (0..<suffix).map { (.same, a.count - suffix + $0, b.count - suffix + $0) }
+        return out
+    }
+
+    static func myers(_ a: [Substring], _ b: [Substring]) -> [(Kind, Int, Int)]? {
         let n = a.count, m = b.count
-        let max = n + m
-        if max == 0 { return [] }
-        var v = [Int](repeating: 0, count: 2 * max + 2)
+        if n == 0 && m == 0 { return [] }
+        let limit = min(n + m, maxEditDistance)
+        // v[k + off] = furthest x on diagonal k; trace[d] keeps v for diagonals -d…d only.
+        let off = limit + 1
+        var v = [Int](repeating: 0, count: 2 * limit + 3)
         var trace: [[Int]] = []
-        outer: for d in 0...max {
-            trace.append(v)
+        var found = false
+        for d in 0...limit {
+            var snapshot = [Int](repeating: 0, count: 2 * d + 1)
             for k in stride(from: -d, through: d, by: 2) {
                 var x: Int
-                if k == -d || (k != d && v[k - 1 + max] < v[k + 1 + max]) { x = v[k + 1 + max] } else { x = v[k - 1 + max] + 1 }
+                if k == -d || (k != d && v[k - 1 + off] < v[k + 1 + off]) { x = v[k + 1 + off] } else { x = v[k - 1 + off] + 1 }
                 var y = x - k
                 while x < n && y < m && a[x] == b[y] { x += 1; y += 1 }
-                v[k + max] = x
-                if x >= n && y >= m { trace.append(v); break outer }
+                v[k + off] = x
+                if x >= n && y >= m { found = true }
             }
+            for k in stride(from: -d, through: d, by: 1) { snapshot[k + d] = v[k + off] }
+            trace.append(snapshot)
+            if found { break }
         }
-        // Backtrack.
+        guard found else { return nil }
         var x = n, y = m
         var edits: [(Kind, Int, Int)] = []
-        for d in stride(from: trace.count - 2, through: 0, by: -1) {
-            let vv = trace[d]
+        for d in stride(from: trace.count - 1, through: 0, by: -1) {
             let k = x - y
-            let prevK = (k == -d || (k != d && vv[k - 1 + max] < vv[k + 1 + max])) ? k + 1 : k - 1
-            let prevX = vv[prevK + max]
+            if d == 0 {
+                while x > 0 && y > 0 { x -= 1; y -= 1; edits.append((.same, x, y)) }
+                break
+            }
+            let prev = trace[d - 1] // diagonals -(d-1)…(d-1)
+            func pv(_ kk: Int) -> Int { prev[kk + d - 1] }
+            let down = k == -d || (k != d && pv(k - 1) < pv(k + 1))
+            let prevK = down ? k + 1 : k - 1
+            let prevX = pv(prevK)
             let prevY = prevX - prevK
             while x > prevX && y > prevY { x -= 1; y -= 1; edits.append((.same, x, y)) }
-            if d > 0 {
-                if x == prevX { y -= 1; edits.append((.added, x, y)) } else { x -= 1; edits.append((.removed, x, y)) }
-            }
+            if down { y -= 1; edits.append((.added, x, y)) } else { x -= 1; edits.append((.removed, x, y)) }
         }
         return edits.reversed()
     }

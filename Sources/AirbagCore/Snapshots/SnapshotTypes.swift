@@ -21,6 +21,8 @@ public struct SnapshotRequest: Sendable {
     public var lockWaitMs: Int
     /// Create a snapshot even when nothing changed.
     public var force: Bool
+    /// Restores take their undo snapshot even when the disk is nearly full (refused only below 100 MB).
+    public var ignoreLowDiskFloor = false
 
     public init(trigger: SnapshotTrigger, label: String? = nil, sessionKey: String? = nil,
                 deadlineNs: UInt64? = nil, lockWaitMs: Int = 1000, force: Bool = false) {

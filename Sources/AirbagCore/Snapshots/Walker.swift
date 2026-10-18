@@ -22,6 +22,10 @@ struct StatKey: Equatable, Sendable {
     }
 
     var isSymlink: Bool { (mode & Int64(S_IFMT)) == Int64(S_IFLNK) }
+
+    /// Same file for restore-conflict purposes. ctime is ignored: it changes when another hard link to the inode is
+    /// replaced, which a restore of the sibling link does.
+    func sameFile(_ other: StatKey) -> Bool { size == other.size && mtimeNs == other.mtimeNs && ino == other.ino && mode == other.mode }
     var isRegular: Bool { (mode & Int64(S_IFMT)) == Int64(S_IFREG) }
     var permissionBits: Int64 { mode & 0o7777 }
 }
@@ -34,6 +38,10 @@ struct WalkEntry: Sendable {
 struct WalkResult: Sendable {
     var entries: [WalkEntry] = []
     var skippedLarge: [String] = []
+    /// Directories the walk could not read: what is inside them is unknown, not deleted.
+    var unreadableDirs: [String] = []
+    /// Entries whose metadata could not be read.
+    var unreadableFiles: [String] = []
     var errors = 0
     var complete = true
     var tooLarge = false
@@ -71,9 +79,11 @@ enum Walker {
             if level == 0 { continue }
             let pathLen = Int(e.fts_pathlen)
             guard pathLen > rootLen + 1 else { continue }
-            let rel = String(cString: e.fts_path + rootLen + 1)
+            // Paths are keys in Swift dictionaries (canonical equivalence) and in SQLite (raw bytes): store them in NFC so
+            // both agree. APFS and HFS+ resolve NFC and NFD spellings of a name to the same file.
+            let rel = String(cString: e.fts_path + rootLen + 1).precomposedStringWithCanonicalMapping
             let nameLen = Int(e.fts_namelen)
-            let name = String(cString: e.fts_path + (pathLen - nameLen))
+            let name = String(cString: e.fts_path + (pathLen - nameLen)).precomposedStringWithCanonicalMapping
             switch Int32(e.fts_info) {
             case FTS_D:
                 if exclusions.skipsDirectory(name: name, relativePath: rel) || name.hasPrefix(".airbag-") {
@@ -90,8 +100,12 @@ enum Walker {
             case FTS_SL, FTS_SLNONE:
                 guard let st = e.fts_statp?.pointee else { result.errors += 1; continue }
                 result.entries.append(WalkEntry(relativePath: rel, key: StatKey(st)))
-            case FTS_DNR, FTS_ERR, FTS_NS:
+            case FTS_DNR, FTS_ERR:
                 result.errors += 1
+                result.unreadableDirs.append(rel)
+            case FTS_NS:
+                result.errors += 1
+                result.unreadableFiles.append(rel)
             default:
                 break // FTS_DP (post-order), FTS_DC (cycle), FTS_DEFAULT (fifo, socket, device): ignored
             }
