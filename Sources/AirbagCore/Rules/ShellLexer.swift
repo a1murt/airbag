@@ -198,15 +198,9 @@ public struct ShellLexer {
                     i += 2
                     while i < c.count && c[i] != "'" {
                         if c[i] == "\\", i + 1 < c.count {
-                            let e = c[i + 1]
-                            switch e {
-                            case "n": out.append("\n")
-                            case "t": out.append("\t")
-                            case "\\": out.append("\\")
-                            case "'": out.append("'")
-                            default: out.append(e)
-                            }
-                            i += 2
+                            let (decoded, used) = ShellLexer.ansiEscape(c, i + 1)
+                            out += decoded
+                            i += 1 + used
                         } else { out.append(c[i]); i += 1 }
                     }
                     i += 1
@@ -273,6 +267,47 @@ public struct ShellLexer {
         }
         if n.isNumber || "@*#?$!-".contains(n) { return ("$" + String(n), true, i + 2) }
         return ("$", false, i + 1)
+    }
+
+    /// Decodes one ANSI-C escape (`$'…'`) starting after the backslash; returns the text and characters consumed.
+    static func ansiEscape(_ c: [Character], _ i: Int) -> (String, Int) {
+        let e = c[i]
+        func hexValue(_ start: Int, max: Int) -> (UInt32, Int) {
+            var v: UInt32 = 0, n = 0
+            while n < max, start + n < c.count, let d = c[start + n].hexDigitValue { v = v * 16 + UInt32(d); n += 1 }
+            return (v, n)
+        }
+        func scalar(_ v: UInt32) -> String { Unicode.Scalar(v).map { String(Character($0)) } ?? "" }
+        switch e {
+        case "n": return ("\n", 1)
+        case "t": return ("\t", 1)
+        case "r": return ("\r", 1)
+        case "a": return ("\u{07}", 1)
+        case "b": return ("\u{08}", 1)
+        case "e", "E": return ("\u{1B}", 1)
+        case "f": return ("\u{0C}", 1)
+        case "v": return ("\u{0B}", 1)
+        case "\\": return ("\\", 1)
+        case "'": return ("'", 1)
+        case "\"": return ("\"", 1)
+        case "?": return ("?", 1)
+        case "x":
+            let (v, n) = hexValue(i + 1, max: 2)
+            return n == 0 ? ("\\x", 1) : (scalar(v), 1 + n)
+        case "u", "U":
+            let (v, n) = hexValue(i + 1, max: e == "u" ? 4 : 8)
+            return n == 0 ? ("\\" + String(e), 1) : (scalar(v), 1 + n)
+        case "c":
+            guard i + 1 < c.count, let a = c[i + 1].asciiValue else { return ("", 1) }
+            return (scalar(UInt32(a & 0x1F)), 2)
+        default:
+            if let first = e.wholeNumberValue, first < 8 {
+                var v = UInt32(first), n = 1
+                while n < 3, i + n < c.count, let d = c[i + n].wholeNumberValue, d < 8 { v = v * 8 + UInt32(d); n += 1 }
+                return (scalar(v), n)
+            }
+            return ("\\" + String(e), 1)
+        }
     }
 
     func lookup(_ name: String) -> String? {

@@ -1,0 +1,638 @@
+{
+ "version": 1,
+ "context": {
+  "cwd": "/Users/u/Work/proj",
+  "home": "/Users/u",
+  "roots": [
+   "/Users/u/Work/proj"
+  ],
+  "airbagHome": "/Users/u/Library/Application Support/Airbag",
+  "environment": {
+   "TMPDIR": "/var/folders/ab/cd/T/",
+   "USER": "u"
+  }
+ },
+ "cases": [
+  {
+   "cmd": "rm -rf $'\\x2f'Users/u/.ssh",
+   "expect": {
+    "decision": "block"
+   },
+   "why": "BYPASS: Lexer $'...' handler does not decode \\xHH; real shell expands to /Users/u/.ssh (home .ssh).",
+   "rule": "fs.rm.catastrophic"
+  },
+  {
+   "cmd": "rm -rf $'\\x2f'",
+   "expect": {
+    "decision": "block"
+   },
+   "why": "BYPASS: \\x2f = '/'; real shell runs rm -rf / but lexer yields literal 'x2f' (inside project -> allow).",
+   "rule": "fs.rm.catastrophic"
+  },
+  {
+   "cmd": "rm -rf $'\\176'/.ssh",
+   "expect": {
+    "decision": "allow",
+    "snapshot": "required"
+   },
+   "why": "bash does not tilde-expand a ~ produced by $'\\176' quoting: the target is ./~/.ssh inside the project",
+   "rule": "fs.rm.project"
+  },
+  {
+   "cmd": "rm -rf $'\\x2f'Users$'\\x2f'u",
+   "expect": {
+    "decision": "block"
+   },
+   "why": "BYPASS: Two hex slashes build /Users/u (home); not decoded.",
+   "rule": "fs.rm.catastrophic"
+  },
+  {
+   "cmd": "find ~ -type f -exec sh -c 'rm -rf \"$1\"' _ {} \\;",
+   "expect": {
+    "decision": "ask"
+   },
+   "why": "BYPASS: analyzeFind only treats rm/unlink/shred as -exec deleters; sh -c hides the rm, so find is seen as read-only.",
+   "rule": "fs.find.delete.broad"
+  },
+  {
+   "cmd": "find ~ -type f -exec bash -c 'rm -f $0' {} \\;",
+   "expect": {
+    "decision": "ask"
+   },
+   "why": "BYPASS: -exec bash -c conceals the deletion from analyzeFind.",
+   "rule": "fs.find.delete.broad"
+  },
+  {
+   "cmd": "find /Users/u/.ssh -exec perl -e 'unlink @ARGV' {} +",
+   "expect": {
+    "decision": "block"
+   },
+   "why": "BYPASS: -exec perl unlink under ~/.ssh, unfiltered; analyzeFind sees no recognized deleter.",
+   "rule": "fs.rm.catastrophic"
+  },
+  {
+   "cmd": "busybox rm -rf ~",
+   "expect": {
+    "decision": "block"
+   },
+   "why": "BYPASS: busybox applet dispatch not unwrapped; 'busybox' is the command name so rm is never analyzed.",
+   "rule": "fs.rm.catastrophic"
+  },
+  {
+   "cmd": "busybox find ~ -delete",
+   "expect": {
+    "decision": "block"
+   },
+   "why": "BYPASS: busybox find -delete on home not analyzed.",
+   "rule": "fs.rm.catastrophic"
+  },
+  {
+   "cmd": "toybox rm -rf ~/.ssh",
+   "expect": {
+    "decision": "block"
+   },
+   "why": "BYPASS: toybox multicall binary not unwrapped.",
+   "rule": "fs.rm.catastrophic"
+  },
+  {
+   "cmd": "grm -rf ~/.ssh",
+   "expect": {
+    "decision": "block"
+   },
+   "why": "BYPASS: Homebrew GNU coreutils 'grm' not normalized to rm.",
+   "rule": "fs.rm.catastrophic"
+  },
+  {
+   "cmd": "gmv ~/.ssh /tmp/x",
+   "expect": {
+    "decision": "block"
+   },
+   "why": "BYPASS: GNU 'gmv' not normalized to mv.",
+   "rule": "fs.mv.catastrophic"
+  },
+  {
+   "cmd": "gchmod -R 000 ~/.ssh",
+   "expect": {
+    "decision": "block"
+   },
+   "why": "BYPASS: GNU 'gchmod' not normalized to chmod.",
+   "rule": "fs.perm.catastrophic"
+  },
+  {
+   "cmd": "gfind ~ -delete",
+   "expect": {
+    "decision": "block"
+   },
+   "why": "BYPASS: GNU 'gfind' not treated as find.",
+   "rule": "fs.rm.catastrophic"
+  },
+  {
+   "cmd": "gcp --remove-source-files ~/.ssh /tmp/x",
+   "expect": {
+    "decision": "block"
+   },
+   "why": "BYPASS: GNU 'gcp' (cp) --remove-source-files deletes sources; not normalized to cp.",
+   "rule": "fs.rm.catastrophic"
+  },
+  {
+   "cmd": "tar -czf /tmp/a.tgz --remove-files ~/Documents",
+   "expect": {
+    "decision": "block"
+   },
+   "why": "BYPASS: tar --remove-files deletes the archived sources; tar not handled by the engine.",
+   "rule": "fs.rm.catastrophic"
+  },
+  {
+   "cmd": "zip -m -r /tmp/a.zip ~/Documents",
+   "expect": {
+    "decision": "block"
+   },
+   "why": "BYPASS: zip -m moves (deletes) originals; zip not handled.",
+   "rule": "fs.rm.catastrophic"
+  },
+  {
+   "cmd": "git -C ~ clean -fdx",
+   "expect": {
+    "decision": "ask"
+   },
+   "why": "BYPASS: analyzeGit drops -C and its value; a clean/reset/checkout aimed at HOME is treated as in-project recoverable, but the snapshot only covers the project root."
+  },
+  {
+   "cmd": "git -C ~ reset --hard",
+   "expect": {
+    "decision": "ask"
+   },
+   "why": "BYPASS: git reset --hard in HOME via -C is allowed+required though HOME is not snapshotted."
+  },
+  {
+   "cmd": "git -C ~ checkout -- .",
+   "expect": {
+    "decision": "ask"
+   },
+   "why": "BYPASS: git checkout discard in HOME via -C treated as project-recoverable."
+  },
+  {
+   "cmd": "git -C ~ checkout -f main",
+   "expect": {
+    "decision": "ask"
+   },
+   "why": "BYPASS: git checkout -f in HOME via -C treated as project-recoverable."
+  },
+  {
+   "cmd": "git -C ~ restore .",
+   "expect": {
+    "decision": "ask"
+   },
+   "why": "BYPASS: git restore . in HOME via -C treated as project-recoverable."
+  },
+  {
+   "cmd": "git -C ~ stash",
+   "expect": {
+    "decision": "ask"
+   },
+   "why": "BYPASS: git stash in HOME via -C treated as project-recoverable."
+  },
+  {
+   "cmd": "git -C /Users/u/Work/other clean -fdx",
+   "expect": {
+    "decision": "ask"
+   },
+   "why": "BYPASS: git clean in another project via -C is outside the snapshot root."
+  },
+  {
+   "cmd": "git --work-tree=~ --git-dir=~/.git clean -fdx",
+   "expect": {
+    "decision": "ask"
+   },
+   "why": "BYPASS: --work-tree points clean at HOME; analyzeGit ignores --work-tree."
+  },
+  {
+   "cmd": "bash <<< 'rm -rf ~'",
+   "expect": {
+    "decision": "block"
+   },
+   "why": "BYPASS: The <<< here-string literal is inspectable but is parsed as a redirect target and never analyzed as a command.",
+   "rule": "fs.rm.catastrophic"
+  },
+  {
+   "cmd": "bash <<<'rm -rf ~/.ssh'",
+   "expect": {
+    "decision": "block"
+   },
+   "why": "BYPASS: here-string (no space) into bash; content not analyzed.",
+   "rule": "fs.rm.catastrophic"
+  },
+  {
+   "cmd": "jq '.' ~/.claude/settings.json | sponge ~/.claude/settings.json",
+   "expect": {
+    "decision": "ask"
+   },
+   "why": "BYPASS: 'sponge' writes its file argument like tee but is not recognized, so the hook-config rewrite is missed.",
+   "rule": "self.hooks"
+  },
+  {
+   "cmd": "sponge ~/.claude/settings.json < /tmp/x",
+   "expect": {
+    "decision": "ask"
+   },
+   "why": "BYPASS: sponge writing hook config via input redirect is not recognized.",
+   "rule": "self.hooks"
+  },
+  {
+   "cmd": "install -m 644 /tmp/x.json ~/.claude/settings.json",
+   "expect": {
+    "decision": "ask"
+   },
+   "why": "BYPASS: 'install' copies to a destination but is not recognized; overwrites the agent hook config.",
+   "rule": "self.hooks"
+  },
+  {
+   "cmd": "ln -sf /tmp/evil.json ~/.claude/settings.json",
+   "expect": {
+    "decision": "ask"
+   },
+   "why": "BYPASS: ln -sf replaces the hook config with a symlink; ln is not handled.",
+   "rule": "self.hooks"
+  },
+  {
+   "cmd": "install /tmp/evil ~/.ssh/authorized_keys",
+   "expect": {
+    "decision": "ask"
+   },
+   "why": "BYPASS: install writing outside the project (authorized_keys) is not checked.",
+   "rule": "fs.write.outside"
+  },
+  {
+   "cmd": "ln -sf /tmp/evil ~/.ssh/authorized_keys",
+   "expect": {
+    "decision": "ask"
+   },
+   "why": "BYPASS: ln creating a link outside the project is not checked.",
+   "rule": "fs.write.outside"
+  },
+  {
+   "cmd": "launchctl submit -l x -- rm -rf ~",
+   "expect": {
+    "decision": "block"
+   },
+   "why": "BYPASS: launchctl is in readOnlyCommands and the launchctl case only handles system bootout; 'submit -- cmd' runs rm -rf ~.",
+   "rule": "fs.rm.catastrophic"
+  },
+  {
+   "cmd": "script -q /dev/null -c 'rm -rf ~'",
+   "expect": {
+    "decision": "block"
+   },
+   "why": "BYPASS: 'script' is unrecognized; its -c command runs rm -rf ~.",
+   "rule": "fs.rm.catastrophic"
+  },
+  {
+   "cmd": "echo ~ | parallel rm -rf",
+   "expect": {
+    "decision": "ask"
+   },
+   "why": "BYPASS: GNU parallel runs rm -rf on its stdin (home); parallel is not treated like xargs.",
+   "rule": "fs.rm.opaque"
+  },
+  {
+   "cmd": "deno eval \"Deno.removeSync('/Users/u/.ssh',{recursive:true})\"",
+   "expect": {
+    "decision": "block"
+   },
+   "why": "BYPASS: Deno.removeSync is not in the deleting-token list.",
+   "rule": "interp.delete.catastrophic"
+  },
+  {
+   "cmd": "ruby -e \"File.delete('/Users/u/.ssh/id_rsa')\"",
+   "expect": {
+    "decision": "ask"
+   },
+   "why": "BYPASS: ruby File.delete is not in the deleting-token list ('file::delete' is C++-style).",
+   "rule": "interp.delete"
+  },
+  {
+   "cmd": "perl -e 'unlink \"/Users/u/.ssh/id_rsa\"'",
+   "expect": {
+    "decision": "ask"
+   },
+   "why": "BYPASS: perl 'unlink \"...\"' with no paren is not matched (token requires 'unlink(').",
+   "rule": "interp.delete"
+  },
+  {
+   "cmd": "docker run -v ~:/h alpine sh -c 'find /h -delete'",
+   "expect": {
+    "decision": "ask"
+   },
+   "why": "BYPASS: mounts HOME rw; deletion via find -delete inside sh -c is not matched by the ' rm ' heuristic.",
+   "rule": "docker.mount.delete"
+  },
+  {
+   "cmd": "docker run -v ~:/h alpine truncate -s0 /h/.ssh/id_rsa",
+   "expect": {
+    "decision": "ask"
+   },
+   "why": "BYPASS: mounts HOME rw; truncate inside the container is not matched.",
+   "rule": "docker.mount.delete"
+  },
+  {
+   "cmd": "docker run --rm -v $(pwd):/app alpine echo hi",
+   "expect": {
+    "decision": "allow"
+   },
+   "why": "FALSE POSITIVE: docker.mount.delete fires because the --rm flag contains the substring 'rm -'; the container command is a harmless echo."
+  },
+  {
+   "cmd": "docker run --rm -v ~/.m2:/root/.m2 maven mvn -q test",
+   "expect": {
+    "decision": "allow"
+   },
+   "why": "FALSE POSITIVE: --rm + mount falsely triggers docker.mount.delete; mvn test deletes nothing."
+  },
+  {
+   "cmd": "docker run --rm -v $(pwd):/w -w /w node npm test",
+   "expect": {
+    "decision": "allow"
+   },
+   "why": "FALSE POSITIVE: The single most common docker invocation (run --rm -v) is flagged by the 'rm -' substring."
+  },
+  {
+   "cmd": "python3 -c \"print('drop table is scary')\"",
+   "expect": {
+    "decision": "allow"
+   },
+   "why": "FALSE POSITIVE: interp/db heuristic matches 'drop table' inside a print string literal; nothing is executed."
+  },
+  {
+   "cmd": "ruby -e \"puts 'DROP DATABASE as text'\"",
+   "expect": {
+    "decision": "allow"
+   },
+   "why": "FALSE POSITIVE: 'drop database' matched inside a puts string literal."
+  },
+  {
+   "cmd": "python3 -c \"import subprocess; subprocess.run('echo hi', shell=True)\"",
+   "expect": {
+    "decision": "allow"
+   },
+   "why": "FALSE POSITIVE: mere presence of 'subprocess' triggers interp.delete even for a read-only command."
+  },
+  {
+   "cmd": "r''m -rf ~",
+   "expect": {
+    "decision": "block"
+   },
+   "why": "GUARD: quote-split command name still resolves to rm",
+   "rule": "fs.rm.catastrophic"
+  },
+  {
+   "cmd": "\"r\"m -rf ~",
+   "expect": {
+    "decision": "block"
+   },
+   "why": "GUARD: split-quote rm name",
+   "rule": "fs.rm.catastrophic"
+  },
+  {
+   "cmd": "\\rm -rf ~",
+   "expect": {
+    "decision": "block"
+   },
+   "why": "GUARD: backslash-escaped rm",
+   "rule": "fs.rm.catastrophic"
+  },
+  {
+   "cmd": "rm -rf ${HOME}/.ssh",
+   "expect": {
+    "decision": "block"
+   },
+   "why": "GUARD: braced HOME expansion",
+   "rule": "fs.rm.catastrophic"
+  },
+  {
+   "cmd": "cd ~/.ssh && rm -rf *",
+   "expect": {
+    "decision": "block"
+   },
+   "why": "GUARD: cd into .ssh then glob rm",
+   "rule": "fs.rm.catastrophic"
+  },
+  {
+   "cmd": "find ~/.ssh -delete",
+   "expect": {
+    "decision": "block"
+   },
+   "why": "GUARD: find .ssh -delete unfiltered",
+   "rule": "fs.rm.catastrophic"
+  },
+  {
+   "cmd": "env -C ~ rm -rf .ssh",
+   "expect": {
+    "decision": "block"
+   },
+   "why": "GUARD: env -C changes cwd to home",
+   "rule": "fs.rm.catastrophic"
+  },
+  {
+   "cmd": "(cd ~; rm -rf .ssh)",
+   "expect": {
+    "decision": "block"
+   },
+   "why": "GUARD: subshell cd home then rm",
+   "rule": "fs.rm.catastrophic"
+  },
+  {
+   "cmd": "cd ~ || true; rm -rf .ssh",
+   "expect": {
+    "decision": "block"
+   },
+   "why": "GUARD: cd home with || then rm",
+   "rule": "fs.rm.catastrophic"
+  },
+  {
+   "cmd": "yes | rm -rf ~",
+   "expect": {
+    "decision": "block"
+   },
+   "why": "GUARD: pipe does not hide rm target",
+   "rule": "fs.rm.catastrophic"
+  },
+  {
+   "cmd": "rm -rf ~/[D]ocuments",
+   "expect": {
+    "decision": "block"
+   },
+   "why": "GUARD: glob bracket classifies parent dir",
+   "rule": "fs.rm.catastrophic"
+  },
+  {
+   "cmd": "FOO=1 BAR=2 rm -rf ~",
+   "expect": {
+    "decision": "block"
+   },
+   "why": "GUARD: env assignments before rm",
+   "rule": "fs.rm.catastrophic"
+  },
+  {
+   "cmd": "nohup sh -c 'rm -rf ~' &",
+   "expect": {
+    "decision": "block"
+   },
+   "why": "GUARD: nohup + sh -c unwrapped",
+   "rule": "fs.rm.catastrophic"
+  },
+  {
+   "cmd": "timeout 5 bash -lc 'rm -rf $HOME'",
+   "expect": {
+    "decision": "block"
+   },
+   "why": "GUARD: timeout + bash -lc unwrapped",
+   "rule": "fs.rm.catastrophic"
+  },
+  {
+   "cmd": "npx rimraf ~/.ssh",
+   "expect": {
+    "decision": "block"
+   },
+   "why": "GUARD: npx rimraf resolves to rimraf on home",
+   "rule": "fs.rm.catastrophic"
+  },
+  {
+   "cmd": "node -e \"require('fs').rmSync('/Users/u/.ssh',{recursive:true})\"",
+   "expect": {
+    "decision": "block"
+   },
+   "why": "GUARD: node rmSync literal home path",
+   "rule": "interp.delete.catastrophic"
+  },
+  {
+   "cmd": "python3 -c \"import shutil; shutil.rmtree('/Users/u')\"",
+   "expect": {
+    "decision": "block"
+   },
+   "why": "GUARD: python rmtree literal home",
+   "rule": "interp.delete.catastrophic"
+  },
+  {
+   "cmd": "node -e \"require('fs').rmdirSync('/Users/u/.ssh')\"",
+   "expect": {
+    "decision": "block"
+   },
+   "why": "GUARD: node rmdirSync literal home .ssh",
+   "rule": "interp.delete.catastrophic"
+  },
+  {
+   "cmd": "ruby -e \"File.unlink('/Users/u/.ssh/id_rsa')\"",
+   "expect": {
+    "decision": "ask"
+   },
+   "why": "GUARD: ruby File.unlink( caught via 'unlink(' token",
+   "rule": "interp.delete"
+  },
+  {
+   "cmd": "srm -rf ~/.ssh",
+   "expect": {
+    "decision": "block"
+   },
+   "why": "GUARD: srm recursive on home .ssh",
+   "rule": "fs.rm.catastrophic"
+  },
+  {
+   "cmd": "shred -u ~/.ssh/id_rsa",
+   "expect": {
+    "decision": "ask"
+   },
+   "why": "GUARD: shred single file outside project",
+   "rule": "fs.rm.outside"
+  },
+  {
+   "cmd": "git -C src clean -fdx",
+   "expect": {
+    "decision": "allow",
+    "snapshot": "required"
+   },
+   "why": "GUARD: git -C into project subdir stays recoverable",
+   "rule": "git.clean"
+  },
+  {
+   "cmd": "git -C . reset --hard",
+   "expect": {
+    "decision": "allow",
+    "snapshot": "required"
+   },
+   "why": "GUARD: git -C project root stays recoverable",
+   "rule": "git.reset.hard"
+  },
+  {
+   "cmd": "git -C packages/api clean -fdx",
+   "expect": {
+    "decision": "allow",
+    "snapshot": "required"
+   },
+   "why": "GUARD: nested in-project -C stays recoverable",
+   "rule": "git.clean"
+  },
+  {
+   "cmd": "ssh localhost 'rm -rf ~'",
+   "expect": {
+    "decision": "ask"
+   },
+   "why": "GUARD: ssh localhost destructive -> ask",
+   "rule": "remote.destructive"
+  },
+  {
+   "cmd": "docker run -v ~:/h alpine rm -rf /h",
+   "expect": {
+    "decision": "ask"
+   },
+   "why": "GUARD: mounted home + literal rm -> ask",
+   "rule": "docker.mount.delete"
+  },
+  {
+   "cmd": "docker run --rm alpine echo hi",
+   "expect": {
+    "decision": "allow",
+    "snapshot": "recommended"
+   },
+   "why": "GUARD: ephemeral run without a host mount is fine"
+  },
+  {
+   "cmd": "kill -9 12345",
+   "expect": {
+    "decision": "allow",
+    "snapshot": "recommended"
+   },
+   "why": "GUARD: killing a single pid is allowed"
+  },
+  {
+   "cmd": "lsof -ti:3000 | xargs kill -9",
+   "expect": {
+    "decision": "allow"
+   },
+   "why": "GUARD: killing the dev server by port"
+  },
+  {
+   "cmd": "git stash pop",
+   "expect": {
+    "decision": "allow",
+    "snapshot": "recommended"
+   },
+   "why": "GUARD: restoring a stash is not destructive"
+  },
+  {
+   "cmd": "git worktree remove ../wt",
+   "expect": {
+    "decision": "allow",
+    "snapshot": "recommended"
+   },
+   "why": "GUARD: non-force worktree remove"
+  },
+  {
+   "cmd": "tar -xzf archive.tgz",
+   "expect": {
+    "decision": "allow",
+    "snapshot": "recommended"
+   },
+   "why": "GUARD: extracting an archive is allowed"
+  }
+ ]
+}

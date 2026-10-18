@@ -18,6 +18,8 @@ enum CLI {
         ("allow", "approve one blocked or asked command once (id from `airbag guard`)", HookCommands.allow),
         ("sessions", "agent sessions Airbag has seen (--all includes ended ones)", HookCommands.sessions),
         ("log", "agent commands with their decision and the snapshot taken right before them", HookCommands.log),
+        ("ports", "listening dev servers and the agent session that started them (--all)", RadarCommands.ports),
+        ("stop", "stop a dev server and its children: SIGTERM, then --force for SIGKILL", RadarCommands.stop),
     ]
 
     static func run(_ args: [String]) -> Int32 {
