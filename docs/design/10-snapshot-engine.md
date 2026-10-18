@@ -39,13 +39,14 @@ Accepted costs (and their mitigations): no delta compression (budget-based reten
         ├── store.json                           0600  {schema:1, root, dev, ino, created_at, mode:"clone"|"copy"}
         ├── lock                                 0600  flock(2): one writer (snapshot / restore / prune) at a time
         ├── manifest.sqlite (+wal,+shm)          0600  §3
-        ├── objects/<hh>/<object_id>             0400 file mode stored separately; 256-way fan-out by id
+        ├── objects/<hh>/<object_id>             clones keep the source mode; buckets 0700; 256-way fan-out by id
         ├── aside/<restore_id>/<relpath>         0700  things a restore moved out of the way (never deleted by restore)
         └── tmp/                                 0700  in-flight clones; emptied at every lock acquisition
 ```
 
-Object ids are random 64-bit integers rendered as 16 hex chars (the SQLite `items.id`). Objects are read-only
-(0400) so a stray process cannot edit history in place; mode bits live in the manifest.
+Object ids are random 64-bit integers rendered as 16 hex chars (the SQLite `items.id`). Captures are cloned
+straight into `objects/` (no temp + rename: the rename cost 24 % of a first snapshot in profiling); an object
+without an `items` row after a crash is swept by prune. Mode bits live in the manifest.
 
 Each object gets the xattr `dev.airbag.path` = relative path at capture time (breadcrumb for disaster recovery).
 
@@ -107,11 +108,13 @@ Inputs: root, trigger, label, session_key, deadline (hook: soft 1500 ms), force 
    collecting `(relpath, lstat)` for regular files and symlinks. Files above the size cap are recorded as
    `skipped_large` (never tombstoned). Other types (fifo, socket, device) are ignored.
 4. **Compare** each entry with `current` on `(size, mtime_ns, ctime_ns, ino, mode)`. Equal → unchanged.
-5. **Capture** each candidate: `copyfile(src, tmp/<id>, COPYFILE_CLONE)` (clone or copy); `fstat` the result; if the
-   source changed size during the copy, retry once, then capture what we got. Hash the *captured object* (stable
-   bytes) when ≤ 8 MiB. If `hash` and `mode` equal the current item → content unchanged: update the stat keys in
+5. **Capture** each candidate: `clonefile(src, objects/<hh>/<id>, CLONE_NOFOLLOW|CLONE_NOOWNERCOPY)` when root and
+   store share a volume, else `copyfile(COPYFILE_DATA|COPYFILE_STAT)`; `lstat` the result. Hash the *captured
+   object* (stable bytes) when ≤ 8 MiB — except in the `initial` snapshot, which skips hashing (halves its cost);
+   when a later snapshot sees a changed stat key on an unhashed item of equal size, it hashes the old object then
+   and backfills `items.hash`, so `touch`-style no-op rewrites still deduplicate. If `hash` and `mode` equal the current item → content unchanged: update the stat keys in
    `current`, delete the temp object. Otherwise look up `items_hash` for dedup (identical content captured earlier →
-   reuse that item, delete temp), else `rename` temp → `objects/<hh>/<id>`, chmod 0400, set breadcrumb xattr.
+   reuse that item, unlink the new clone), else keep it and set the breadcrumb xattr.
    Symlinks become `kind=1` items with `target`.
 6. **Tombstones.** For every path in `current` not seen in the walk: `lstat` it. `ENOENT`/`ENOTDIR` → tombstone.
    Exists (now excluded, over the cap, or a type we ignore) → drop it from `current` silently, no tombstone.
@@ -231,3 +234,13 @@ compare against a reference copy): `rm -rf src`, `mv src /tmp/x`, `sed -i '' s/a
 `git reset --hard`, `git clean -fdx` (restores `.env` and untracked files), file↔directory type swap, symlink
 retarget, exec bit flip, unicode and space names, concurrent writer during restore (conflict reported), restore
 undo via `undoSnapshotId`. Performance (release build): 5k-file no-change snapshot < 50 ms, 100 changed < 80 ms.
+
+## 11. Measured (release build, M4 Mac, 2026-10-18)
+
+| Operation | 5k files (48 MB) | 50k files (388 MB) |
+|---|---|---|
+| First snapshot (detached, not on the hook path) | 0.74 s | 9.3 s |
+| No-change snapshot | 9–11 ms | 116–184 ms |
+| 100 changed files | 47 ms | 164 ms |
+| `touch` on 100 files (dedup, no snapshot) | 57 ms | 184 ms |
+| Restore 100 files incl. pre/post snapshots and process start | 60 ms | 410 ms |

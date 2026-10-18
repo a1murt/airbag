@@ -2,7 +2,20 @@ import AirbagCore
 import Foundation
 
 enum CLI {
+    static let commands: [(name: String, help: String, run: ([String]) throws -> Int32)] = [
+        ("snapshot", "take a snapshot of the current project (--root, --label, --initial, --force)", SnapshotCommands.snapshot),
+        ("snapshots", "list snapshots (--root, --limit)", SnapshotCommands.list),
+        ("changes", "files changed by a snapshot", SnapshotCommands.changes),
+        ("diff", "diff two snapshots or a snapshot and the working tree (--path for one file)", SnapshotCommands.diff),
+        ("restore", "restore the project or --path entries to a snapshot (never deletes; undoable)", SnapshotCommands.restore),
+        ("pin", "keep a snapshot forever (--off to unpin)", SnapshotCommands.pin),
+        ("prune", "apply retention (--all, --days, --keep, --dry-run)", SnapshotCommands.prune),
+        ("export", "write a snapshot's files into an empty directory", SnapshotCommands.export),
+        ("usage", "disk usage of all snapshot stores", SnapshotCommands.usage),
+    ]
+
     static func run(_ args: [String]) -> Int32 {
+        Log.shared.configure(file: nil, category: "cli")
         guard let command = args.first else {
             printUsage()
             return 64
@@ -15,19 +28,28 @@ enum CLI {
             printUsage()
             return 0
         default:
-            FileHandle.standardError.write(Data("airbag: unknown command '\(command)'\n".utf8))
-            printUsage()
-            return 64
+            guard let c = commands.first(where: { $0.name == command }) else {
+                Out.err("airbag: unknown command '\(command)'")
+                printUsage()
+                return 64
+            }
+            do {
+                return try c.run(Array(args.dropFirst()))
+            } catch let e as CLIError {
+                Out.err("airbag \(command): \(e)")
+                if case .usage = e { return 64 }
+                return 1
+            } catch {
+                Out.err("airbag \(command): \(error)")
+                return 1
+            }
         }
     }
 
     static func printUsage() {
-        print("""
-        usage: airbag <command> [options]
-
-        commands:
-          version        print version
-          help           show this help
-        """)
+        var s = "usage: airbag <command> [options]\n\ncommands:\n"
+        for c in commands { s += "  \(c.name.padding(toLength: 11, withPad: " ", startingAt: 0)) \(c.help)\n" }
+        s += "  version     print version\n"
+        print(s, terminator: "")
     }
 }

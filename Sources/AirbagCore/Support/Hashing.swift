@@ -11,7 +11,6 @@ public enum Hashing {
         let fd = open(path, O_RDONLY | O_CLOEXEC)
         guard fd >= 0 else { return nil }
         defer { close(fd) }
-        _ = fcntl(fd, F_NOCACHE, 1)
         var hasher = SHA256()
         let size = 1 << 20
         let buffer = UnsafeMutableRawPointer.allocate(byteCount: size, alignment: 16)

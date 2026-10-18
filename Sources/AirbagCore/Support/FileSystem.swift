@@ -41,6 +41,23 @@ public enum FileSystem {
         return String(cString: buf)
     }
 
+    /// Canonical path for a path that may not exist: canonicalises the deepest existing ancestor and appends
+    /// the remaining components.
+    public static func resolvedPath(_ path: String) -> String {
+        let absolute = (path as NSString).expandingTildeInPath
+        let std = (absolute.hasPrefix("/") ? absolute : FileManager.default.currentDirectoryPath + "/" + absolute)
+        var comps = (std as NSString).standardizingPath.split(separator: "/").map(String.init)
+        var tail: [String] = []
+        while !comps.isEmpty {
+            let candidate = "/" + comps.joined(separator: "/")
+            if let c = canonicalPath(candidate) {
+                return tail.isEmpty ? c : c + "/" + tail.reversed().joined(separator: "/")
+            }
+            tail.append(comps.removeLast())
+        }
+        return "/" + tail.reversed().joined(separator: "/")
+    }
+
     /// Writes data atomically: temp file in the same directory, fsync, rename. Keeps the mode of an existing
     /// destination unless `mode` is given.
     public static func writeAtomically(_ data: Data, to path: String, mode: mode_t? = nil) throws {
