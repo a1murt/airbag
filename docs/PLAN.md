@@ -22,7 +22,7 @@ checks listed. Status markers: ☐ todo, ◐ in progress, ☑ done.
 - Accept: every "destructive agent" scenario in doc 10 §10 restores byte-for-byte; retention property test;
   5k-file no-change snapshot < 50 ms in release.
 
-## M3 ☐ Circuit breaker
+## M3 ☑ Circuit breaker
 - Shell lexer (quotes, escapes, `&& || ; |`, newlines, `$( )`, backticks, `sh -c`, wrappers, env prefixes), path
   resolution, rule catalog, verdicts, `airbag check`.
 - `docs/design/12-circuit-breaker-rules.md` + `Tests/Fixtures/rules.json` (≥ 150 cases).
