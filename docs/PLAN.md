@@ -28,7 +28,7 @@ checks listed. Status markers: ☐ todo, ◐ in progress, ☑ done.
 - `docs/design/12-circuit-breaker-rules.md` + `Tests/Fixtures/rules.json` (≥ 150 cases).
 - Accept: fixture 100 % green; evaluation < 1 ms per command.
 
-## M4 ☐ Hook bridge and installer
+## M4 ☑ Hook bridge and installer
 - Adapters (Claude Code, Codex, Cursor, Gemini, Copilot), reply encoders, pipeline with deadlines and watchdog,
   session upsert, events, guard log, allow tokens, spool, socket ping.
 - Installer: merge/backup/uninstall/status for each agent's user config; `airbag hooks …`, `airbag doctor`.
@@ -36,6 +36,10 @@ checks listed. Status markers: ☐ todo, ◐ in progress, ☑ done.
   leaves the config byte-identical; end-to-end run of the real Claude Code binary with `--settings` pointing at
   Airbag hooks in a temp project: a destructive command is snapshotted and restored, `rm -rf ~`-style command is
   denied.
+- Status 2026-10-18: unit/pipeline/installer tests green; `Scripts/e2e-hooks.py` (simulated agent driving the real
+  release binary over stdin/stdout) passes 13/13 with hook p50 14.6 ms. `Scripts/e2e-claude.sh` (real Claude Code)
+  is ready but blocked: the Claude CLI on this Mac is not logged in (only the desktop app is); run it after
+  `claude /login`.
 
 ## M5 ☐ Process radar
 - libproc scanner, `KERN_PROCARGS2` reader, attribution ladder, orphan state, stopper, `airbag ports`, `airbag stop`.
