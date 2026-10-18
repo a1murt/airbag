@@ -11,7 +11,7 @@ checks listed. Status markers: ☐ todo, ◐ in progress, ☑ done.
   `codesign --verify --strict` passes (ad-hoc); launching shows the icon; `defaults write … AppleLanguages (ru)`
   switches the popover text.
 
-## M1 ☐ Foundations
+## M1 ☑ Foundations
 - Paths and permission enforcement (0700/0600), ULID, SHA-256, JSON helpers, `Log`, SQLite wrapper (prepared
   statements, transactions, `BEGIN IMMEDIATE`, busy timeout), registry schema v1 + migrations, settings.
 - Accept: unit tests for ULID ordering, SQLite wrapper, migrations idempotence, two-process write contention.
