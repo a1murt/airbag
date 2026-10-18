@@ -16,7 +16,7 @@ checks listed. Status markers: ☐ todo, ◐ in progress, ☑ done.
   statements, transactions, `BEGIN IMMEDIATE`, busy timeout), registry schema v1 + migrations, settings.
 - Accept: unit tests for ULID ordering, SQLite wrapper, migrations idempotence, two-process write contention.
 
-## M2 ☐ Snapshot engine (riskiest)
+## M2 ☑ Snapshot engine (riskiest)
 - Walker, store open/create, snapshot, list, changes, diff (incl. live), Myers text diff, restore (paths/root,
   aside, conflicts, undo), pin, prune (retention SQL), usage; CLI subcommands.
 - Accept: every "destructive agent" scenario in doc 10 §10 restores byte-for-byte; retention property test;

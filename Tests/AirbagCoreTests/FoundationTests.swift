@@ -14,9 +14,9 @@ import Testing
     }
 
     @Test func timestampRoundTrip() {
-        let ms: UInt64 = 1_760_000_000_123
-        let u = ULID.make(nowMs: ms + 10_000_000) // far future keeps this independent of other tests
-        #expect(ULID.timestampMs(u) == ms + 10_000_000)
+        let ms: UInt64 = 1_792_000_000_123
+        let u = ULID.encode(ms: ms, high: 7, low: 42) // pure: does not move the process-wide monotonic clock
+        #expect(ULID.timestampMs(u) == ms)
         #expect(ULID.encode(ms: 0, high: 0, low: 0) == "00000000000000000000000000")
         #expect(ULID.encode(ms: 0xFFFF_FFFF_FFFF, high: .max, low: .max) == "7ZZZZZZZZZZZZZZZZZZZZZZZZZ")
     }
