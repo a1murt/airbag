@@ -179,6 +179,14 @@ public struct HookBridge {
                                        airbagHome: FileSystem.canonicalPath(config.paths.home.path) ?? config.paths.home.path)
             var verdict = RuleEngine().evaluate(command, context: context)
             timing["rules"] = Clock.elapsedMs(since: t0)
+            // Paused by the user: blocks stay (they cost nothing), snapshots and questions are skipped.
+            if registry?.pausedUntilMs != nil && verdict.decision != .block {
+                reply = .allow
+                record.decision = "allow"
+                record.snapshotSkipped = "paused"
+                outcome.verdict = verdict
+                break
+            }
             let primary = verdict.primary
             func guardRef(_ decision: String) -> HookRecord.GuardRef? {
                 guard let p = primary else { return nil }
@@ -248,7 +256,7 @@ public struct HookBridge {
             }
             outcome.verdict = verdict
         case .postShell, .shellFailed:
-            if let command = env.command {
+            if let command = env.command, registry?.pausedUntilMs == nil {
                 let context = GuardContext(cwd: cwd, home: config.home, roots: roots, airbagHome: config.paths.home.path)
                 if RuleEngine().evaluate(command, context: context).snapshot != .none {
                     let (snap, skipped) = takeSnapshot(.postCommand, label: "After `\(String(Redactor.redact(command).prefix(80)))`")

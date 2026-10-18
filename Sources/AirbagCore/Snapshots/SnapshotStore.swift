@@ -649,23 +649,27 @@ public final class SnapshotStore {
         guard !all.isEmpty else { return report }
         let newest = Set(all.suffix(max(1, policy.keepNewest)).map(\.seq))
         var keep = Set(all.filter { $0.pinned || newest.contains($0.seq) || $0.created >= nowMs - policy.maxAgeMs }.map(\.seq))
+        var del = all.map(\.seq).filter { !keep.contains($0) }
+        if dryRun { report.deletedSnapshots = del.count; return report }
+        if !del.isEmpty { try deleteSnapshots(del, keep: keep, report: &report) }
+        // Byte budget: deduplication lets new snapshots keep old objects alive, so the effect of deleting a snapshot is
+        // only known after compaction. Delete the oldest eligible snapshots in batches and measure.
         if let budget = policy.maxBytes {
-            let bytes = try usage().objectBytes
-            if bytes > budget {
-                // Over budget: give up the oldest age-retained snapshots first (estimate: proportional to bytes added).
-                var excess = bytes - budget
-                let added = Dictionary(uniqueKeysWithValues: try db.all("SELECT seq, bytes_added FROM snapshots") { ($0.int(0), $0.int(1)) })
-                for s in all where keep.contains(s.seq) && !s.pinned && !newest.contains(s.seq) {
-                    if excess <= 0 { break }
-                    keep.remove(s.seq)
-                    excess -= max(1, added[s.seq] ?? 0)
-                }
+            while try usage().objectBytes > budget {
+                let candidates = all.filter { keep.contains($0.seq) && !$0.pinned && !newest.contains($0.seq) }.map(\.seq)
+                guard !candidates.isEmpty else { break }
+                let batch = Array(candidates.prefix(max(1, candidates.count / 8)))
+                keep.subtract(batch)
+                del = batch
+                try deleteSnapshots(del, keep: keep, report: &report)
             }
         }
-        let del = all.map(\.seq).filter { !keep.contains($0) }
-        report.deletedSnapshots = del.count
-        if dryRun || del.isEmpty { return report }
+        sweepOrphanObjects()
+        return report
+    }
 
+    /// Deletes snapshots `del` while keeping every state in `keep` reconstructible (doc 10 §7).
+    func deleteSnapshots(_ del: [Int64], keep: Set<Int64>, report: inout PruneReport) throws {
         var deadObjects: [(Int64, Int64, Int64)] = []
         try db.transaction(.immediate) {
             try db.execute("CREATE TEMP TABLE IF NOT EXISTS prune_del(seq INTEGER PRIMARY KEY); CREATE TEMP TABLE IF NOT EXISTS prune_keep(seq INTEGER PRIMARY KEY); DELETE FROM prune_del; DELETE FROM prune_keep;")
@@ -676,7 +680,7 @@ public final class SnapshotStore {
               SELECT 1 FROM changes c2 WHERE c2.path = c.path AND c2.seq > c.seq
                 AND c2.seq <= (SELECT min(seq) FROM prune_keep WHERE seq > c.seq))
             """, cached: false)
-            report.deletedChanges = db.changes
+            report.deletedChanges += db.changes
             // A tombstone that is the oldest remaining row of its path, below every retained snapshot, says nothing.
             try db.run("""
             DELETE FROM changes AS c WHERE c.item IS NULL AND c.seq < (SELECT min(seq) FROM prune_keep)
@@ -684,6 +688,7 @@ public final class SnapshotStore {
             """, cached: false)
             report.deletedChanges += db.changes
             try db.run("DELETE FROM snapshots WHERE seq IN (SELECT seq FROM prune_del)", cached: false)
+            report.deletedSnapshots += db.changes
             deadObjects = try db.all("""
             SELECT id, kind, size FROM items WHERE id NOT IN (SELECT item FROM changes WHERE item IS NOT NULL)
               AND id NOT IN (SELECT item FROM current)
@@ -693,8 +698,6 @@ public final class SnapshotStore {
         for (id, kind, size) in deadObjects where kind == 0 {
             if unlink(objectPath(id)) == 0 { report.deletedObjects += 1; report.freedBytes += size }
         }
-        sweepOrphanObjects()
-        return report
     }
 
     /// Removes object files that have no item row (left behind by a crash between capture and commit).
