@@ -146,7 +146,10 @@ public final class ProcessRadar {
         let listeners = ListenerScanner.scan(pids: mine.map(\.pid))
         let live = liveAgents(table: table, registry: registry)
         let livePids = Dictionary(live.map { ($0.pid, $0) }, uniquingKeysWith: { a, _ in a })
-        let liveSessions = Set(live.map { "\($0.agent.rawValue):\($0.agentSessionID)" })
+        var liveSessions = Set(live.map { "\($0.agent.rawValue):\($0.agentSessionID)" })
+        // Sessions whose agent process was never located (hook could not walk to it) count as live until they end
+        // or go quiet for two hours, so their servers are not reported as orphans while the agent still runs.
+        liveSessions.formUnion(unlocatedLiveSessions(registry))
         let roots = registeredRoots(registry)
         let remembered = rememberedAttributions(registry)
         let titles = sessionTitles(registry, live: live)
@@ -261,6 +264,14 @@ public final class ProcessRadar {
         if devSignal { return .dev }
         if hasListener && !path.contains(".app/Contents/") { return .dev }
         return .other
+    }
+
+    func unlocatedLiveSessions(_ registry: Registry?) -> [String] {
+        guard let reg = registry else { return [] }
+        return (try? reg.db.all("""
+        SELECT agent, agent_session_id FROM sessions s WHERE ended_at IS NULL AND last_seen_at > ?
+          AND NOT EXISTS (SELECT 1 FROM session_pids sp WHERE sp.session_id = s.id)
+        """, [Clock.nowMsInt() - 2 * 3_600_000]) { "\($0.text(0)):\($0.text(1))" }) ?? []
     }
 
     func registeredRoots(_ registry: Registry?) -> [String] {
