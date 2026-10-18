@@ -1,6 +1,6 @@
 # 11 — Session registry, hook bridge and process/port radar
 
-Status: design, 2026-10-17. Implements the "hook bridge + session registry" and "server/port radar" rows of the build order in the market report (doc 00 §"Порядок сборки"). Inputs: research docs 01 (Claude Code hooks), 02 (Codex), 03 (Cursor/Gemini/Copilot), 04 (macOS platform), 06 (git snapshot mechanics), 05 (competitors, for the stop protocol and the Baa precedent), plus probes run on this Mac today (macOS 15.7.9, Claude Desktop 2.31226.1 hosting Claude Code 2.1.295, uid 501, no root, no Full Disk Access). Every number and path below is tagged: [verified] = primary source or local probe today, [likely] = strong inference or secondary source, [unverified] = assumption that needs a probe.
+Status: design, 2026-10-17 (second pass the same day: machine re-probed, Swift surface completed, reconciled with spec 13 and doc 06). Implements the "hook bridge + session registry" and "server/port radar" rows of the build order in the market report (doc 00 §"Порядок сборки"). Inputs: research docs 01 (Claude Code hooks), 02 (Codex), 03 (Cursor/Gemini/Copilot), 04 (macOS platform), 06 (git snapshot mechanics), 05 (competitors, for the stop protocol and the Baa precedent), plus probes run on this Mac today (macOS 15.7.9, Claude Desktop 2.31226.1 hosting Claude Code 2.1.295, uid 501, no root, no Full Disk Access). Every number and path below is tagged: [verified] = primary source or local probe today, [likely] = strong inference or secondary source, [unverified] = assumption that needs a probe.
 
 Companion designs this document depends on but does not define: the snapshot engine (git object store under `~/Library/Application Support/Airbag/stores/`, orphan commits, refs, retention — doc 06 gives the mechanics) and the circuit-breaker rule engine. Their interfaces as consumed here are pinned in §10.5.
 
@@ -9,11 +9,11 @@ Companion designs this document depends on but does not define: the snapshot eng
 1. One SQLite file, `~/Library/Application Support/Airbag/registry.sqlite`, WAL mode, is the contract between the `airbag` CLI (hook) and `Airbag.app`. The app is never required for protection: the hook evaluates rules, snapshots and writes the registry on its own; when the registry is unavailable it still decides and spools the row to disk.
 2. Unix-domain socket `~/Library/Application Support/Airbag/airbag.sock` is a wake-up channel only (one JSON line per hook event, fire-and-forget, 20 ms connect budget). No decision ever waits on the app. `PRAGMA data_version` polling is the fallback when the socket is absent.
 3. Session identity is `(agent, agent_session_id)`; a session has one or more *incarnations* `(pid, proc_start)`. Resume, `/clear` and crash are modelled as incarnation changes, not new sessions, because the real orphan on this machine (`next-server` pid 70386) carries a session id whose original `claude` pid is dead while the same session id is live again under a new pid [verified].
-4. Process identity everywhere is `(pid, proc_start_us)`; every signal re-validates it. "ppid == 1" is never used as an orphan signal on its own: 264 of 308 same-uid processes on this machine have ppid 1 [verified].
+4. Process identity everywhere is `(pid, proc_start_us)`; every signal re-validates it. "ppid == 1" is never used as an orphan signal on its own: 255–264 of 299–308 same-uid processes on this machine had ppid 1 in two probes today [verified].
 5. Attribution ladder, in order: live ancestry → environment markers via `sysctl KERN_PROCARGS2` (29 µs median per pid, EINVAL for other uids, empty for Apple platform binaries) → remembered ancestry / process group → cwd under a project or worktree → argv match against recorded background commands. Confidence is recorded per process; the UI shows it.
 6. Radar cadence: 1 s while the popover is open, 2 s with live sessions, 5 s with tracked listeners only, 10 s idle, 30 s when the display is asleep; plus event-triggered rescans at +0.3 s, +2 s, +10 s after shell events. Full poll budget 3 ms median; env and cwd reads only for candidate pids, cached by process identity.
-7. Hook reply budget: typical 60–160 ms (snapshot dominates); soft snapshot deadline 1500 ms; hard watchdog 4000 ms for pre-shell, 800 ms for session-end, 2000 ms otherwise. On deadline the hook prints the already-decided non-deny answer and abandons the snapshot; a deny never waits on anything.
-8. Fail policy: rules and deny decisions depend only on the binary and a cached rules file; registry/snapshot/app failures degrade to allow + spool + log. Strict mode (opt-in) flips the agent-side default (`onFailure: block`, `failClosed: true`) for the pre-shell hook only.
+7. Hook reply budget: typical 60–160 ms (snapshot dominates); soft snapshot deadline 1500 ms; hard watchdog 4000 ms for pre-shell, 800 ms for session-end, 2000 ms otherwise. On deadline the hook prints the already-decided non-deny answer and abandons the snapshot. A deny is decided before any I/O (§4.1 step 4) and never waits on the snapshot or the app; its registry write is bounded by `busy_timeout` 300 ms plus two short retries, then spooled.
+8. Fail policy: rules and deny decisions depend only on the binary and a cached rules file; registry/snapshot/app failures degrade to allow + spool + log. The only decision input that lives in the registry is the one-shot allowance for `ask` rules; without the registry, `ask` resolves per its fallback (native prompt or deny-with-explanation), never silently to allow. Strict mode (opt-in) flips the agent-side default (`onFailure: block`, `failClosed: true`) for the pre-shell hook only.
 9. `ask` is native on Claude Code (except under `bypassPermissions`, where behaviour is undocumented), Cursor `beforeShellExecution` and Copilot interactive; everywhere else, and under Claude bypass by default, `ask` degrades to deny-with-allowance: the deny reason tells the model the user can approve in Airbag; the app writes an `allow_tokens` row keyed by `(session, sha256(command))`; the retried command is allowed once.
 10. Stop semantics: SIGTERM to the process (and its descendants, children first), poll 100 ms for 5 s, then offer SIGKILL as a separate action. Process groups are signalled only when the group leader is the target or already dead and the group contains no protected pid. Agents, their hosts (Claude.app, Cursor.app, Codex.app, Terminal, IDEs), Airbag itself, and anything under `/System` are never signalled.
 11. Privacy: never persist stdout/stderr/`tool_response`/`output`; persist command text only after redaction (default: token patterns), with `hash_only` and `off` modes; environment is reduced to an allowlist of marker keys; DB and socket directory are 0700/0600; no network.
@@ -45,9 +45,10 @@ Filesystem layout under `~/Library/Application Support/Airbag/` (directory 0700,
 | --- | --- | --- |
 | `registry.sqlite`, `-wal`, `-shm` | both | 0600; §3 |
 | `airbag.sock` | app | POSIX listener, 0600, unlinked on start if stale; §5 |
+| `app.pid` | app | `{"pid":…,"start_us":…}` of the running app; stale-socket check (§5), `airbag doctor` |
 | `spool/<ulid>.json` | CLI writes, both ingest | registry writes that failed; §3.6 |
 | `rules/` | app writes, CLI reads | compiled user rules cache (rule-engine design) |
-| `stores/<project_id>.git` | both | snapshot stores (doc 06) |
+| `stores/<project_id>/` | both | bare git snapshot stores (doc 06 §3; spec 13 §4 uses the same path) |
 | `logs/hook.log`, `logs/app.log` | CLI / app | 5 × 1 MB rotation; §4.8 |
 
 ## 2. Identity model
@@ -85,7 +86,7 @@ PRAGMA application_id = 0x41524247;  -- 'ARBG', set by migration 1
 
 Writes are always `BEGIN IMMEDIATE … COMMIT` (a read transaction that upgrades to a write is refused with `SQLITE_BUSY` immediately, bypassing the busy handler [verified, sqlite.org busy_handler]). Measured on this machine: two processes × 2000 single-row transactions with `busy_timeout=5000` saw zero `SQLITE_BUSY` and a 27 ms worst wait; CLI open + one insert + close ≈ 3 ms [verified, doc 04 §8].
 
-Checkpointing: the app runs `PRAGMA wal_checkpoint(PASSIVE)` every 60 s when the WAL exceeds 4 MB and `wal_checkpoint(TRUNCATE)` once per hour while idle. When the app is not running the CLI checks `registry.sqlite-wal` size with `stat` (free) and runs `PASSIVE` when it exceeds 16 MB, so the WAL cannot grow without bound. PASSIVE never invokes the busy handler and never blocks the hook [verified, sqlite.org pragma page].
+Checkpointing: the app runs `PRAGMA wal_checkpoint(PASSIVE)` every 60 s when the WAL exceeds 4 MB and `wal_checkpoint(TRUNCATE)` once per hour while idle. The CLI `stat`s `registry.sqlite-wal` (free) at the end of every hook and runs `PASSIVE` when it exceeds 16 MB, whether or not the app is running (concurrent PASSIVE checkpoints are safe and restartable), so the WAL cannot grow without bound. PASSIVE never invokes the busy handler and never blocks the hook [verified, sqlite.org pragma page].
 
 ### 3.2 DDL (migration 1)
 
@@ -110,8 +111,9 @@ CREATE TABLE agents (
   detected          INTEGER NOT NULL DEFAULT 0 CHECK (detected IN (0,1)),
   binary_path       TEXT,
   version           TEXT,
-  hooks_state       TEXT NOT NULL DEFAULT 'not_installed'
-                    CHECK (hooks_state IN ('not_installed','installed','untrusted','modified','disabled_by_policy','drifted')),
+  hooks_state       TEXT NOT NULL DEFAULT 'not_installed'   -- names shared with spec 13 §7.4; 'healthy' is a UI label (installed + recent event)
+                    CHECK (hooks_state IN ('not_installed','installed','untrusted','modified','drifted',
+                                           'duplicate_route','managed_only','invalid_file','binary_moved')),
   hooks_config_path TEXT,
   hooks_fingerprint TEXT,                      -- sha256 of the Airbag handler entries as written
   hooks_detail      TEXT CHECK (hooks_detail IS NULL OR json_valid(hooks_detail)),
@@ -366,8 +368,8 @@ Never `VACUUM` automatically; offer "Compact database" in Settings (`VACUUM` nee
 
 | Key | Default | Used by |
 | --- | --- | --- |
-| `hook.snapshotDeadlineMs` | `1500` | CLI |
-| `hook.hardDeadlineMs` | `{"preShell":4000,"sessionEnd":800,"other":2000}` | CLI |
+| `hook.snapshotDeadlineMs` | `1500` (UI range 500–10 000; spec 13 §7.4 currently shows "3 s default" — reconcile, §12 item 16) | CLI |
+| `hook.hardDeadlineMs` | `{"preShell":4000,"sessionEnd":800,"other":2000}`; effective `preShell = max(4000, snapshotDeadlineMs + 1500)` | CLI |
 | `hook.busyTimeoutMs` | `300` | CLI |
 | `hook.strictMode` | `false` (installer writes `onFailure:"block"` / `failClosed:true` when `true`) | installer |
 | `hook.askFallback` | `{"claude-code":"native","codex":"deny_with_allowance","cursor":"native","gemini":"deny_with_allowance","copilot":"native"}` | CLI |
@@ -380,7 +382,8 @@ Never `VACUUM` automatically; offer "Compact database" in Settings (`VACUUM` nee
 | `radar.extraDevNames`, `radar.ignoreNames` | `[]`, `[]` | app |
 | `radar.orphanPrompt` | `true` | app |
 | `radar.orphanGraceSec` | `20` | app |
-| `radar.autoStopOrphansAfterMin` | `0` (off) | app |
+| `radar.autoStopOrphansAfterMin` | `0` (off; reserved key, read but not exposed in the v1 UI — spec 13 §7.2 offers no auto-stop) | app |
+| `projects.options.onSessionEnd` (per project, inside `projects.options`) | `"ask"` (`"silent"` lists orphans without prompting; spec 13 §7.4 "On session end") | app |
 | `radar.protectedAppPrefixes` | list in §6.7 | app |
 | `session.endGraceSec` | `15` | app |
 | `session.staleHoursSharedHost` | `2` (Codex app-server, Cursor IDE: §8) | app |
@@ -399,21 +402,28 @@ Never `VACUUM` automatically; offer "Compact database" in Settings (`VACUUM` nee
  0. arm watchdog (deadline by event kind, §4.2); pre-compose the "safe response" for the declared agent
  1. read stdin to EOF, cap 1 MiB (larger → treat as unknown event → safe response)
  2. parse JSON; adapter = AgentAdapter.detect(payload) ?? declared; envelope = adapter.parse(payload)
- 3. locate the agent process: env first (CLAUDE_PID), then bounded ppid walk (§4.3) → AgentLocation
- 4. open registry (role .cli); on failure → degraded, continue
- 5. resolve project/worktree from envelope.cwd by filesystem walk (§7.4), no git spawn
- 6. BEGIN IMMEDIATE: upsert project, worktree, session, incarnation; insert event (dedupe); COMMIT
- 7. switch event:
-      preShell          → rules.evaluate → deny? log guard, reply deny (no snapshot)
-                                          → else snapshot(deadline) → reply allow | ask (per fallback)
-      permissionRequest → rules.evaluate (Codex only) → deny/none
-      postShell         → update the pre_shell event (duration, interrupted, spilled); mark snapshot pair
+ 3. resolve project/worktree from envelope.cwd by filesystem walk (§7.4): no git spawn, no DB
+ 4. preShell / permissionRequest only: verdict = rules.evaluate(request, agent, project, worktree, permissionMode)
+    (pure, in-memory: built-in rules + the `rules/` cache the app compiles). The verdict is final before any I/O below.
+ 5. locate the agent process: env first (CLAUDE_PID), then bounded ppid walk (§4.3) → AgentLocation
+ 6. open registry (role .cli, busy_timeout 300 ms); on failure → degraded, continue
+ 7. BEGIN IMMEDIATE (≤ 2 retries, 20–60 ms jitter): upsert project, worktree, session, incarnation; append event
+    (dedupe hit → reply with the stored decision, skip 8); verdict == ask → consumeAllowance; COMMIT.
+    SQLITE_BUSY / degraded → SpoolBatch on disk, continue with the same verdict.
+ 8. switch event:
+      preShell          → deny          → guard row (DB or spool), reply deny (no snapshot)
+                          ask           → resolve per §4.6: native ask | allowance consumed → allow_once | deny_with_allowance
+                          allow/allow_once → snapshot(deadline) → reply
+      permissionRequest → deny → reply deny (Codex only); otherwise print nothing
+      postShell/shellFailed → update the paired pre_shell event (duration, interrupted, spilled)
       sessionStart/prompt/stop/cwdChanged/subagent* → registry only
       sessionEnd        → end session (reason 'hook:<reason>'); no snapshot
- 8. ingest ≤ 20 spool files if healthy and > 50 ms budget left
- 9. airbag.sock: send {"op":"hook",…} (non-blocking, 20 ms)
-10. print exactly one JSON object (or nothing where the agent requires it) and exit
+ 9. ingest ≤ 20 spool files if healthy and > 50 ms budget left
+10. airbag.sock: send {"op":"hook",…} (non-blocking, 20 ms)
+11. print exactly one JSON object (or nothing where the agent requires it) and exit
 ```
+
+A deny therefore depends on steps 1–4 only (≈ 2 ms). Its persistence (step 7) costs 3–5 ms normally and at most `busy_timeout` + retries ≈ 420 ms under contention before the spool takes over; it is never skipped, because the guard log is the audit trail the UI shows.
 
 Exec form everywhere a shell is not needed (`"command": "/…/airbag", "args": ["hook","claude-code"]` for Claude, `exec`/`args` for Copilot): no `sh -c`, no quoting problems with `Application Support`, ~2.5 ms less per call [verified, doc 01 §12]. Codex, Cursor and Gemini take a command string; the installer writes the absolute path quoted.
 
@@ -435,7 +445,7 @@ Targets: pre-shell p50 < 300 ms, p95 < 2 s on a 50k-file repo (same numbers doc 
 
 ### 4.3 Finding the agent process
 
-Primary signal: environment. Claude Code sets `CLAUDE_PID` and `CLAUDE_CODE_SESSION_ID` in hook processes (verified capture, doc 01 §7; also present in this Bash tool shell today). Gemini sets `GEMINI_SESSION_ID` for hooks [verified, hookRunner.ts]. Codex sets nothing hook-specific; Cursor sets `CURSOR_PROJECT_DIR`/`CURSOR_VERSION` but no pid; Copilot `COPILOT_CLI=1` [likely]. When a pid is given, verify it is alive and is an ancestor (or, under Codex's future exec-server, at least alive and matching the agent pattern); otherwise fall back to the walk.
+Primary signal: environment. Claude Code sets `CLAUDE_PID` and `CLAUDE_CODE_SESSION_ID` in hook processes (verified capture, doc 01 §7; also present in this Bash tool shell today), and `CLAUDE_CODE_EXECPATH` names the running binary, which must equal `proc_pidpath(CLAUDE_PID)` for the env hit to count. Gemini sets `GEMINI_SESSION_ID` for hooks [verified, hookRunner.ts]. Codex sets nothing hook-specific; Cursor sets `CURSOR_PROJECT_DIR`/`CURSOR_VERSION` but no pid; Copilot `COPILOT_CLI=1` [likely]. When a pid is given, verify it is alive and is an ancestor (or, under Codex's future exec-server, at least alive and matching the agent pattern); otherwise fall back to the walk.
 
 Walk: `pid = getppid()`; loop ≤ 32 hops: `proc_pidinfo(pid, PROC_PIDTBSDINFO)` → `(pid, start, ppid, pgid, e_tdev)`, `proc_pidpath(pid)`; stop at `ppid <= 1`, `EPERM`, `ESRCH`. For `node`/`sh`/`bash`/`zsh` hops read argv with `KERN_PROCARGS2` (same uid, 29 µs [verified today]) to disambiguate. Never match on the shell: `/bin/sh` re-execs as `/bin/bash` and `sh -c "<one command>"` exec-optimises the shell away [verified, doc 04 §2].
 
@@ -448,7 +458,7 @@ Walk: `pid = getppid()`; loop ≤ 32 hops: `proc_pidinfo(pid, PROC_PIDTBSDINFO)`
 | Gemini | `node` whose argv contains `gemini` (`@google/gemini-cli` or Homebrew `gemini-cli` path) | `cli` | hook is `bash -c` child of the node process [verified, hookRunner.ts]. |
 | Copilot | basename `copilot` (Rust engine, log says "Rust JSON-RPC engine") or `node` with argv containing `@github/copilot` | `cli` | [likely, doc 03 §5.7]. |
 
-Record per incarnation: agent `(pid, start)`, `exe_path`, `argv0`, `ppid`, `pgid`, `host_pid/host_start` (Electron main), `terminal_pid/terminal_app` (first ancestor whose path matches `/Applications/*.app/Contents/MacOS/*` or `/System/Applications/Utilities/Terminal.app/…`), `tty` (`devname(e_tdev, S_IFCHR)` when `e_tdev != 0xFFFFFFFF`; desktop chains have none [verified, doc 04 §2]). No match within 32 hops → incarnation row with `pid = NULL`-equivalent (omit the row), session still upserted; the radar later attributes through env markers.
+Record per incarnation: agent `(pid, start)`, `exe_path`, `argv0`, `ppid`, `pgid`, `host_pid/host_start` (Electron main), `terminal_pid/terminal_app` (first ancestor whose path matches `/Applications/*.app/Contents/MacOS/*` or `/System/Applications/Utilities/Terminal.app/…`), `tty` (`devname(e_tdev, S_IFCHR)` when `e_tdev != 0xFFFFFFFF`; desktop chains have none [verified, doc 04 §2]). No match within 32 hops → no `session_pids` row is written (the session row is still upserted and the event carries `payload.locate = "none"`); the radar later attributes through env markers.
 
 ### 4.4 Per-agent I/O contract
 
@@ -486,7 +496,7 @@ Order inside `preShell`: (1) rules; (2) if `deny`, reply at once (no files chang
 Ask resolution (`hook.askFallback[agent]`, and `hook.askUnderBypass` when Claude reports `permission_mode == "bypassPermissions"` — observed today on a desktop session, pid 99094 [verified]):
 
 - `native`: emit the agent's ask shape (Claude, Cursor `beforeShellExecution`, Copilot interactive; Claude's `ask` is honoured in `auto` mode since 2.1.211 and becomes a deny in `dontAsk`/unattended `-p` [verified, doc 01 §4.3]).
-- `deny_with_allowance`: emit deny; `guard_log.decision='ask'`→ stored as `deny_fallback`; the app shows the guard entry with "Allow once"/"Deny"; "Allow once" inserts `allow_tokens(session_id, sha256(command), rule_id, expires_at = now + 10 min)` and resolves the guard row. On the retried command the hook finds an unused, unexpired token for the same session and command hash, marks `used_at`, logs `allow_once`, snapshots, and replies allow. No token string travels through the model; the hash binds the allowance to the exact command text.
+- `deny_with_allowance`: emit deny; `guard_log.decision='ask'`→ stored as `deny_fallback`; the app shows the guard entry with "Allow once"/"Deny"; "Allow once" inserts `allow_tokens(session_id, sha256(command), rule_id, expires_at = now + 10 min)` and resolves the guard row. On the retried command the hook finds an unused, unexpired token for the same session and command hash, marks `used_at`, logs `allow_once`, snapshots, and replies allow. No token string travels through the model; the hash binds the allowance to the exact command text. When the registry is degraded the allowance cannot be looked up, so `ask` resolves as if no token existed (native ask, or the same deny-with-explanation) — never as a silent allow.
 - `allow_snapshot`: snapshot and allow (for users who want zero interruptions on Codex/Gemini); the guard row is still written with `decision='allow_fallback'`.
 
 Snapshot pairing: `pre_shell` event id → `snapshots.event_id`; `post_shell`/`shell_failed` with the same `tool_use_id` (Claude, Codex, Copilot) or `generation_id + command_hash` (Cursor) or `session + command_hash + 60 s` (Gemini) updates `duration_ms`, `payload.interrupted`, `payload.spilled` and lets the UI label "Before `cmd` → changed N files".
@@ -495,7 +505,7 @@ Snapshot pairing: `pre_shell` event id → `snapshots.event_id`; `post_shell`/`s
 
 | Failure | Decision | Snapshot | Persistence | Reply |
 | --- | --- | --- | --- | --- |
-| Registry busy / locked / read-only / corrupt | unaffected (rules + `rules/` cache) | attempted (store needs no DB) | spool file | normal |
+| Registry busy / locked / read-only / corrupt | unaffected (rules + `rules/` cache); one-shot allowances cannot be consumed, so `ask` resolves per fallback | attempted (store needs no DB) | spool file | normal |
 | Snapshot store missing/cold/locked | unaffected | skipped (`snapshot_skipped` with reason) | DB | normal; UI banner |
 | Snapshot exceeds deadline | unaffected | abandoned, git pgid killed, `snapshot_timeout` | DB | watchdog prints the decided answer |
 | Agent process not found | unaffected | normal | session without incarnation | normal |
@@ -527,7 +537,7 @@ Full JSON blocks: Claude doc 01 §6.1, Codex doc 02 §10, Cursor doc 03 §3.10, 
 
 ## 5. IPC CLI ↔ app
 
-Decision: SQLite is the contract; a Unix-domain socket is the wake-up. Measured on this machine: POSIX socket round trip 4 µs, `LOCAL_PEERPID`/`LOCAL_PEERCRED` give the hook's pid and uid for free; `NWListener` creates the socket file 0755 (so POSIX is used server-side); XPC would need a launchd `MachServices` job and `SMAppService.agent` [verified, doc 04 §7]. `DistributedNotificationCenter` has no sender identity and no delivery guarantee; not used.
+Decision: SQLite is the contract; a Unix-domain socket is the wake-up. Measured on this machine: POSIX socket round trip 4 µs, `LOCAL_PEERPID`/`LOCAL_PEERCRED` give the hook's pid and uid for free; `NWListener` creates the socket file 0755 (so POSIX is used server-side); XPC would need a launchd `MachServices` job and `SMAppService.agent` [verified, doc 04 §7]. `DistributedNotificationCenter` has no sender identity and no delivery guarantee; not used. Doc 04 §7 and spec 13 §4 sketch an optional ≤ 50 ms wait for a `{"snapshot":"ok"}` acknowledgement; this design drops it: the hook owns the snapshot (protection must hold with the app closed), so there is nothing for the app to acknowledge, and a wait would only add latency when the app is busy. The app learns everything from the registry; the socket exists so the UI updates within ~1 ms of a hook instead of on the next `data_version` poll.
 
 Protocol: newline-delimited UTF-8 JSON, one frame per connection from the CLI (connect → write → close; the app never needs to answer), ≤ 64 KB per frame.
 
@@ -567,7 +577,7 @@ Event pokes: `pre_shell` with `background=true`, `post_shell`, `stop`, `session_
 
 ### 6.2 Per-process record
 
-`RadarProcess` (persisted as `processes` + `listeners` only for tracked classes `dev`, `agent`, `agent_helper`, and anything attributed): `key (pid, start_us)`, `ppid`, `pgid`, `uid`, `exe_path`, `name`, `argv` (redacted, ≤ 2 KB, first 32 args), `cwd`, `startedAt`, `rss_bytes` (`ri_phys_footprint`, the Activity Monitor number [verified]), `cpu_pct` (delta of user+system ticks / wall between ticks), `cpu_time_ns`, `listeners [port, family, address, scope]`, `ancestry` (chain of `(pid,start)` at first sight, nearest first, up to 32), `env_markers` (allowlist §9), `attribution`, `link_state`, `class`, `protection`, `kept_at`.
+`RadarProcess` (persisted as `processes` + `listeners` only for tracked classes `dev`, `agent`, `agent_helper`, and anything attributed): `key (pid, start_us)`, `ppid`, `pgid`, `uid`, `exe_path`, `name`, `argv` (redacted, ≤ 2 KB, first 32 args), `cwd`, `startedAt`, `rss_bytes` (`ri_phys_footprint`, the Activity Monitor number [verified]), `cpu_pct` (delta of user+system ticks / wall between ticks), `cpu_time_ns`, `listeners [port, family, address, scope]`, `ancestry` (chain of `(pid,start)` at first sight, nearest first, up to 32), `env_markers` (allowlist §9), `attribution`, `link_state`, `class`, `protection`, `kept_at`. `rss_bytes`, `cpu_pct` and `cpu_time_ns` are live-only and never persisted; the `processes` row holds identity, classification and attribution only.
 
 ### 6.3 Attribution ladder
 
@@ -582,6 +592,8 @@ Evaluated per candidate on every tick in this order; the first rule that yields 
 
 `attribution_changed` events are written when method or target changes; manual overrides (`manual`, user drags a process onto a session or project in the UI) are never overwritten by rules 3–5, only by 1–2 with a different session.
 
+**Reading other processes' environment — evaluation of option (d).** `sysctl({CTL_KERN, KERN_PROCARGS2, pid})` returns `argc` (4 bytes), the exec path, NUL padding, argv, then `KEY=VALUE` strings, for any same-uid process without root or Full Disk Access; other uids fail with `EINVAL`; Apple platform binaries (`rapportd`, `ControlCenter`, `/bin/sleep`) return `argc=1` and no environment; the buffer may be up to `kern.argmax` = 1 048 576 bytes [verified today]. Cost: 29 µs median / 67 µs p95 / 292 µs max per pid, 12.5 ms for a 311-pid sweep [verified], so the radar reads it only for candidates and caches by `(pid, start)` (the environment is fixed at exec). Coverage: everything a shell tool forks inherits the markers — `npm run dev` → `node` → `next-server` chains and reparented orphans alike; misses: processes started with a scrubbed environment (`CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1`, `env -i`), services inside Docker/Lima VMs (the host-side proxy carries the markers, the service does not), Apple binaries, and anything Codex spawns from a *hook* (hooks do not receive `CODEX_THREAD_ID`, doc 02 §2.6). Privacy: the same buffer holds `CLAUDE_CODE_MESSAGING_TOKEN`, OAuth material and arbitrary user secrets, so only allowlisted keys (§9) are copied out and the buffer is zeroed. Verdict: use it as rule 2 — the strongest post-mortem signal there is (it is what identifies today's orphan `next-server`), never as the only one, and never as proof of absence.
+
 ### 6.4 Link state, orphan definition, prompt policy
 
 | `link_state` | Meaning |
@@ -591,21 +603,21 @@ Evaluated per candidate on every tick in this order; the first rule that yields 
 | `orphan` | attributed session has `ended_at` set, or all incarnations are dead and the §8 grace expired; the process is alive; it listens, or it is `dev` class |
 | `unknown` | no session attribution |
 
-Orphan prompt ("session ended — stop its servers?"): when a session transitions to ended (hook or sweep), schedule a check at `+radar.orphanGraceSec` (20 s). If the session is live again (resume) → cancel. Else collect its processes with `link_state ∈ {detached, orphan}` and at least one open listener (setting to include non-listening `dev` processes); if non-empty and `kept_at IS NULL`, post one `UNUserNotificationCenter` notification per session: title "Claude Code session ended · qost", body "2 servers still listening: node :3999, node :5173", actions **Stop all** (SIGTERM path, §6.7), **Keep** (`kept_at = now` on each), default click opens the radar grouped on that session. Never auto-kill unless `radar.autoStopOrphansAfterMin > 0`, in which case the SIGTERM path runs after that many minutes and a notification reports what was stopped. Repeat prompts for the same session only when a new listener appears. Processes already orphaned when Airbag starts (discovered via env) are shown with an "orphan" badge but prompt only once per app launch, as one aggregated notification.
+Orphan prompt ("session ended — stop its servers?"): when a session transitions to ended (hook or sweep), schedule a check at `+radar.orphanGraceSec` (20 s). If the session is live again (resume) → cancel. Else collect its processes with `link_state ∈ {detached, orphan}`, `attr_confidence ≥ medium` (cwd-only matches never prompt — spec 13 §7.2), at least one open listener (setting to include non-listening `dev` processes) and `kept_at IS NULL`. If the project's `options.onSessionEnd` is `"silent"`, only the popover attention row is shown; otherwise post one `UNUserNotificationCenter` notification per session (via `OrphanNotifier`, §10.6): title "Claude Code session ended · qost", body "2 servers still listening: node :3999, node :5173", actions **Stop all** (SIGTERM path, §6.7), **Keep** (`kept_at = now` on each), default click opens the radar grouped on that session. Never auto-kill in v1 (spec 13 §7.2: the agent shell cannot know user intent, neither can Airbag); `radar.autoStopOrphansAfterMin` is a reserved key so a future opt-in needs no migration. Repeat prompts for the same session only when a new listener appears. Processes already orphaned when Airbag starts (discovered via env) are shown with an "orphan" badge but prompt only once per app launch, as one aggregated notification.
 
 ### 6.5 Grouping
 
-`RadarSnapshot.groups: [ProjectGroup]` → `worktrees: [WorktreeGroup]` (main first; kind + branch + locked badge) → `sessions: [SessionGroup]` (agent, title, live/ended, surface) → `processes` sorted by first listener port; per worktree an `unattributed` bucket (cwd match only); top-level `otherDev` (dev-class, no project) and `system` (hidden unless `radar.showSystem`). Counts per level drive the menu-bar badge: number of orphan listeners.
+`RadarSnapshot.groups: [ProjectGroup]` → `worktrees: [WorktreeGroup]` (main first; kind + branch + locked badge) → `sessions: [SessionGroup]` (agent, title, live/ended, surface) → `processes` sorted by first listener port; per worktree an `unattributed` bucket (cwd match only); top-level `otherDev` (dev-class, no project) and `system` (hidden unless `radar.showSystem`). Counts per level drive the menu-bar badge: number of orphan listeners. The Radar "Status" column of spec 13 §7.2 is derived, not stored: `system` when `class == system` (or `other` while hidden); `live` when `link_state ∈ {attached, detached}` (the detail text says "attached" or "started by an earlier run"); `orphan` when `link_state == orphan`; `unknown` otherwise (cwd-only or no attribution).
 
 ### 6.6 Ignore and dev-ish classification
 
 Class is decided at first sight and re-evaluated when a listener appears.
 
-- `system` (hidden by default; never stoppable): `uid != getuid()`; exe under `/System/`, `/usr/libexec/`, `/usr/sbin/`, `/usr/bin/` (except interpreters listed below), `/Library/Apple/`, `/System/Library/CoreServices/`; Apple bundle ids via `proc_pidpath` inside `/System/Applications/`; zero-environment processes whose exe is not under a user-writable prefix. Baseline on this machine that must be hidden: `rapportd *:56257`, `ControlCenter *:7000` (+ `*:5000` when AirPlay Receiver is on), `Spotify 127.0.0.1:7768`, `Raycast 127.0.0.1:7265` [verified].
+- `system` (hidden by default; never stoppable): `uid != getuid()`; exe under `/System/`, `/usr/libexec/`, `/usr/sbin/`, `/usr/bin/` (except interpreters listed below), `/Library/Apple/`, `/System/Library/CoreServices/`; Apple bundle ids via `proc_pidpath` inside `/System/Applications/`; zero-environment processes whose exe is not under a user-writable prefix. Baseline on this machine that must be hidden: `rapportd *:56257`, `ControlCenter *:5000` + `*:7000` (AirPlay Receiver), `Spotify 127.0.0.1:7768` + `*:57621` + `*:64770`, `Raycast 127.0.0.1:7265` [verified today]. Shown but badged "managed": colima's `limactl hostagent` (`*:53`, `127.0.0.1:60856`) and its `ssh … colima/ssh.sock [mux]` with seven forwarded ports (1883, 3000, 4840, 5432, 6379, 8000, 8100), all ppid 1 with cwd `~/qost` because colima was started there — the cwd rule alone would file them under the project, which is why cwd-only attribution is LOW and never prompts [verified today].
 - `terminal`/IDE hosts and `agent`: by the §4.3 matchers and the protected-app prefix list.
-- `dev` when any of: exe basename ∈ {`node`, `bun`, `deno`, `python`, `python3`, `python3.*`, `uvicorn`, `gunicorn`, `hypercorn`, `flask`, `ruby`, `puma`, `rails`, `go`, `java`, `kotlin`, `gradle`, `cargo`, `rustc`, `php`, `php-fpm`, `dotnet`, `beam.smp`, `erl`, `elixir`, `mix`, `deno`, `caddy`, `nginx`, `httpd`, `postgres`, `redis-server`, `mysqld`, `mongod`, `next-server`, `vite`, `esbuild`, `webpack`, `tsc`, `ngrok`, `cloudflared`, `ssh` (forwards), `limactl`, `colima`, `docker-proxy`, `com.docker.backend`, `vpnkit`, `qemu-system-*`, `containerd`} ∪ `radar.extraDevNames`; exe under `/opt/homebrew/`, `/usr/local/`, `~/.nvm/`, `~/.volta/`, `~/.asdf/`, `~/.local/share/`, `~/.cargo/`, `~/go/bin/`, `~/.bun/`, `~/.rbenv/`, `~/.pyenv/`, any path containing `/node_modules/.bin/`, `/.venv/`, `/target/debug/`, `/target/release/`, `/.build/`; cwd under a registered project; any agent env marker; or a listener on 1024–65535 bound to loopback or any whose owner is not `system`.
+- `dev` when any of: exe basename ∈ {`node`, `bun`, `deno`, `python`, `python3`, `python3.*`, `uvicorn`, `gunicorn`, `hypercorn`, `flask`, `ruby`, `puma`, `rails`, `go`, `java`, `kotlin`, `gradle`, `cargo`, `rustc`, `php`, `php-fpm`, `dotnet`, `beam.smp`, `erl`, `elixir`, `mix`, `deno`, `caddy`, `nginx`, `httpd`, `postgres`, `redis-server`, `mysqld`, `mongod`, `next-server`, `vite`, `esbuild`, `webpack`, `tsc`, `ngrok`, `cloudflared`, `ssh` (forwards), `limactl`, `colima`, `docker-proxy`, `com.docker.backend`, `vpnkit`, `qemu-system-*`, `containerd`} ∪ `radar.extraDevNames`; exe under `/opt/homebrew/`, `/usr/local/`, `~/.nvm/`, `~/.volta/`, `~/.asdf/`, `~/.local/share/`, `~/.cargo/`, `~/go/bin/`, `~/.bun/`, `~/.rbenv/`, `~/.pyenv/`, any path containing `/node_modules/.bin/`, `/.venv/`, `/target/debug/`, `/target/release/`, `/.build/`; cwd under a registered project; any agent env marker; or a listener on 1024–65535 bound to loopback or any whose owner is neither `system` nor an application bundle (exe path contains `.app/Contents/`: Spotify, Raycast, Electron helpers). Bundles reach `dev` only through the name/path/cwd/marker rules (Docker's `com.docker.backend` does; Spotify does not).
 - Docker/Lima: `com.docker.backend`, `docker-proxy`, `limactl`, `colima` are shown as dev with a "managed by Docker/Lima" badge and **stop disabled** (killing the proxy does not stop the container; the UI offers to copy `docker ps`).
-- `other`: everything else; hidden unless it listens.
+- `other`: everything else, including non-dev application bundles that listen (Spotify, Raycast); hidden unless `radar.showSystem` (the UI's "Show all"); re-classified on any tick where a dev signal appears (new cwd under a project, new marker, user adds the name to `radar.extraDevNames`).
 
 Listener scope: `127.0.0.1`/`::1` → `loopback`; `0.0.0.0`/`::` → `any`; else `specific`. IPv6 any-sockets accept IPv4 too unless `IPV6_V6ONLY` [verified, `limactl :::53`], so scope `any` is shown once per `(pid, port)`.
 
@@ -613,9 +625,9 @@ Listener scope: `127.0.0.1`/`::1` → `loopback`; `0.0.0.0`/`::` → `any`; else
 
 Protected (never signalled; the UI shows a lock and the reason): pid ≤ 1; Airbag app and CLI; every live `session_pids` pid and its ancestors up to launchd (`disclaimer`, `Claude.app`, `Codex.app`, `ChatGPT.app`, `Cursor.app`, `Terminal`, `iTerm2`, `Code`, `WezTerm`, `kitty`, `Ghostty`, `Alacritty`, `Warp`, `Zed`, `Xcode`, JetBrains IDEs — `radar.protectedAppPrefixes`, matched on `proc_pidpath` prefix); any `system` class; `agent_helper` processes while their session is live (MCP servers, tool shells) unless the user confirms "this belongs to a running agent session".
 
-Algorithm (`StopController.stop(target, force:)`):
+Algorithm (`ProcessRadar.stop(_:force:)`; steps 1–3 are the pure `StopPlanner.plan`, §10.6, so they are unit-testable on synthetic trees):
 
-1. Take a fresh tree snapshot (tier A). Require `snapshot[target.pid].start == target.start`, else `.goneOrReused`.
+1. Take a fresh tree snapshot (tier A). Require `snapshot[target.pid].start == target.start`, else `.refused(.goneOrReused)`; names in the managed list (`limactl`, `colima`, `docker-proxy`, `com.docker.backend`, `vpnkit`) → `.refused(.managed(by:))`.
 2. `victims = [target] + descendants(target)` restricted to same uid; if any victim is protected → `.refused(.protectedDescendant)`.
 3. Group mode when `target.pgid == target.pid`, or the group leader is dead, **and** every live member of the group is in `victims`, **and** none is protected: `kill(-pgid, sig)`; this takes `npm run dev` wrappers and their `next-server` children together. Otherwise signal `victims` individually, children first.
 4. `sig = SIGTERM`; poll every 100 ms up to 5 s: alive = `proc_pidinfo` succeeds and `p_stat != SZOMB` (zombies belong to their parent; show "exited") [verified, doc 04 §10]. Result `.terminated` / `.stillRunning(alive)`.
@@ -675,7 +687,7 @@ Ground truth is the agent process, not the hook:
 
 1. **Hook**: `SessionEnd`/`sessionEnd` sets `ended_at` (§4.5). Not sufficient: Claude's SessionEnd has a 1.5 s budget and never fires on crash/kill; Gemini's is not awaited; Cursor CLI's is unconfirmed; Codex's fires after 30 min idle [verified, docs 01–03].
 2. **Liveness sweep** (app, every tick, from the tier-A table; CLI, at most once per 60 s when the app socket is absent, using `proc_pidinfo` per live incarnation): an incarnation whose `(pid, start)` is gone → `ended_at = now`, `last_alive_at` kept. A session with no live incarnation enters a grace period `session.endGraceSec` (15 s) to absorb resume/restart (Claude desktop re-launches the binary with `--resume=<session_id>` [verified]); after grace → `ended_at = now`, `end_reason = 'pid_gone'`, `session_ended_by_sweep` event, orphan flow (§6.4).
-3. **Claude's own registry**: `~/.claude/sessions/<pid>.json` (removed on clean exit, crash leftovers cleared on next launch [verified, doc 01 §11.1]) is read by the app every tick for `.json` files whose `pid` is alive and whose `startedAt` matches the kernel start time ±5 s: it supplies `name`/`nameSource`, `status` (`idle|busy`), `entrypoint`, `hostSessionId`, `cwd` for enrichment and can *discover* a live Claude session that has no hooks yet (`discovered_via='claude_sessions_file'`, which also drives the "hooks not installed for this session" banner). A file whose pid is dead or reused is ignored.
+3. **Claude's own registry**: `~/.claude/sessions/<pid>.json` (directory 0700, files 0644; removed on clean exit, crash leftovers cleared on next launch [verified, doc 01 §11.1]). Fields observed today on three live desktop sessions: `pid`, `sessionId`, `cwd`, `startedAt` (epoch ms), `procStart` (UTC ctime string), `version`, `peerProtocol`, `peerFeatures[]`, `kind` (`interactive`), `entrypoint` (`claude-desktop`), `hostSessionId`, `pidDomain` (`darwin`), `messagingSocketPath` (`/tmp/cc-socks/<pid>.sock`), `name`, `nameSource` (`user`; absent when auto-named), `nameSince`, `status` (`idle|busy`), `updatedAt`, `statusUpdatedAt`, `bridgeSessionId`; there is no `peerToken` key — the secret lives in the sibling `<pid>.<sha256>.key` (108 bytes, 0600), which Airbag never opens [verified today]. The app `stat`s the directory every 2 s and re-reads files whose mtime changed (`updatedAt` moves on status flips), decoding only the keys listed in `ClaudeSessionFileEntry` (§10.3); a file counts when its `pid` is alive and `startedAt` matches the kernel start time ±5 s. It supplies `name`/`nameSource`, `status`, `entrypoint`, `hostSessionId`, `cwd` for enrichment and can *discover* a live Claude session that has no hooks yet (`discovered_via='claude_sessions_file'`, which also drives the "hooks not installed for this session" banner). A file whose pid is dead or reused is ignored. The CLI never reads this directory.
 4. **Shared-host agents** (Codex `app-server`, Cursor IDE extension host, Cursor CLI daemon, Codex `/daemon`): one process hosts many threads, so pid liveness cannot end a thread. For these surfaces a session is live while the host pid lives **and** (`last_seen_at` or `transcript_path` mtime) is younger than `session.staleHoursSharedHost` (2 h); otherwise `end_reason = 'stale'`. Codex's `SessionEnd` at 30 min idle usually arrives first.
 5. `last_seen_at` alone never ends a single-process session: a Claude terminal session can sit idle for days with its pid alive and must remain "live" (its servers are attached, not orphans).
 
@@ -684,6 +696,8 @@ Ground truth is the agent process, not the hook:
 - Never persisted: `tool_response`, `tool_output`, `output`, `stdout`, `stderr`, `last_assistant_message`, `prompt` text, `user_email` (Cursor), transcript contents. The PostToolUse/afterShell adapters drop these fields before the envelope is built; only `interrupted`, `duration_ms`, `exit_code` (when present), `spilled` (output persisted to a file by the agent) survive as booleans/numbers.
 - Command text: stored in `events.command`, `guard_log.command`, `snapshots.label`, `processes.argv` only after redaction. Built-in patterns (applied in order, replacement `‹redacted›`): `(?i)(authorization:\s*bearer\s+)\S+`; `(?i)\b(token|secret|password|passwd|pwd|api[_-]?key|access[_-]?key|private[_-]?key)\s*[=:]\s*\S+`; `(?i)(--?(password|passwd|token|secret|api-key|key)[= ])\S+`; `\b(ghp|gho|ghu|ghs|ghr|github_pat)_[A-Za-z0-9_]{20,}\b`; `\bsk-[A-Za-z0-9_-]{16,}\b`; `\bAKIA[0-9A-Z]{16}\b`; `\bxox[baprs]-[A-Za-z0-9-]{10,}\b`; `://[^/\s:@]+:[^@\s]+@` (URL credentials); `\beyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{10,}\b` (JWT); `\b[A-Fa-f0-9]{40,}\b` and `\b[A-Za-z0-9+/]{48,}={0,2}\b` (long hex/base64); `-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----`; `(?i)\b(PG|MYSQL|DATABASE|REDIS)_?(PASSWORD|URL)=\S+`. Plus `redaction.extraPatterns`. `command_hash` is computed over the unredacted text (needed for allowances and dedupe) and reveals nothing by itself. `redaction.mode = hash_only` stores no command text at all (timeline labels fall back to "Before shell command"); `off` disables redaction (explicit opt-in with a warning).
 - Environment: only these keys are ever copied out of `KERN_PROCARGS2` buffers: `CLAUDE_CODE_SESSION_ID`, `CLAUDE_PID`, `CLAUDE_CODE_ENTRYPOINT`, `CLAUDE_CODE_HOST_SESSION_ID`, `CLAUDECODE`, `CODEX_THREAD_ID`, `CODEX_SESSION_ID`, `CODEX_TOOL_CALL_ID`, `CODEX_SANDBOX`, `CURSOR_AGENT`, `CURSOR_SANDBOX`, `COMPOSER_NO_INTERACTION`, `GEMINI_CLI`, `GEMINI_SESSION_ID`, `COPILOT_CLI`, `PWD`. The buffer is zeroed after parsing; `CLAUDE_CODE_MESSAGING_TOKEN` and `CLAUDE_CODE_OAUTH_*` are present in agent children and must never be read into Swift strings (parse by key prefix match on the raw bytes, skip everything else).
+- Claude's session registry: only `~/.claude/sessions/<pid>.json` is read, with the key allowlist of §10.3; the sibling `<pid>.<sha256>.key` (0600; inbox-socket auth material [likely]) is never opened, and `messagingSocketPath`, `bridgeSessionId`, `peerFeatures` are never decoded or stored.
+- Hook environment: `HookEnv` copies only the marker allowlist above plus `CLAUDE_PROJECT_DIR`, `CLAUDE_CODE_EXECPATH`, `CURSOR_PROJECT_DIR`, `CURSOR_VERSION`, `GEMINI_PROJECT_DIR`, `COPILOT_HOME`, `SHELL`, `HOME`. `CLAUDE_CODE_MESSAGING_SOCKET`/`_TOKEN`, `CLAUDE_CODE_OAUTH_*` and `CLAUDE_ENV_FILE` are present in hook environments (doc 01 §7) and are never read into Swift strings or logged.
 - Files: `~/Library/Application Support/Airbag/` 0700; `registry.sqlite*`, spool, logs 0600; socket 0600 inside the 0700 directory. Logs never contain command text above `debug`.
 - No network, no telemetry, no crash reporter upload (product rule). "Export diagnostics" produces a zip the user inspects; it applies the same redaction and excludes `processes.argv` by default.
 - Transcript paths are stored (they are needed to open the session's transcript in Claude Code and to use mtime as an activity signal); transcript contents are never read except, read-only and on explicit user action, the first `session_meta` line of a Codex rollout for enrichment (doc 02 §5).
@@ -803,7 +817,7 @@ public struct EventDraft: Sendable {
     public var background: Bool?, decision: Decision?, snapshotID: SnapshotID?, durationMS: Int?
     public var payload: JSONObject
 }
-public struct GuardEntry: Sendable, Codable, Identifiable { /* mirrors guard_log */ public let id: ULID }
+public struct GuardEntry: Sendable, Codable, Identifiable { /* full definition in §10.6 */ public let id: ULID }
 public struct Allowance: Sendable, Codable { public let id: ULID; public var sessionID: SessionID, commandHash: String, ruleID: String, expiresAt: Date, usedAt: Date? }
 
 public struct RedactedCommand: Sendable, Codable, Hashable {
@@ -1094,7 +1108,7 @@ public struct ProcessTableSnapshot: Sendable {
     public let takenAt: Date
     public let entries: [pid_t: KinfoEntry]
     public func ancestry(of pid: pid_t, maxDepth: Int) -> [ProcKey]      // nearest first, stops at pid 1
-    public func descendants(of pid: pid_t) -> [ProcKey]                  // children first? no: breadth order; callers reverse for kill order
+    public func descendants(of pid: pid_t) -> [ProcKey]                  // breadth-first from the direct children; StopPlanner reverses it (deepest first) for signalling
     public func members(ofGroup pgid: pid_t) -> [ProcKey]
     public func isAlive(_ key: ProcKey) -> Bool                          // present and not zombie
 }
@@ -1153,7 +1167,7 @@ public struct RadarSnapshot: Sendable {
 }
 
 public actor ProcessRadar {
-    public init(source: any ProcessTableSource, registry: Registry, policy: RadarPolicy, clock: any Clock<Duration>, now: @escaping @Sendable () -> Date)
+    public init(source: any ProcessTableSource, registry: Registry, policy: RadarPolicy, notifier: any OrphanNotifier, clock: any Clock<Duration>, now: @escaping @Sendable () -> Date)
     public func start()
     public func stopPolling()
     public func poke(_ poke: RadarPoke)
@@ -1169,8 +1183,7 @@ public actor ProcessRadar {
 public enum StopOutcome: Sendable, Equatable {
     case terminated(ProcKey, after: Duration)
     case stillRunning(ProcKey, alive: [ProcKey])
-    case refused(ProcKey, Protection.ProtectedReason)
-    case goneOrReused(ProcKey)
+    case refused(ProcKey, StopRefusal)                 // includes .goneOrReused and .managed, §10.6
     case error(ProcKey, errno: Int32)
 }
 
@@ -1197,7 +1210,13 @@ public struct ClaudeSessionsFileReader: Sendable {                         // §
     public init(directory: URL)   // ~/.claude/sessions
     public func liveEntries(table: ProcessTableSnapshot) throws -> [ClaudeSessionFileEntry]
 }
-public struct ClaudeSessionFileEntry: Sendable, Codable { public var pid: pid_t, sessionId: String, cwd: String, startedAt: Int64, name: String?, nameSource: String?, status: String?, entrypoint: String?, hostSessionId: String?, version: String? }
+/// Decoded from `~/.claude/sessions/<pid>.json` with a lenient decoder (unknown keys ignored). Only these keys are read;
+/// `messagingSocketPath`, `bridgeSessionId`, `peerFeatures` are never decoded and the sibling `<pid>.<sha256>.key` is never opened (§9).
+public struct ClaudeSessionFileEntry: Sendable, Codable {
+    public var pid: pid_t, sessionId: String, cwd: String, startedAt: Int64            // startedAt = epoch ms; compare to kernel start ±5 s
+    public var version: String?, kind: String?, entrypoint: String?, hostSessionId: String?
+    public var name: String?, nameSource: String?, status: String?, updatedAt: Int64?, statusUpdatedAt: Int64?
+}
 public struct SessionLivenessSweeper: Sendable {                            // §8.2, §8.4
     public init(registry: Registry, grace: Duration, staleSharedHost: Duration, now: @escaping @Sendable () -> Date)
     public func sweep(table: ProcessTableSnapshot) async throws -> SweepReport   // ends incarnations/sessions, returns newly ended sessions for the orphan flow
@@ -1252,6 +1271,126 @@ public enum SnapshotOutcome: Sendable { case taken(SnapshotRecord), deduplicated
 public enum SnapshotSkipReason: String, Sendable { case cold, storeMissing, storeLocked, timeout, gitMissing, unprotected, outsideProject, error }
 ```
 
+### 10.6 Supporting types referenced above
+
+```swift
+// AirbagRegistry
+public enum JSONValue: Sendable, Codable, Hashable {
+    case null, bool(Bool), number(Double), string(String), array([JSONValue]), object([String: JSONValue])
+}
+public typealias JSONObject = [String: JSONValue]
+
+public enum HooksState: String, Sendable, Codable {           // == agents.hooks_state
+    case notInstalled = "not_installed", installed, untrusted, modified, drifted,
+         duplicateRoute = "duplicate_route", managedOnly = "managed_only", invalidFile = "invalid_file", binaryMoved = "binary_moved"
+}
+public struct AgentStatus: Sendable, Codable, Identifiable {
+    public var id: AgentKind { kind }
+    public var kind: AgentKind, displayName: String, detected: Bool
+    public var binaryPath: String?, version: String?
+    public var hooksState: HooksState, hooksConfigPath: String?, hooksFingerprint: String?, hooksDetail: JSONObject?
+    public var lastCheckedAt: Date?
+}
+
+public struct EventRecord: Sendable, Codable, Identifiable {
+    public let id: EventID
+    public var ts: Date, kind: EventKind, agent: AgentKind?
+    public var sessionID: SessionID?, projectID: ProjectID?, worktreeID: WorktreeID?, processRowID: ProcessRowID?
+    public var toolUseID: String?, dedupeKey: String?, cwd: String?
+    public var command: String?, commandHash: String?           // command = redacted text (nil in hash_only mode)
+    public var background: Bool?, decision: Decision?, snapshotID: SnapshotID?, durationMS: Int?
+    public var payload: JSONObject
+}
+public enum AppendResult: Sendable, Equatable {
+    case inserted(EventID)
+    case duplicate(existing: EventID, decision: Decision?)      // dedupe_key hit; the caller replies with `decision`
+}
+
+public struct GuardEntry: Sendable, Codable, Identifiable {
+    public enum RuleSource: String, Sendable, Codable { case builtin, user, project }
+    public enum Severity: String, Sendable, Codable { case block, ask, warn }
+    public enum Resolution: String, Sendable, Codable { case userAllowed = "user_allowed", userDenied = "user_denied", tokenUsed = "token_used", expired }
+    public let id: ULID
+    public var ts: Date, eventID: EventID?, sessionID: SessionID?, projectID: ProjectID?, agent: AgentKind
+    public var ruleID: String, ruleSource: RuleSource, severity: Severity, decision: Decision
+    public var command: String, commandHash: String, matchedSpan: String?, cwd: String?, reason: String
+    public var snapshotID: SnapshotID?, tokenID: ULID?, resolvedAt: Date?, resolution: Resolution?
+}
+public struct GuardDraft: Sendable, Codable {
+    public var ts: Date, eventID: EventID?, sessionID: SessionID?, projectID: ProjectID?, agent: AgentKind
+    public var ruleID: String, ruleSource: GuardEntry.RuleSource, severity: GuardEntry.Severity, decision: Decision
+    public var command: RedactedCommand, matchedSpan: String?, cwd: String?, reason: String, snapshotID: SnapshotID?
+}
+
+public struct RetentionPolicy: Sendable, Codable {               // defaults = §3.4
+    public var eventsDays = 30, maxEvents = 200_000, guardDays = 90
+    public var processesDays = 7, sessionsDays = 90, worktreesRemovedDays = 30, snapshotsDeletedDays = 30
+    public var allowanceTTL: Duration = .seconds(600), batchSize = 2_000
+    public static let `default` = RetentionPolicy()
+}
+public struct RetentionReport: Sendable, Equatable { public var deleted: [String: Int]; public var durationMS: Int; public var rescheduled: Bool }
+public struct ReconcileReport: Sendable, Equatable { public var indexed: Int, markedDeleted: Int, repaired: Int }
+public enum CheckpointMode: Sendable { case passive, truncate }
+
+/// Thin wrapper over `sqlite3*`; public only for migrations and tests. Not thread-safe: owned by one actor.
+public final class SQLiteConnection: @unchecked Sendable {
+    public func exec(_ sql: String) throws
+    public func prepare(_ sql: String) throws -> Statement       // cached by SQL text
+    public var lastInsertRowID: Int64 { get }
+    public var changes: Int { get }
+    public var errorMessage: String { get }
+    public final class Statement {
+        public func bind(_ values: [JSONValue?]) throws           // 1-based positional binding
+        public func step() throws -> Bool                         // true = row
+        public func column(_ index: Int) -> JSONValue
+        public func reset()
+    }
+}
+
+// AirbagHookBridge
+public enum LogLevel: Int, Sendable, Comparable { case debug, info, warn, error, fault }
+public enum AskSupport: Sendable { case native, unsupported, undocumented }
+public struct AgentProcessMatch: Sendable {
+    public struct Hop: Sendable { public var key: ProcKey, exePath: String?, argv0: String? }
+    public var agent: ProcKey, exePath: String, argv: [String]
+    public var chain: [Hop]                                       // hook → … → agent
+    public var hostBundlePath: String?, tty: String?
+}
+
+// AirbagProcessRadar
+public struct SweepReport: Sendable, Equatable {
+    public var endedIncarnations: [ProcKey], endedSessions: [SessionID], staleSessions: [SessionID], inGrace: [SessionID]
+}
+public struct StopPlan: Sendable, Equatable {
+    public enum Mode: Sendable, Equatable { case group(pgid: pid_t), individual }
+    public var target: ProcKey
+    public var victims: [ProcKey]                                 // target + live same-uid descendants, deepest first
+    public var mode: Mode
+}
+public enum StopRefusal: Sendable, Equatable {
+    case goneOrReused
+    case protectedTarget(Protection.ProtectedReason)
+    case protectedDescendant(ProcKey, Protection.ProtectedReason)
+    case managed(by: String)                                      // Docker / Lima proxies: stop disabled, hint shown
+}
+/// Pure; §6.7 steps 1–3. `exePaths` is the radar's cache for the pids in `table`.
+public struct StopPlanner: Sendable {
+    public init(policy: RadarPolicy)
+    public func protection(of key: ProcKey, table: ProcessTableSnapshot, context: AttributionContext, exePath: String?) -> Protection
+    public func plan(target: ProcKey, table: ProcessTableSnapshot, context: AttributionContext, exePaths: [pid_t: String]) -> Result<StopPlan, StopRefusal>
+}
+public struct OrphanPrompt: Sendable, Identifiable, Equatable {
+    public var id: SessionID { sessionID }
+    public var sessionID: SessionID, session: Session, project: Project?
+    public var processes: [RadarProcess]                          // link_state ∈ {detached, orphan}, confidence ≥ medium, listening
+    public var aggregated: Bool                                   // true for the once-per-launch "already orphaned" summary
+}
+public protocol OrphanNotifier: Sendable {                        // UNUserNotificationCenter in the app; a recorder in tests
+    func post(_ prompt: OrphanPrompt) async
+    func withdraw(sessionID: SessionID) async                     // session resumed within grace → cancel
+}
+```
+
 ## 11. Test plan
 
 Toolchain: Swift Testing only (`@Test`, `#expect`, `@Suite`, parameterised tests); XCTest is unavailable with CLT [verified, doc 04 §11]. Tests run from `swift test` on the dev machine and under Xcode in CI.
@@ -1262,10 +1401,10 @@ Toolchain: Swift Testing only (`@Test`, `#expect`, `@Suite`, parameterised tests
 - **Fuzz/robustness**: empty stdin, `{}`, truncated JSON, 2 MiB payload, unknown event names, non-UTF-8 bytes, `tool_input` as a string → always `HookResponse.safe`, never a trap (run under `-sanitize=address` in CI).
 - **Redaction**: table of commands → expected redacted text and span count; hash stability; `hash_only` mode yields `text == nil`.
 - **Project resolution** (§7.4): temp directory trees with `.git` dir, `.git` file + `commondir`, submodule `.git/modules`, symlinked paths, depth > 64, HOME boundary.
-- **Attributor**: synthetic `ProcessTableSnapshot`s covering every ladder rule and link state, including the real orphan shape (ppid 1, env session id of a live session with a different pid → `detached`), pid reuse (same pid, different start → no attribution carry-over), Apple binary (no env, system path → `system`), dual-stack listeners grouped, `limactl` managed badge.
+- **Attributor**: synthetic `ProcessTableSnapshot`s covering every ladder rule and link state, including the real orphan shape (ppid 1, env session id of a live session with a different pid → `detached`), pid reuse (same pid, different start → no attribution carry-over), Apple binary (no env, system path → `system`), application bundle with a listener (`/Applications/Spotify.app/Contents/MacOS/Spotify`, `*:57621` → `other`, hidden), dual-stack listeners grouped, `limactl` managed badge, and the colima shape (`ssh` mux with seven forwards, ppid 1, cwd under a project → project HIGH, session LOW, no `OrphanPrompt`).
 - **Session semantics**: `/clear` supersede, resume = new incarnation, Copilot `-p` `complete` as turn end, grace period, shared-host staleness.
 - **Registry**: migrations from an empty file and from a frozen v1 fixture; `user_version` ahead → read-only degraded; `application_id` mismatch → rename; `dedupe_key` collisions return the first decision; retention counts; `observe(RadarDelta)` idempotency; allowances (grant → consume once → second consume nil → expiry).
-- **Stop planner**: pure function `plan(target, table, protectedSet) -> (victims, groupMode) | refusal` over synthetic trees: protected descendant refuses the whole plan; group mode only when all live members are victims.
+- **Stop planner**: `StopPlanner.plan` (§10.6) over synthetic trees: protected descendant refuses the whole plan; group mode only when all live members are victims; managed names refuse with `.managed`; a start-time mismatch refuses with `.goneOrReused`; victims come out deepest first.
 
 ### 11.2 Integration tests with a fake agent tree
 
@@ -1278,11 +1417,11 @@ Test-only executable target `airbag-fakeagent` (no network, no third-party deps)
 Scenarios (each asserts registry rows, radar snapshot after `tick()`, stdout bytes, and timing):
 
 1. Attach: live agent → `pre_shell` with `run_in_background` → server appears → `attached`, `live_ancestry`, HIGH; listener row with the reported port.
-2. Crash: `SIGUSR1` → next tick: incarnation ended; after grace session `pid_gone`; server `orphan` via `remembered_ancestry` **and** `env_session`; orphan notification request recorded (notification center is mocked behind a protocol).
+2. Crash: `SIGUSR1` → next tick: incarnation ended; after grace session `pid_gone`; server `orphan` via `remembered_ancestry` **and** `env_session`; an `OrphanPrompt` with the server reaches the recording `OrphanNotifier` exactly once; a second tick does not repeat it.
 3. Resume: `SIGUSR2` → new incarnation, same session; old server becomes `detached`, new child `attached`.
 4. `/clear`: Claude `SessionStart source=clear` with a new session id from the same pid → previous row `superseded`.
 5. Discovery: start the server tree **before** Airbag ever saw the session (no hooks) → first tick creates `discovered_via='env'` session with `cwd = PWD`, process `MEDIUM`.
-6. Stop: `stop(key)` → `.terminated` within 5 s; with `--ignore-term` → `.stillRunning`, then `stop(force: true)` → `.terminated`; attempting to stop the fake agent itself → `.refused(.agent)`; stopping an `npm run dev`-style wrapper (zsh → server) in group mode kills both.
+6. Stop: `stop(key)` → `.terminated` within 5 s; with `--ignore-term` → `.stillRunning`, then `stop(force: true)` → `.terminated`; attempting to stop the fake agent itself → `.refused(.protectedTarget(.agent))`; a `limactl`-named fake → `.refused(.managed(by: "Lima"))`; stopping an `npm run dev`-style wrapper (zsh → server) in group mode kills both.
 7. Hook contention: a helper holds `BEGIN IMMEDIATE` for 2 s → `airbag hook` still answers within `hook.hardDeadlineMs`, writes a spool file; the next hook (or the app) ingests it and the event exists exactly once.
 8. Schema ahead: bump `user_version` to 999 → hook answers normally, registry health `schemaNewer`, spool used.
 9. Deadline: `SnapshotEngine` stub sleeps 10 s → watchdog prints the allow shape at `hardDeadline` and the git stub's process group receives SIGKILL (stub spawns a real `sleep` in its own pgid to verify).
@@ -1318,6 +1457,9 @@ Claude Code desktop (`auto` and `bypassPermissions`), Claude Code terminal, `cla
 13. **Multi-user Macs**: other users' agents are invisible to libproc (EPERM/EINVAL) and are out of scope; the UI must say "this user only". [verified]
 14. **Claude Code's worktree marker** key is undocumented; detection relies on the `.claude/worktrees/` path. [unverified]
 15. **`sessions/<pid>.json` coverage** for `-p`, VS Code and JetBrains entrypoints is unknown; only `claude-desktop` was observed. [open, doc 01 §14]
+16. **Cross-document reconciliation needed**: spec 13 §7.4 lists "Hook snapshot cap (3 s default, 1–10)" while this design sets `hook.snapshotDeadlineMs = 1500` (derived from the p95 < 2 s budget of doc 03 §8.5) with a 500–10 000 ms range; doc 06 §12 names the registry `airbag.sqlite` while spec 13 §4 and this design use `registry.sqlite`; spec 13 §7.2 polls 5 s/2 s where this design adds 1 s (popover), 10 s (idle) and 30 s (asleep) tiers. Proposal: docs 06/13 adopt the names and tiers here; the deadline default is decided after the §11.3 end-to-end measurement on a 50k-file repo. [design]
+17. **Application-bundle hiding** (`.app/Contents/` listeners classed `other`) could hide a legitimate dev server launched from inside an IDE bundle; the cwd, marker and name rules re-promote it and "Show all" exposes everything, but VS Code's and JetBrains' debug launchers need a manual-QA row. [design]
+18. **Managed proxies** (colima/Lima `ssh` mux, `docker-proxy`) carry project cwds and dev-like ports; they are shown as managed with stop disabled, which some users will read as "Airbag cannot stop my port 3000". The row must say what owns the port and offer the copyable `colima stop` / `docker ps` hint. [verified shape today]
 
 ## Sources
 
@@ -1325,4 +1467,6 @@ Research notes (this repository): `docs/research/01-claude-code-hooks.md`, `02-c
 
 Primary sources fetched 2026-10-17: Claude Code worktrees — https://code.claude.com/docs/en/worktrees.md ; SQLite pragmas (`data_version`, `application_id`, `user_version`, `wal_checkpoint`, `busy_timeout`) — https://www.sqlite.org/pragma.html ; SQLite WAL and busy handler (via doc 04) — https://www.sqlite.org/wal.html , https://www.sqlite.org/c3ref/busy_handler.html.
 
-Local probes run 2026-10-17 on this Mac (uid 501, no root): `ps -axo pid,ppid,pgid,…` of the desktop chain (`zsh 800 → claude 11328 → disclaimer 11327 → Claude 94586 → launchd`); children of the three `claude` pids (only MCP servers via `npm exec`); environment of this Bash tool shell (`CLAUDE_PID`, `CLAUDE_CODE_SESSION_ID`, `CLAUDE_CODE_ENTRYPOINT`, `CLAUDE_CODE_HOST_SESSION_ID`, …); `~/.claude/sessions/{10716,11328,99094}.json` (fields, `startedAt` vs `procStart` vs `ps lstart`); `lsof -nP -iTCP -sTCP:LISTEN` baseline plus cwd/ppid of each listener; the orphan `next-server` pid 70386 (ppid 1, pgid 70382, started 2026-10-06, cwd `~/qost/web/.next/standalone`) and its environment via a ctypes `sysctl(CTL_KERN, KERN_PROCARGS2)` probe (26 `CLAUDE_*` variables, dead `CLAUDE_PID=62758`, live session id `1a2b3c4d-…`, transcript present); `KERN_PROCARGS2` layout, per-pid cost (29 µs median / 67 µs p95 / 292 µs max, 12.5 ms for 311 pids), `EINVAL` for pid 1, zero environment for `rapportd` and `ControlCenter`; process-table sizing (498 pids, 308 same-uid, 264 same-uid with ppid 1); SQLite 3.43.2 feature check (STRICT, RETURNING, JSON, generated columns, `unixepoch`, compile options); git 2.39.5 worktree metadata (`.git/worktrees/<name>/{HEAD,ORIG_HEAD,commondir,gitdir,index,locked,logs}`, `locked` reason, porcelain `locked`, `rev-parse --path-format=absolute --git-common-dir` from a worktree subdirectory, remove refusal while locked, ~12 ms per `rev-parse`).
+Second-pass probes, 2026-10-17 (uid 501, no root): own ancestor chain from this Bash tool (`zsh 27575 → claude 11328 → disclaimer 11327 → Claude 94586 → launchd`, with `disclaimer --responsible -- /usr/bin/ssh` siblings for desktop SSH sessions, none of them agents); all three `~/.claude/sessions/*.json` decoded with the secret-bearing keys masked (field list in §8.3; `.key` siblings 0600) plus directory modes; `lsof -nP -iTCP -sTCP:LISTEN` baseline (ControlCenter 5000/7000, rapportd 56257, Spotify 7768/57621/64770, Raycast 7265, limactl 53/60856, colima `ssh` mux 1883/3000/4840/5432/6379/8000/8100, `next-server` 70386 on 3999) with cwd and ancestry of each; process counts 490 total / 299 same-uid / 255 same-uid with ppid 1; `kern.argmax` = 1 048 576; macOS 15.7.9, SQLite 3.43.2, git 2.39.5, Swift 6.1.2 (CLT); `~/.codex`, `~/.gemini`, `~/.copilot`, `~/.claude/worktrees` exist, `~/.codex/worktrees` and `~/.cursor` do not.
+
+First-pass local probes run 2026-10-17 on this Mac (uid 501, no root): `ps -axo pid,ppid,pgid,…` of the desktop chain (`zsh 800 → claude 11328 → disclaimer 11327 → Claude 94586 → launchd`); children of the three `claude` pids (only MCP servers via `npm exec`); environment of this Bash tool shell (`CLAUDE_PID`, `CLAUDE_CODE_SESSION_ID`, `CLAUDE_CODE_ENTRYPOINT`, `CLAUDE_CODE_HOST_SESSION_ID`, …); `~/.claude/sessions/{10716,11328,99094}.json` (fields, `startedAt` vs `procStart` vs `ps lstart`); `lsof -nP -iTCP -sTCP:LISTEN` baseline plus cwd/ppid of each listener; the orphan `next-server` pid 70386 (ppid 1, pgid 70382, started 2026-10-06, cwd `~/qost/web/.next/standalone`) and its environment via a ctypes `sysctl(CTL_KERN, KERN_PROCARGS2)` probe (26 `CLAUDE_*` variables, dead `CLAUDE_PID=62758`, live session id `1a2b3c4d-…`, transcript present); `KERN_PROCARGS2` layout, per-pid cost (29 µs median / 67 µs p95 / 292 µs max, 12.5 ms for 311 pids), `EINVAL` for pid 1, zero environment for `rapportd` and `ControlCenter`; process-table sizing (498 pids, 308 same-uid, 264 same-uid with ppid 1); SQLite 3.43.2 feature check (STRICT, RETURNING, JSON, generated columns, `unixepoch`, compile options); git 2.39.5 worktree metadata (`.git/worktrees/<name>/{HEAD,ORIG_HEAD,commondir,gitdir,index,locked,logs}`, `locked` reason, porcelain `locked`, `rev-parse --path-format=absolute --git-common-dir` from a worktree subdirectory, remove refusal while locked, ~12 ms per `rev-parse`).
