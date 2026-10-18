@@ -1,12 +1,12 @@
-# Homebrew cask for Airbag. Lives in a tap (github.com/<owner>/homebrew-airbag) until it qualifies for homebrew/cask.
+# Homebrew cask for Airbag. Lives in a tap (github.com/a1murt/homebrew-airbag) until it qualifies for homebrew/cask.
 cask "airbag" do
   version "0.1.0"
   sha256 "REPLACE_WITH_SHA256_OF_ZIP"
 
-  url "https://github.com/<owner>/airbag/releases/download/v#{version}/Airbag-#{version}.zip"
+  url "https://github.com/a1murt/airbag/releases/download/v#{version}/Airbag-#{version}.zip"
   name "Airbag"
   desc "Safety net for AI coding agents: snapshots, rollback, destructive-command breaker, port radar"
-  homepage "https://github.com/<owner>/airbag"
+  homepage "https://github.com/a1murt/airbag"
 
   livecheck do
     url :url
