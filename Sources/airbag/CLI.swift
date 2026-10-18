@@ -13,6 +13,11 @@ enum CLI {
         ("export", "write a snapshot's files into an empty directory", SnapshotCommands.export),
         ("usage", "disk usage of all snapshot stores", SnapshotCommands.usage),
         ("check", "show what the circuit breaker decides for a shell command (--cwd, --root)", GuardCommands.check),
+        ("hooks", "manage agent hooks: status | install | uninstall [agents…|--all] [--dry-run] [--strict]", HookCommands.hooks),
+        ("guard", "recent blocked, asked and risky commands", HookCommands.guardLog),
+        ("allow", "approve one blocked or asked command once (id from `airbag guard`)", HookCommands.allow),
+        ("sessions", "agent sessions Airbag has seen (--all includes ended ones)", HookCommands.sessions),
+        ("log", "agent commands with their decision and the snapshot taken right before them", HookCommands.log),
     ]
 
     static func run(_ args: [String]) -> Int32 {
@@ -28,6 +33,8 @@ enum CLI {
         case "help", "--help", "-h":
             printUsage()
             return 0
+        case "hook":
+            return HookCommands.hook(Array(args.dropFirst()))
         default:
             guard let c = commands.first(where: { $0.name == command }) else {
                 Out.err("airbag: unknown command '\(command)'")

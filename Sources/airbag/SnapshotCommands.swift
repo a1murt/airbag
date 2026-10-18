@@ -2,7 +2,7 @@ import AirbagCore
 import Foundation
 
 enum SnapshotCommands {
-    static let valueOptions: Set<String> = ["root", "label", "trigger", "limit", "path", "keep", "days", "session"]
+    static let valueOptions: Set<String> = ["root", "label", "trigger", "limit", "path", "keep", "days", "session", "background-marker"]
 
     static func openStore(_ a: Args, recreate: Bool = false) throws -> SnapshotStore {
         let root = a.value("root") ?? RootResolver.resolve(cwd: FileManager.default.currentDirectoryPath)
@@ -11,6 +11,10 @@ enum SnapshotCommands {
 
     static func snapshot(_ argv: [String]) throws -> Int32 {
         let a = try Args(argv, valueOptions: valueOptions)
+        if let marker = a.value("background-marker") {
+            try? FileSystem.writeAtomically(Data("\(getpid())".utf8), to: marker, mode: 0o600)
+            atexit_b { unlink(marker) }
+        }
         let store = try openStore(a)
         let trigger = a.has("initial") ? .initial : (a.value("trigger").flatMap(SnapshotTrigger.init(rawValue:)) ?? .manual)
         let outcome = store.snapshot(SnapshotRequest(trigger: trigger, label: a.value("label"), sessionKey: a.value("session"),

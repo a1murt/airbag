@@ -219,14 +219,6 @@ struct Analyzer {
         }
         if criticalPaths.contains(p) { return .catastrophic(p) }
         for root in context.roots where root.hasPrefix(p + "/") { return .catastrophic(p) } // a parent of a protected root
-        let home = context.home
-        for c in [home + "/.cache", home + "/Library/Caches", home + "/.npm/_cacache", home + "/Library/Developer/Xcode/DerivedData",
-                  home + "/.cargo/registry/cache", home + "/.gradle/caches", home + "/.pnpm-store", home + "/Library/pnpm/store"]
-            where p == c || p.hasPrefix(c + "/") { return p == c && !r.contents ? .regenerable : .regenerable }
-        for t in ["/tmp", "/private/tmp", "/var/folders", "/private/var/folders", context.environment["TMPDIR"] ?? ""] where !t.isEmpty {
-            let tt = t.hasSuffix("/") ? String(t.dropLast()) : t
-            if p.hasPrefix(tt + "/") { return .temporary }
-        }
         for root in context.roots.sorted(by: { $0.count > $1.count }) {
             if p == root { return r.contents ? .insideProject(root) : .projectRoot(root) } // `*` skips dotfiles such as .git
             if p.hasPrefix(root + "/") {
@@ -235,6 +227,14 @@ struct Analyzer {
                 if comps.contains(where: { Analyzer.excludedNames.contains($0) }) { return .regenerable }
                 return .insideProject(root)
             }
+        }
+        let home = context.home
+        for c in [home + "/.cache", home + "/Library/Caches", home + "/.npm/_cacache", home + "/Library/Developer/Xcode/DerivedData",
+                  home + "/.cargo/registry/cache", home + "/.gradle/caches", home + "/.pnpm-store", home + "/Library/pnpm/store"]
+            where p == c || p.hasPrefix(c + "/") { return .regenerable }
+        for t in ["/tmp", "/private/tmp", "/var/folders", "/private/var/folders", context.environment["TMPDIR"] ?? ""] where !t.isEmpty {
+            let tt = t.hasSuffix("/") ? String(t.dropLast()) : t
+            if p.hasPrefix(tt + "/") { return .temporary }
         }
         return .outside
     }
