@@ -1,0 +1,5 @@
+/* Menu bar */
+"menubar.accessibility" = "Airbag";
+"popover.title" = "Airbag";
+"popover.subtitle" = "Страховка от ИИ-агентов";
+"popover.quit" = "Выйти из Airbag";

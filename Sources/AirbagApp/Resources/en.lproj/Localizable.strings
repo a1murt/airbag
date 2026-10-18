@@ -1,0 +1,5 @@
+/* Menu bar */
+"menubar.accessibility" = "Airbag";
+"popover.title" = "Airbag";
+"popover.subtitle" = "Safety net for AI coding agents";
+"popover.quit" = "Quit Airbag";
