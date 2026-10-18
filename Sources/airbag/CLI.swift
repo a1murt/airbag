@@ -12,6 +12,7 @@ enum CLI {
         ("prune", "apply retention (--all, --days, --keep, --dry-run)", SnapshotCommands.prune),
         ("export", "write a snapshot's files into an empty directory", SnapshotCommands.export),
         ("usage", "disk usage of all snapshot stores", SnapshotCommands.usage),
+        ("check", "show what the circuit breaker decides for a shell command (--cwd, --root)", GuardCommands.check),
     ]
 
     static func run(_ args: [String]) -> Int32 {
