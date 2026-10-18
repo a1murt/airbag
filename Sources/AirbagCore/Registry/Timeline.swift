@@ -16,6 +16,7 @@ public struct TimelineEntry: Sendable, Identifiable, Equatable {
     public var id: String { snapshot.id }
     public let snapshot: SnapshotInfo
     public let commands: [TimelineCommand]
+    public init(snapshot: SnapshotInfo, commands: [TimelineCommand]) { self.snapshot = snapshot; self.commands = commands }
 }
 
 public struct GuardEntry: Sendable, Identifiable, Equatable {
@@ -31,7 +32,9 @@ public struct GuardEntry: Sendable, Identifiable, Equatable {
     public let reason: String
     public let resolution: String?
     /// The agent may retry it after an approval (ask turned into deny, still unresolved).
-    public var canAllowOnce: Bool { (decision == "deny_fallback" || decision == "ask") && resolution == nil && agentSessionID != nil }
+    /// Only asks that were turned into a deny (agent without a native prompt) can be approved in Airbag; a native ask is
+    /// answered in the agent's own prompt and a hard block is not overridable.
+    public var canAllowOnce: Bool { decision == "deny_fallback" && resolution == nil && agentSessionID != nil }
     public var isBlock: Bool { decision == "deny" || decision == "deny_fallback" }
 }
 

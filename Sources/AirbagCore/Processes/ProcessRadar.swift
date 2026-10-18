@@ -21,6 +21,12 @@ public struct Attribution: Sendable, Codable, Equatable {
     public var sessionTitle: String?
     public var sessionLive: Bool
     public var projectRoot: String?
+
+    public init(method: AttributionMethod, confidence: Confidence, agent: AgentKind?, agentSessionID: String?, sessionTitle: String?,
+                sessionLive: Bool, projectRoot: String?) {
+        self.method = method; self.confidence = confidence; self.agent = agent; self.agentSessionID = agentSessionID
+        self.sessionTitle = sessionTitle; self.sessionLive = sessionLive; self.projectRoot = projectRoot
+    }
 }
 
 public struct RadarProcess: Sendable, Codable, Identifiable, Equatable {
@@ -42,6 +48,14 @@ public struct RadarProcess: Sendable, Codable, Identifiable, Equatable {
     /// Why this process must not be stopped, or nil when stoppable.
     public var protection: String?
     public var commandLine: String { argv.isEmpty ? name : argv.joined(separator: " ") }
+
+    public init(identity: ProcessIdentity, ppid: Int32, pgid: Int32, name: String, exe: String?, argv: [String], cwd: String?,
+                startedAtMs: Int64, footprintBytes: Int64?, cpuTimeNs: UInt64?, listeners: [Listener], processClass: ProcessClass,
+                attribution: Attribution?, linkState: LinkState, protection: String?) {
+        self.identity = identity; self.ppid = ppid; self.pgid = pgid; self.name = name; self.exe = exe; self.argv = argv; self.cwd = cwd
+        self.startedAtMs = startedAtMs; self.footprintBytes = footprintBytes; self.cpuTimeNs = cpuTimeNs; self.listeners = listeners
+        self.processClass = processClass; self.attribution = attribution; self.linkState = linkState; self.protection = protection
+    }
 }
 
 public struct RadarSnapshot: Sendable, Codable {

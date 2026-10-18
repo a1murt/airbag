@@ -85,6 +85,7 @@ public struct Listener: Sendable, Equatable, Hashable, Codable {
     public let family: String   // ipv4 | ipv6
     public let address: String
     public let scope: Scope
+    public init(port: Int, family: String, address: String, scope: Scope) { self.port = port; self.family = family; self.address = address; self.scope = scope }
 }
 
 public enum ListenerScanner {
