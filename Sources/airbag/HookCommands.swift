@@ -47,8 +47,8 @@ enum HookCommands {
         return me
     }
 
-    static func agents(from a: Args, installer: HookInstaller) throws -> [AgentKind] {
-        if a.has("all") { return AgentKind.allCases.filter { installer.detect($0) } }
+    static func agents(from a: Args, installer: HookInstaller, removing: Bool = false) throws -> [AgentKind] {
+        if a.has("all") { return AgentKind.allCases.filter { removing ? installer.isInstalled($0) : installer.detect($0) } }
         let list = try a.positionals.map { n -> AgentKind in
             guard let k = AgentKind(rawValue: n) else { throw CLIError.usage("unknown agent '\(n)' (use: \(AgentKind.allCases.map(\.rawValue).joined(separator: ", ")))") }
             return k
@@ -81,7 +81,7 @@ enum HookCommands {
             if installer.command.contains("/.build/") && !a.has("command") {
                 Out.err("warning: hooks will point at a development build (\(installer.command)); pass --command to choose another path")
             }
-            for agent in try agents(from: a, installer: installer) {
+            for agent in try agents(from: a, installer: installer, removing: sub == "uninstall") {
                 if a.has("dry-run") {
                     let change = try installer.plan(agent, install: sub == "install", strict: a.has("strict"))
                     print("== \(agent.displayName): \(change.path) \(change.changed ? "would change" : "unchanged")")

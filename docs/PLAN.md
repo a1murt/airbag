@@ -57,9 +57,13 @@ checks listed. Status markers: ☐ todo, ◐ in progress, ☑ done.
 - First run: detect agents → preview + one-click hook install → protected projects → done (< 60 s).
 - All user-facing strings EN/RU; app icon and menu bar glyph; VoiceOver labels; empty/error states.
 
-## M8 ☐ Packaging and CI
+## M8 ◐ Packaging and CI
 - Universal build, ad-hoc and Developer ID signing paths, notarization script, zip + DMG, Homebrew cask draft,
   GitHub Actions (CI on PR, release on tag), README, SECURITY.md, CONTRIBUTING.md, LICENSE.
+- Status 2026-10-18: all done and the universal zip/DMG build locally (ad-hoc signed). Remaining, needs the owner:
+  a Developer ID Application certificate and notarization credentials (no signing identity on this Mac), a GitHub
+  repository and a tap for the cask. The release workflow expects secrets `DEVELOPER_ID_P12_BASE64`,
+  `DEVELOPER_ID_P12_PASSWORD`, `SIGN_IDENTITY`, `NOTARY_APPLE_ID`, `NOTARY_TEAM_ID`, `NOTARY_APP_PASSWORD`.
 
 ## M9 ☐ MVP acceptance (market report readiness criteria)
 - Destructive scripts (`rm -rf` dir, `mv`, `sed -i`, `git checkout -- .`, `git reset --hard`, `git clean -fdx`)
