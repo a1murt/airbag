@@ -104,6 +104,15 @@ public struct RuleEngine: Sendable {
         if snapshot == .none && !analyzer.readOnly { snapshot = .recommended }
         return GuardVerdict(decision: decision, snapshot: snapshot, findings: findings)
     }
+
+    /// Directories the command `cd`s or `pushd`es into, in order. A hook adds their projects to the protected roots, so
+    /// `cd ../other && rm -rf build` is judged (and snapshotted) as work in that project.
+    public func visitedDirectories(_ command: String, context: GuardContext) -> [String] {
+        var analyzer = Analyzer(context: context)
+        analyzer.analyze(command, depth: 0)
+        var seen = Set<String>()
+        return analyzer.visited.filter { seen.insert($0).inserted }
+    }
 }
 
 // MARK: - Analyzer
@@ -114,6 +123,7 @@ struct Analyzer {
     /// Every command seen so far is known not to modify files.
     var readOnly = true
     var cwd: String?
+    var visited: [String] = []
 
     init(context: GuardContext) {
         self.context = context
@@ -131,11 +141,33 @@ struct Analyzer {
         if let cwd { env["PWD"] = cwd }
         var lexer = ShellLexer(environment: env, home: context.home)
         let commands = lexer.parse(line, depth: depth)
+        // Only the text the agent wrote: nested analyses re-join words after quote removal (xargs), where a literal quote
+        // is data, not syntax.
+        if lexer.unterminated && depth == 0 {
+            add("shell.unparsed", .ask, .recommended, "it has a quote or substitution that is never closed, so Airbag cannot tell which commands it runs.", line)
+        }
         for sub in lexer.substitutions { analyze(sub, depth: depth + 1) }
         var previous: ShellCommand?
         for cmd in commands {
             analyzeCommand(cmd, previous: previous, depth: depth)
             previous = cmd
+        }
+    }
+
+    /// `brew shellenv`, `pyenv init -` and friends print shell environment setup for `eval`.
+    static func isEnvironmentSetup(_ text: String) -> Bool {
+        let w = text.split(whereSeparator: { $0 == " " || $0 == "\t" }).map(String.init)
+        guard let tool = w.first.map({ ($0 as NSString).lastPathComponent }) else { return false }
+        let sub = w.count > 1 ? w[1] : ""
+        switch tool {
+        case "brew": return sub == "shellenv"
+        case "pyenv", "rbenv", "nodenv", "goenv", "jenv", "plenv", "zoxide", "starship": return sub == "init" || sub == "virtualenv-init"
+        case "direnv": return sub == "hook" || sub == "export"
+        case "fnm", "opam": return sub == "env"
+        case "mise", "rtx": return sub == "activate" || sub == "env"
+        case "conda", "micromamba": return sub.hasPrefix("shell.") || sub == "shell"
+        case "ssh-agent": return true
+        default: return false
         }
     }
 
@@ -257,10 +289,26 @@ struct Analyzer {
         "ping", "host", "whois", "traceroute", "nc", "tldr", "bat", "exa", "eza", "fzf", "gh",
     ]
 
+    /// `>`, `2>`, `>>`, `&>`, `>&file`, zsh's `>!` family and `N<>file` (read-write on an output descriptor, which
+    /// overwrites the file in place) open a file for writing. `2>&1`, `>&2` and `2>&-` only duplicate or close a
+    /// descriptor; `<&`, `<` and a bare `<>` (stdin) do not write.
+    static func opensFileForWriting(_ r: ShellRedirect) -> Bool {
+        let fd = r.op.prefix { $0.isNumber }
+        var op = String(r.op.dropFirst(fd.count))
+        if op.count > 1, op.hasSuffix("!") { op.removeLast() }
+        if op == "<>" { return !fd.isEmpty && fd.contains { $0 != "0" } }
+        if op == ">&" {
+            let t = r.target
+            let descriptor = !t.opaque && (t.text == "-" || (!t.text.isEmpty && t.text.allSatisfy { $0.isNumber }))
+            return !descriptor
+        }
+        return [">", ">|", ">>", "&>", "&>>", ">>&"].contains(op)
+    }
+
     mutating func analyzeCommand(_ cmdIn: ShellCommand, previous: ShellCommand?, depth: Int) {
         var cmd = cmdIn
         // Redirections that write.
-        for r in cmd.redirects where [">", ">|", "&>", ">>", "&>>"].contains(r.op) || (r.op.first?.isNumber == true && r.op.contains(">")) {
+        for r in cmd.redirects where Analyzer.opensFileForWriting(r) {
             let truncates = !r.op.contains(">>")
             if let rp = resolve(r.target), hookConfigFiles.contains(rp.path) {
                 add("self.hooks", .ask, .none, "it rewrites an agent's hook configuration, which can switch Airbag's protection off.", r.target.text)
@@ -273,7 +321,8 @@ struct Analyzer {
             switch cls {
             case .catastrophic: add("fs.redirect.catastrophic", .block, .none, "it overwrites \(r.target.text), which is not a regular project file.", r.target.text)
             case .airbag: add("self.airbag", .block, .none, "it modifies Airbag's own data, which protects this project.", r.target.text)
-            case .outside where truncates: add("fs.truncate.outside", .ask, .recommended, "it overwrites \(r.target.text) outside the protected project, where no snapshot can restore it.", r.target.text)
+            case .outside where truncates && replacesOrUnknown(resolve(r.target)?.path):
+                add("fs.truncate.outside", .ask, .recommended, "it overwrites \(r.target.text) outside the protected project, where no snapshot can restore it.", r.target.text)
             case .unknown where truncates: add("fs.truncate.opaque", .ask, .recommended, "it overwrites a file whose path depends on an unresolved variable.", r.target.text)
             case .gitInternals where truncates: add("git.internals.write", .ask, .recommended, "it overwrites a file inside .git, which snapshots do not cover.", r.target.text)
             case .insideProject, .projectRoot: if truncates { add("fs.truncate.project", .allow, .required, "it overwrites a project file (a snapshot is taken first).", r.target.text) }
@@ -332,17 +381,19 @@ struct Analyzer {
             }
         }
 
-        // Here-strings feed literal code to shells and interpreters: analyse it like `-c`.
-        if let here = cmd.redirects.first(where: { $0.op == "<<<" }) {
-            if Analyzer.shells.contains(name) || Analyzer.shells.contains(first.text) {
-                if here.target.opaque { add("shell.opaque", .ask, .recommended, "it feeds a shell text built from unresolved variables.", whole) }
-                analyze(here.target.text, depth: depth + 1)
-                return
-            }
-            if ["python", "python3", "node", "ruby", "perl", "php", "deno", "bun"].contains(name) {
-                analyzeInterpreter(name, [ShellWord("-c"), here.target], whole: whole, depth: depth)
-                return
-            }
+        // Here-strings feed literal code to shells and interpreters: analyse it like `-c`. A here-document fed to a shell
+        // is shell code and is analysed the same way; one fed to an interpreter is a whole script, treated like a script
+        // file (snapshot, no text heuristics: on real agent scripts they mostly flag string data).
+        let hereString = cmd.redirects.first(where: { $0.op == "<<<" })?.target
+        let hereDocument = cmd.redirects.first(where: { ($0.op == "<<" || $0.op == "<<-") && $0.target.heredoc != nil })?.target.heredoc
+        if Analyzer.shells.contains(name) || Analyzer.shells.contains(first.text), let code = hereString ?? hereDocument.map({ ShellWord($0) }) {
+            if code.opaque { add("shell.opaque", .ask, .recommended, "it feeds a shell text built from unresolved variables.", whole) }
+            analyze(code.text, depth: depth + 1)
+            return
+        }
+        if let code = hereString, ["python", "python3", "node", "ruby", "perl", "php", "deno", "bun"].contains(name) {
+            analyzeInterpreter(name, [ShellWord("-c"), code], whole: whole, depth: depth)
+            return
         }
         // Nested shells: sh -c "…", bash -lc "…", eval "…"
         if Analyzer.shells.contains(first.text) || Analyzer.shells.contains(name) {
@@ -355,7 +406,13 @@ struct Analyzer {
             return
         }
         if name == "eval" {
-            if args.contains(where: \.opaque) { add("shell.opaque", .ask, .recommended, "it evaluates text built from unresolved variables.", whole) }
+            // `eval "$(brew shellenv)"` and friends evaluate environment setup printed by a known tool.
+            let setupOnly = args.allSatisfy { w in
+                guard w.opaque else { return true }
+                guard w.text.hasPrefix("$("), w.text.hasSuffix(")") else { return false }
+                return Analyzer.isEnvironmentSetup(String(w.text.dropFirst(2).dropLast()))
+            }
+            if args.contains(where: \.opaque) && !setupOnly { add("shell.opaque", .ask, .recommended, "it evaluates text built from unresolved variables.", whole) }
             analyze(argv.joined(separator: " "), depth: depth + 1)
             return
         }
@@ -369,6 +426,7 @@ struct Analyzer {
             } else {
                 cwd = context.home
             }
+            if let c = cwd { visited.append(c) }
             return
         }
         if name == "find" { analyzeFind(args, whole: whole); return }
@@ -517,6 +575,10 @@ struct Analyzer {
 
     mutating func classifyDeletion(_ targets: [ShellWord], recursive: Bool, verb: String, whole: String) {
         for t in targets {
+            if let r = resolve(t), hookConfigFiles.contains(r.path) {
+                add("self.hooks", .ask, .none, "it removes an agent's hook configuration, which switches Airbag's protection off.", t.text)
+                continue
+            }
             let cls = classify(resolve(t))
             switch cls {
             case .catastrophic(let p):
@@ -540,6 +602,17 @@ struct Analyzer {
         }
     }
 
+    func gitTopLevel(_ path: String) -> String? {
+        var dir = path
+        while !dir.isEmpty {
+            var st = stat()
+            if lstat(dir + "/.git", &st) == 0 { return dir }
+            if dir == "/" { return nil }
+            dir = (dir as NSString).deletingLastPathComponent
+        }
+        return nil
+    }
+
     func hasGitDirectory(_ root: String) -> Bool {
         guard context.useFileSystem else { return true }
         var st = stat()
@@ -553,17 +626,60 @@ struct Analyzer {
         return p
     }
 
-    func splitOptions(_ args: [ShellWord]) -> (flags: Set<Character>, long: Set<String>, operands: [ShellWord]) {
+    /// Options anywhere on the line (GNU tools and rsync accept them after operands). `valued` options take the next
+    /// word as their value, so it is not mistaken for a source or destination; their values are returned by name.
+    func splitOptions(_ args: [ShellWord], valued: Set<String> = []) -> (flags: Set<Character>, long: Set<String>, operands: [ShellWord]) {
+        splitOptionValues(args, valued: valued).0
+    }
+
+    func splitOptionValues(_ args: [ShellWord], valued: Set<String>) -> ((flags: Set<Character>, long: Set<String>, operands: [ShellWord]), [String: ShellWord]) {
         var flags = Set<Character>(), long = Set<String>(), operands: [ShellWord] = []
+        var values: [String: ShellWord] = [:]
         var endOfOptions = false
-        for a in args {
+        var i = 0
+        while i < args.count {
+            let a = args[i]
+            i += 1
             if !endOfOptions && a.text == "--" { endOfOptions = true; continue }
-            if !endOfOptions && a.text.hasPrefix("--") { long.insert(a.text); continue }
-            if !endOfOptions && a.text.hasPrefix("-") && a.text.count > 1 && !a.quoted { for ch in a.text.dropFirst() { flags.insert(ch) }; continue }
+            if !endOfOptions && a.text.hasPrefix("--") {
+                if let eq = a.text.firstIndex(of: "=") {
+                    let name = String(a.text[..<eq])
+                    long.insert(name); long.insert(a.text)
+                    if valued.contains(name) { var v = a; v.text = String(a.text[a.text.index(after: eq)...]); values[name] = v }
+                } else {
+                    long.insert(a.text)
+                    if valued.contains(a.text), i < args.count { values[a.text] = args[i]; i += 1 }
+                }
+                continue
+            }
+            if !endOfOptions && a.text.hasPrefix("-") && a.text.count > 1 && !a.quoted {
+                let cluster = Array(a.text.dropFirst())
+                for (k, ch) in cluster.enumerated() {
+                    flags.insert(ch)
+                    if valued.contains("-" + String(ch)) {
+                        let rest = String(cluster[(k + 1)...])
+                        if !rest.isEmpty { var v = a; v.text = rest; values["-" + String(ch)] = v }
+                        else if i < args.count { values["-" + String(ch)] = args[i]; i += 1 }
+                        break
+                    }
+                }
+                continue
+            }
             operands.append(a)
         }
-        return (flags, long, operands)
+        return ((flags, long, operands), values)
     }
+
+    static let rsyncValued: Set<String> = [
+        "--exclude", "--include", "--exclude-from", "--include-from", "--filter", "--files-from", "--chmod", "--chown", "--rsh",
+        "--backup-dir", "--suffix", "--compare-dest", "--copy-dest", "--link-dest", "--partial-dir", "--temp-dir", "--max-size",
+        "--min-size", "--bwlimit", "--timeout", "--contimeout", "--port", "--log-file", "--log-file-format", "--out-format",
+        "--password-file", "--rsync-path", "--modify-window", "--max-delete", "--block-size", "--iconv", "--usermap", "--groupmap",
+        "--sockopts", "--address", "--skip-compress", "--remote-option", "--info", "--debug", "--write-batch", "--read-batch",
+        "-e", "-f", "-T", "-B", "-M",
+    ]
+    /// Options of cp and mv whose value is a separate word (`--backup` and friends take theirs only after `=`).
+    static let cpMvValued: Set<String> = ["-t", "--target-directory", "-S", "--suffix"]
 
     mutating func analyzeRemove(_ name: String, _ args: [ShellWord], whole: String) {
         let (flags, long, operands) = splitOptions(args)
@@ -626,13 +742,18 @@ struct Analyzer {
     }
 
     mutating func analyzeMove(_ args: [ShellWord], whole: String) {
-        let (_, _, operands) = splitOptions(args)
-        guard operands.count >= 2 else { return }
-        let sources = operands.dropLast()
-        let dest = operands.last!
-        if dest.text == "/dev/null" { classifyDeletion(Array(sources), recursive: true, verb: "delete", whole: whole); return }
-        defer { writeCheck(dest, truncates: false, whole: whole) }
+        let ((_, _, operands), values) = splitOptionValues(args, valued: Analyzer.cpMvValued)
+        let target = values["-t"] ?? values["--target-directory"]
+        guard operands.count >= (target == nil ? 2 : 1) else { return }
+        let sources = target == nil ? Array(operands.dropLast()) : operands
+        let dest = target ?? operands.last!
+        if dest.text == "/dev/null" { classifyDeletion(sources, recursive: true, verb: "delete", whole: whole); return }
+        defer { destinationCheck("mv", sources, dest, truncates: false, intoDirectory: target != nil, whole: whole) }
         for s in sources {
+            if let r = resolve(s), hookConfigFiles.contains(r.path) {
+                add("self.hooks", .ask, .none, "it moves an agent's hook configuration away, which switches Airbag's protection off.", s.text)
+                continue
+            }
             switch classify(resolve(s)) {
             case .catastrophic(let p): add("fs.mv.catastrophic", .block, .none, "it would move \(describe(p)) away, breaking the system or your files.", s.text)
             case .airbag: add("self.airbag", .block, .none, "it would move Airbag's own data.", s.text)
@@ -645,6 +766,69 @@ struct Analyzer {
         }
     }
 
+    /// cp, mv and rsync put their sources *inside* an existing directory, so a system or home folder named as the
+    /// destination is not itself overwritten: what gets written is `dest/<source name>`. When the names written are not
+    /// known (`src/`, globs, ditto, which copies a directory's contents) the copy can still clobber files there: ask.
+    /// A move replaces an existing file at the destination, which is outside every snapshot when the file is.
+    /// `relative` (rsync -R, cp --parents) recreates each source's path below the destination; `intoDirectory` is `-t DIR`.
+    mutating func destinationCheck(_ tool: String, _ sources: [ShellWord], _ dest: ShellWord, truncates: Bool, relative: Bool = false,
+                                   intoDirectory: Bool = false, whole: String) {
+        guard let resolvedDest = resolve(dest) else { writeCheck(dest, truncates: truncates, whole: whole); return }
+        let cls = classify(resolvedDest)
+        var critical: String?
+        if case .catastrophic(let p) = cls { critical = p }
+        let existingDirectory = context.useFileSystem && isDirectory(resolvedDest.path)
+        guard intoDirectory || relative || critical != nil || (existingDirectory && cls == .outside) else {
+            writeCheck(dest, truncates: truncates || replacesExistingFile(resolvedDest.path), whole: whole)
+            return
+        }
+        let names: [String?] = sources.map { s in
+            let t = s.text
+            if tool == "ditto" || s.opaque || s.hasGlob || t.hasSuffix("/") || t.hasSuffix("/.") || t.hasSuffix("/..") || [".", ".."].contains(t) { return nil }
+            if relative {
+                var rel = t
+                if let marker = rel.range(of: "/./") { rel = String(rel[marker.upperBound...]) }
+                while rel.hasPrefix("./") { rel.removeFirst(2) }
+                while rel.hasPrefix("/") { rel.removeFirst() }
+                return rel.isEmpty || rel.split(separator: "/").contains("..") ? nil : rel
+            }
+            let name = (t as NSString).lastPathComponent
+            return name.isEmpty || name == "/" ? nil : name
+        }
+        guard !names.isEmpty, names.allSatisfy({ $0 != nil }) else {
+            if let p = critical {
+                add("fs.write.into.catastrophic", .ask, .none, "it copies files into \(describe(p)), where they can overwrite files no snapshot covers.", dest.text)
+            } else {
+                writeCheck(dest, truncates: true, whole: whole)
+            }
+            return
+        }
+        let dir = resolvedDest.path == "/" ? "" : resolvedDest.path
+        for case let name? in names {
+            let written = dir + "/" + name
+            writeCheck(ShellWord(written), truncates: truncates || replacesExistingFile(written), whole: whole)
+        }
+    }
+
+    func isDirectory(_ path: String) -> Bool {
+        var isDir: ObjCBool = false
+        return FileManager.default.fileExists(atPath: path, isDirectory: &isDir) && isDir.boolValue
+    }
+
+    /// Writing a new file outside the project destroys nothing. Without the real file system (fixtures), assume it exists.
+    func replacesOrUnknown(_ path: String?) -> Bool {
+        guard context.useFileSystem, let path else { return true }
+        var st = stat()
+        return lstat(path, &st) == 0
+    }
+
+    /// Only with the real file system: fixtures describe commands, not a disk.
+    func replacesExistingFile(_ path: String) -> Bool {
+        guard context.useFileSystem else { return false }
+        var st = stat()
+        return lstat(path, &st) == 0
+    }
+
     mutating func overwriteCheck(_ dest: ShellWord, whole: String, verb: String) {
         switch classify(resolve(dest)) {
         case .catastrophic(let p): add("fs.overwrite.catastrophic", .block, .none, "it would \(verb) \(describe(p)).", dest.text)
@@ -655,9 +839,13 @@ struct Analyzer {
     }
 
     mutating func analyzeCopy(_ name: String, _ args: [ShellWord], whole: String) {
-        let (_, long, operands) = splitOptions(args)
-        guard let dest = operands.last, operands.count >= 2 else { return }
-        if name == "rsync", long.contains(where: { $0.hasPrefix("--delete") }) {
+        let ((flags, long, operands), values) = splitOptionValues(args, valued: name == "rsync" ? Analyzer.rsyncValued : Analyzer.cpMvValued)
+        let target = name == "rsync" ? nil : (values["-t"] ?? values["--target-directory"])
+        guard operands.count >= (target == nil ? 2 : 1) else { return }
+        let sources = target == nil ? Array(operands.dropLast()) : operands
+        let dest = target ?? operands.last!
+        // `--del` is rsync's alias for --delete-during.
+        if name == "rsync", long.contains(where: { $0 == "--del" || $0.hasPrefix("--delete") }) {
             if dest.text.contains(":") && !dest.text.hasPrefix("/") {
                 add("fs.rsync.delete.remote", .ask, .none, "it deletes files on a remote machine that are missing locally.", whole)
             } else {
@@ -666,13 +854,14 @@ struct Analyzer {
         }
         if long.contains("--remove-source-files") || long.contains("--move") {
             // The *sources* are deleted after copying.
-            classifyDeletion(Array(operands.dropLast()), recursive: true, verb: "copy and then delete", whole: whole)
+            classifyDeletion(sources, recursive: true, verb: "copy and then delete", whole: whole)
         }
-        if operands.first?.text == "/dev/null" || operands.first?.text == "/dev/zero" {
+        if sources.first?.text == "/dev/null" || sources.first?.text == "/dev/zero" {
             // cp /dev/null file → truncation
             analyzeTruncateTargets([dest], whole: whole)
         }
-        writeCheck(dest, truncates: true, whole: whole)
+        let relative = name == "rsync" ? (flags.contains("R") || long.contains("--relative")) : long.contains("--parents")
+        destinationCheck(name, sources, dest, truncates: true, relative: relative, intoDirectory: target != nil, whole: whole)
     }
 
     mutating func analyzeTruncate(_ args: [ShellWord], whole: String) {
@@ -698,7 +887,8 @@ struct Analyzer {
         case .catastrophic(let p): add("fs.overwrite.catastrophic", .block, .none, "it would overwrite \(describe(p)).", target.text)
         case .airbag: add("self.airbag", .block, .none, "it modifies Airbag's own data, which protects this project.", target.text)
         case .device: add("fs.device.write", .block, .none, "it writes to a device.", target.text)
-        case .outside where truncates: add("fs.write.outside", .ask, .recommended, "it overwrites \(target.text) outside the protected project, where no snapshot can restore it.", target.text)
+        case .outside where truncates && replacesOrUnknown(resolved?.path):
+            add("fs.write.outside", .ask, .recommended, "it overwrites \(target.text) outside the protected project, where no snapshot can restore it.", target.text)
         case .gitInternals: add("git.internals.write", .ask, .recommended, "it overwrites a file inside .git, which snapshots do not cover.", target.text)
         case .insideProject, .projectRoot: add("fs.write.project", .allow, .recommended, "it edits project files (a snapshot is taken first).", target.text)
         default: break
@@ -707,10 +897,14 @@ struct Analyzer {
 
     mutating func analyzeTruncateTargets(_ targets: [ShellWord], whole: String) {
         for t in targets {
+            if let r = resolve(t), hookConfigFiles.contains(r.path) {
+                add("self.hooks", .ask, .none, "it empties an agent's hook configuration, which switches Airbag's protection off.", t.text)
+                continue
+            }
             switch classify(resolve(t)) {
             case .catastrophic(let p): add("fs.redirect.catastrophic", .block, .none, "it empties \(describe(p)).", t.text)
             case .airbag: add("self.airbag", .block, .none, "it empties Airbag's own data.", t.text)
-            case .outside: add("fs.truncate.outside", .ask, .recommended, "it empties \(t.text) outside the protected project.", t.text)
+            case .outside where replacesOrUnknown(resolve(t)?.path): add("fs.truncate.outside", .ask, .recommended, "it empties \(t.text) outside the protected project.", t.text)
             case .unknown: add("fs.truncate.opaque", .ask, .recommended, "it empties a file whose path depends on an unresolved variable.", t.text)
             case .insideProject, .projectRoot: add("fs.truncate.project", .allow, .required, "it empties a project file (a snapshot is taken first).", t.text)
             case .device: add("fs.device.write", .block, .none, "it writes to a device.", t.text)
@@ -766,7 +960,13 @@ struct Analyzer {
             cwd = saved
         }
         let treeClass = classify(effectiveTree.map { Resolved(path: $0, contents: false) })
-        let treeProtected: Bool = { if case .insideProject = treeClass { return true }; if case .projectRoot = treeClass { return true }; return false }()
+        var treeProtected: Bool = { if case .insideProject = treeClass { return true }; if case .projectRoot = treeClass { return true }; return false }()
+        // A folder without its own .git inside a larger repository (a dotfiles repository in the home folder): git acts on
+        // the whole repository, most of which lies outside the protected root.
+        if treeProtected, workTree == nil, context.useFileSystem, let tree = effectiveTree, let top = gitTopLevel(tree),
+           !context.roots.contains(where: { top == $0 || top.hasPrefix($0 + "/") }) {
+            treeProtected = false
+        }
         guard let sub = a.first else { return }
         let rest = Array(a.dropFirst())
         // Subcommands that never change working-tree files (.git itself is not snapshotted, so no snapshot is needed).

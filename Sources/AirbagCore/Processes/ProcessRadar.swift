@@ -291,7 +291,7 @@ public final class ProcessRadar {
         guard let reg = registry else { return [] }
         let p = (try? reg.db.all("SELECT root_path FROM projects WHERE archived_at IS NULL") { $0.text(0) }) ?? []
         let w = (try? reg.db.all("SELECT path FROM worktrees WHERE removed_at IS NULL") { $0.text(0) }) ?? []
-        return Array(Set(p + w))
+        return Array(Set(p + w)).filter { !SnapshotStore.isSystemOrHomeFolder($0) }
     }
 
     func rememberedAttributions(_ registry: Registry?) -> [ProcessIdentity: (agent: String, sid: String, ended: Bool)] {

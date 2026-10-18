@@ -11,9 +11,13 @@ public struct ShellWord: Sendable, Equatable {
     public var quoted: Bool
     /// `NAME` when the word starts with an unquoted `NAME=` (a variable assignment in command position).
     public var assignmentName: String?
+    /// The body of a here-document when this word is its delimiter (`<<EOF`).
+    public var heredoc: String?
 
-    public init(_ text: String, opaque: Bool = false, hasGlob: Bool = false, quoted: Bool = false, assignmentName: String? = nil) {
+    public init(_ text: String, opaque: Bool = false, hasGlob: Bool = false, quoted: Bool = false, assignmentName: String? = nil,
+                heredoc: String? = nil) {
         self.text = text; self.opaque = opaque; self.hasGlob = hasGlob; self.quoted = quoted; self.assignmentName = assignmentName
+        self.heredoc = heredoc
     }
 }
 
@@ -48,6 +52,9 @@ public struct ShellLexer {
     public var home: String
     /// Commands found inside `$(...)`, backticks and `<(...)`; they run too, so the analyzer inspects them.
     public private(set) var substitutions: [String] = []
+    /// A quote, substitution or backtick was never closed: the shell would refuse the line, so if it runs anyway the
+    /// lexer read it differently from the shell and its analysis cannot be trusted.
+    public private(set) var unterminated = false
 
     public init(environment: [String: String], home: String) {
         self.environment = environment
@@ -65,7 +72,10 @@ public struct ShellLexer {
         let c = Array(input)
         var i = 0
         var tokens: [Token] = []
-        var pendingHeredocs: [(delimiter: String, stripTabs: Bool)] = []
+        var pendingHeredocs: [(delimiter: String, stripTabs: Bool, quoted: Bool, token: Int)] = []
+        // Words of the current simple command, for `NAME=value; … $NAME` (redirect targets are not part of it).
+        var segment: [ShellWord] = []
+        var afterRedirect = false
 
         func peek(_ k: Int = 0) -> Character? { i + k < c.count ? c[i + k] : nil }
 
@@ -74,10 +84,14 @@ public struct ShellLexer {
             if ch == " " || ch == "\t" { i += 1; continue }
             if ch == "\\" && peek(1) == "\n" { i += 2; continue }
             if ch == "\n" || ch == "\r" {
+                applyAssignments(segment)
+                segment.removeAll()
                 tokens.append(.op(";"))
                 i += 1
-                // Skip heredoc bodies: they are data, not commands.
+                // Here-document bodies are data for the command (kept on the delimiter word for shells and
+                // interpreters that run them); with an unquoted delimiter their substitutions run too.
                 for h in pendingHeredocs {
+                    var body: [String] = []
                     while i < c.count {
                         var j = i
                         while j < c.count && c[j] != "\n" { j += 1 }
@@ -85,7 +99,11 @@ public struct ShellLexer {
                         if h.stripTabs { line = String(line.drop(while: { $0 == "\t" })) }
                         i = min(c.count, j + 1)
                         if line == h.delimiter { break }
+                        body.append(line)
                     }
+                    let text = body.joined(separator: "\n")
+                    tokens[h.token] = .word(ShellWord(h.delimiter, quoted: true, heredoc: text))
+                    if !h.quoted { scanExpansions(text) }
                 }
                 pendingHeredocs.removeAll()
                 continue
@@ -102,12 +120,18 @@ public struct ShellLexer {
                     while i < c.count && (c[i] == " " || c[i] == "\t") { i += 1 }
                     let (word, next) = readWord(c, i)
                     i = next
-                    pendingHeredocs.append((word.text, op == "<<-"))
                     tokens.append(.op(op))
+                    pendingHeredocs.append((word.text, op == "<<-", word.quoted, tokens.count))
                     tokens.append(.word(ShellWord(word.text, quoted: true)))
                     continue
                 }
                 tokens.append(.op(op))
+                if ShellLexer.redirectOps.contains(op) {
+                    afterRedirect = true
+                } else {
+                    if [";", "&&", "||"].contains(op) { applyAssignments(segment) } // `|`, `&` and `( )` run in subshells
+                    segment.removeAll()
+                }
                 continue
             }
             // fd-prefixed redirection such as 2> or 2>>
@@ -117,6 +141,7 @@ public struct ShellLexer {
                 if j < c.count, c[j] == ">" || c[j] == "<", let op = matchOperator(c, j) {
                     tokens.append(.op(String(c[i..<j]) + op))
                     i = j + op.count
+                    afterRedirect = true
                     continue
                 }
             }
@@ -131,12 +156,28 @@ public struct ShellLexer {
             let (word, next) = readWord(c, i)
             i = next
             tokens.append(.word(word))
+            if afterRedirect { afterRedirect = false } else { segment.append(word) }
         }
         return tokens
     }
 
+    /// `NAME=value` as a command of its own (or after `export`) sets the variable for the rest of the line, as the shell
+    /// does; a value Airbag cannot resolve makes later uses unresolved too.
+    mutating func applyAssignments(_ words: [ShellWord]) {
+        var ws = words[...]
+        if let f = ws.first, !f.quoted, ["export", "local", "readonly", "declare", "typeset"].contains(f.text) { ws = ws.dropFirst() }
+        guard !ws.isEmpty, ws.allSatisfy({ $0.assignmentName != nil }) else { return }
+        for w in ws {
+            guard let name = w.assignmentName else { continue }
+            if w.opaque || w.hasGlob { environment.removeValue(forKey: name); shadowed.insert(name) }
+            else { environment[name] = String(w.text.dropFirst(name.count + 1)); shadowed.remove(name) }
+        }
+    }
+
     func matchOperator(_ c: [Character], _ i: Int) -> String? {
-        let ops = ["&>>", "<<<", "<<-", "&&", "||", ";;", "|&", ">>", ">|", "<<", "<>", ">&", "<&", "&>", ";", "&", "|", "(", ")", "<", ">"]
+        // zsh: `>!`, `>>!`, `&>!`, `>&!` clobber like `>|`; `>>&` and `&>>` append stdout and stderr.
+        let ops = ["&>>!", ">>&!", "&>>", ">>&", "&>!", ">&!", ">>!", "<<<", "<<-", "&&", "||", ";;", "|&", ">>", ">|", ">!", "<<",
+                   "<>", ">&", "<&", "&>", ";", "&", "|", "(", ")", "<", ">"]
         for op in ops {
             let chars = Array(op)
             if i + chars.count <= c.count && Array(c[i..<(i + chars.count)]) == chars {
@@ -172,6 +213,7 @@ public struct ShellLexer {
                 quoted = true
                 i += 1
                 while i < c.count && c[i] != "'" { out.append(c[i]); i += 1 }
+                if i >= c.count { unterminated = true }
                 i += 1
             case "\"":
                 quoted = true
@@ -190,6 +232,7 @@ public struct ShellLexer {
                         out.append(c[i]); i += 1
                     }
                 }
+                if i >= c.count { unterminated = true }
                 i += 1
             case "$":
                 if i + 1 < c.count, c[i + 1] == "'" {
@@ -203,6 +246,7 @@ public struct ShellLexer {
                             i += 1 + used
                         } else { out.append(c[i]); i += 1 }
                     }
+                    if i >= c.count { unterminated = true }
                     i += 1
                 } else {
                     let (text, op, next) = readDollar(c, i)
@@ -212,7 +256,8 @@ public struct ShellLexer {
                 let (inner, next) = readUntil(c, i + 1, "`")
                 if inner.trimmingCharacters(in: .whitespaces) == "pwd", let pwd = environment["PWD"] { out += pwd; i = next; continue }
                 substitutions.append(inner); opaque = true; out += "`…`"; i = next
-            case "~" where atStart(i):
+            case "~" where atStart(i) || (assignmentName != nil && !quoted && (out.hasSuffix("=") || out.hasSuffix(":"))):
+                // Also after `NAME=` and `:` in an assignment (`D=~/x`, `PATH=~/bin:~/y`), as the shell expands it.
                 // Tilde expansion: ~ or ~/... (or ~user)
                 var j = i + 1
                 var user = ""
@@ -249,6 +294,17 @@ public struct ShellLexer {
             let (inner, next) = readBalanced(c, i + 2, open: "(", close: ")")
             let trimmed = inner.trimmingCharacters(in: .whitespaces)
             if (trimmed == "pwd" || trimmed == "pwd -P" || trimmed == "pwd -L"), let pwd = environment["PWD"] { return (pwd, false, next) }
+            // `$(brew shellenv)` keeps its text, so `eval` can tell environment setup from arbitrary output.
+            if Analyzer.isEnvironmentSetup(trimmed), !trimmed.contains("$("), !trimmed.contains("`") {
+                substitutions.append(inner)
+                return ("$(\(trimmed))", true, next)
+            }
+            // `$(mktemp -d)`: a fresh path in the temporary directory, whatever its random name.
+            if trimmed == "mktemp" || trimmed.hasPrefix("mktemp "), !trimmed.contains("/"), !trimmed.contains("$") {
+                var tmp = environment["TMPDIR"] ?? "/tmp"
+                while tmp.count > 1 && tmp.hasSuffix("/") { tmp.removeLast() }
+                return (tmp + "/airbag-mktemp", false, next)
+            }
             substitutions.append(inner)
             return ("$(…)", true, next)
         }
@@ -310,29 +366,80 @@ public struct ShellLexer {
         }
     }
 
+    /// Variables reassigned on this line to something Airbag cannot resolve.
+    var shadowed: Set<String> = []
+
     func lookup(_ name: String) -> String? {
-        if name == "HOME" { return home }
+        if shadowed.contains(name) { return nil }
+        if name == "HOME" { return environment["HOME"] ?? home }
         return environment[name]
     }
 
-    func readUntil(_ c: [Character], _ start: Int, _ end: Character) -> (String, Int) {
+    mutating func readUntil(_ c: [Character], _ start: Int, _ end: Character) -> (String, Int) {
         var i = start
         var s = ""
         while i < c.count && c[i] != end {
             if c[i] == "\\", i + 1 < c.count { s.append(c[i + 1]); i += 2; continue }
             s.append(c[i]); i += 1
         }
+        if i >= c.count { unterminated = true }
         return (s, min(c.count, i + 1))
     }
 
-    /// Reads up to the matching close bracket, honouring nesting and quotes. Returns the inner text.
-    func readBalanced(_ c: [Character], _ start: Int, open: Character, close: Character) -> (String, Int) {
+    /// `$(...)`, `${...}` and backticks in a here-document with an unquoted delimiter are expanded, so they run.
+    mutating func scanExpansions(_ text: String) {
+        let c = Array(text)
+        var i = 0
+        while i < c.count {
+            switch c[i] {
+            case "\\": i += 2
+            case "$": let (_, _, next) = readDollar(c, i); i = max(next, i + 1)
+            case "`": let (inner, next) = readUntil(c, i + 1, "`"); substitutions.append(inner); i = next
+            default: i += 1
+            }
+        }
+    }
+
+    /// Reads up to the matching close bracket, honouring nesting, quotes and here-documents. Returns the inner text.
+    mutating func readBalanced(_ c: [Character], _ start: Int, open: Character, close: Character) -> (String, Int) {
         var i = start
         var depth = 1
         var s = ""
+        var heredocs: [(delimiter: String, stripTabs: Bool)] = []
         while i < c.count {
             let ch = c[i]
             if ch == "\\", i + 1 < c.count { s.append(ch); s.append(c[i + 1]); i += 2; continue }
+            // `$(cat <<'EOF' … EOF)`: the body is copied verbatim, so an apostrophe in a commit message is not a quote.
+            if ch == "\n", !heredocs.isEmpty {
+                s.append(ch); i += 1
+                for h in heredocs {
+                    while i < c.count {
+                        var j = i
+                        while j < c.count && c[j] != "\n" { j += 1 }
+                        let line = String(c[i..<j])
+                        s += line
+                        if j < c.count { s.append("\n") }
+                        i = min(c.count, j + 1)
+                        if (h.stripTabs ? String(line.drop(while: { $0 == "\t" })) : line) == h.delimiter { break }
+                    }
+                }
+                heredocs.removeAll()
+                continue
+            }
+            if ch == "<", i + 1 < c.count, c[i + 1] == "<", !(i + 2 < c.count && c[i + 2] == "<") {
+                let stripTabs = i + 2 < c.count && c[i + 2] == "-"
+                var j = i + (stripTabs ? 3 : 2)
+                s += String(c[i..<j])
+                while j < c.count && (c[j] == " " || c[j] == "\t") { s.append(c[j]); j += 1 }
+                var delimiter = ""
+                while j < c.count, !" \t\n;|&()<>".contains(c[j]) {
+                    if !"'\"\\".contains(c[j]) { delimiter.append(c[j]) }
+                    s.append(c[j]); j += 1
+                }
+                if !delimiter.isEmpty { heredocs.append((delimiter, stripTabs)) }
+                i = j
+                continue
+            }
             if ch == "'" {
                 s.append(ch); i += 1
                 while i < c.count && c[i] != "'" { s.append(c[i]); i += 1 }
@@ -356,13 +463,15 @@ public struct ShellLexer {
             s.append(ch)
             i += 1
         }
+        unterminated = true
         return (s, i)
     }
 
     // MARK: grouping
 
     static let controlKeywords: Set<String> = ["if", "then", "else", "elif", "fi", "do", "done", "while", "until", "!", "{", "}", "in", "esac", "select"]
-    static let redirectOps: Set<String> = [">", ">>", ">|", "<", "<>", "&>", "&>>", ">&", "<&", "<<", "<<-", "<<<"]
+    static let redirectOps: Set<String> = [">", ">>", ">|", "<", "<>", "&>", "&>>", ">&", "<&", "<<", "<<-", "<<<",
+                                           ">!", ">>!", "&>!", ">&!", "&>>!", ">>&", ">>&!"]
 
     /// Splits a command line into simple commands.
     public mutating func parse(_ input: String, depth: Int = 0) -> [ShellCommand] {

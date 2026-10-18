@@ -16,7 +16,9 @@ security boundary against a hostile agent, a malicious plugin, or malware runnin
   if Airbag is broken); strict mode makes Claude Code and Cursor block instead.
 - **Bypass.** An agent can always find a command the text analysis does not understand. That is why destructive
   commands inside the project are allowed only after a snapshot, and why the breaker reserves blocks for damage
-  outside every snapshot.
+  outside every snapshot. Known blind spots of the text analysis: scripts run by an interpreter (`python3 x.py`,
+  `python3 - <<EOF`), paths built from loop variables or command output, and `cp`/`mv` destinations given by an
+  unresolved variable. Inside a project the snapshot covers them.
 - **Self-protection.** Commands that delete or edit Airbag's data or the agents' hook configuration files are
   blocked or need approval. A determined same-user process can still remove them.
 - **Data at rest.** Snapshots are copies of project files, including `.env` and other secrets. They live in

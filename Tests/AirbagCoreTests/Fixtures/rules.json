@@ -2218,6 +2218,413 @@
     "decision": "allow",
     "snapshot": "none"
    }
+  },
+  {
+   "cmd": "ls 2>&1 | head",
+   "expect": {
+    "decision": "allow",
+    "snapshot": "none"
+   },
+   "why": "2>&1 duplicates a descriptor; nothing is written (dogfooding, 2026-10-18)"
+  },
+  {
+   "cmd": "git status 2>&1",
+   "expect": {
+    "decision": "allow",
+    "snapshot": "none"
+   }
+  },
+  {
+   "cmd": "npm run build > build.log 2>&1",
+   "expect": {
+    "decision": "allow",
+    "snapshot": "required"
+   },
+   "rule": "fs.truncate.project"
+  },
+  {
+   "cmd": "echo done >&2",
+   "expect": {
+    "decision": "allow",
+    "snapshot": "none"
+   }
+  },
+  {
+   "cmd": "ls 2>&-",
+   "expect": {
+    "decision": "allow",
+    "snapshot": "none"
+   }
+  },
+  {
+   "cmd": "ls 1>&2 2>&1 >/dev/null",
+   "expect": {
+    "decision": "allow",
+    "snapshot": "none"
+   }
+  },
+  {
+   "cmd": "cd ~/Work/other && ls 2>&1",
+   "expect": {
+    "decision": "allow",
+    "snapshot": "none"
+   },
+   "why": "outside the project 2>&1 used to ask: 'it overwrites 1'"
+  },
+  {
+   "cmd": "echo x >&out.txt",
+   "expect": {
+    "decision": "allow",
+    "snapshot": "required"
+   },
+   "rule": "fs.truncate.project",
+   "why": ">&file is bash for &>file"
+  },
+  {
+   "cmd": "echo x >& ~/notes.txt",
+   "expect": {
+    "decision": "ask"
+   },
+   "rule": "fs.truncate.outside"
+  },
+  {
+   "cmd": "cp -R build/Airbag.app /Applications/",
+   "expect": {
+    "decision": "ask"
+   },
+   "rule": "fs.write.outside",
+   "why": "copies into /Applications; /Applications itself is not overwritten"
+  },
+  {
+   "cmd": "cp -R build/Airbag.app /Applications",
+   "expect": {
+    "decision": "ask"
+   },
+   "rule": "fs.write.outside"
+  },
+  {
+   "cmd": "mv notes.txt ~/Documents",
+   "expect": {
+    "decision": "allow",
+    "snapshot": "required"
+   },
+   "rule": "fs.mv.project",
+   "why": "moving a project file into Documents is restorable from the snapshot"
+  },
+  {
+   "cmd": "cp report.pdf ~/Desktop/",
+   "expect": {
+    "decision": "ask"
+   },
+   "rule": "fs.write.outside",
+   "why": "writes ~/Desktop/report.pdf, which may already exist"
+  },
+  {
+   "cmd": "cp -R dist/ ~/",
+   "expect": {
+    "decision": "ask"
+   },
+   "rule": "fs.write.into.catastrophic",
+   "why": "the contents of dist land in the home folder under unknown names"
+  },
+  {
+   "cmd": "cp -R . ~",
+   "expect": {
+    "decision": "ask"
+   },
+   "rule": "fs.write.into.catastrophic"
+  },
+  {
+   "cmd": "cp *.app /Applications/",
+   "expect": {
+    "decision": "ask"
+   },
+   "rule": "fs.write.into.catastrophic"
+  },
+  {
+   "cmd": "ditto build/Airbag.app /Applications",
+   "expect": {
+    "decision": "ask"
+   },
+   "rule": "fs.write.into.catastrophic",
+   "why": "ditto copies a directory's contents, not the directory"
+  },
+  {
+   "cmd": "cp settings.json ~/.claude/",
+   "expect": {
+    "decision": "ask"
+   },
+   "rule": "self.hooks"
+  },
+  {
+   "cmd": "cp -R Airbag ~/Library/Application\\ Support/",
+   "expect": {
+    "decision": "block"
+   },
+   "rule": "self.airbag"
+  },
+  {
+   "cmd": "rsync -a --delete dist/ ~/",
+   "expect": {
+    "decision": "block"
+   }
+  },
+  {
+   "cmd": "echo x 1<>~/.claude/settings.json",
+   "expect": {
+    "decision": "ask"
+   },
+   "rule": "self.hooks",
+   "why": "N<> opens read-write on an output descriptor and overwrites in place (review of the dogfooding fixes)"
+  },
+  {
+   "cmd": "echo x 1<>/dev/disk0",
+   "expect": {
+    "decision": "block"
+   },
+   "rule": "fs.device.write"
+  },
+  {
+   "cmd": "cat a 1<>/dev/rdisk0",
+   "expect": {
+    "decision": "block"
+   },
+   "rule": "fs.device.write"
+  },
+  {
+   "cmd": "echo x 1<>~/Library/Application\\ Support/Airbag/registry.sqlite",
+   "expect": {
+    "decision": "block"
+   },
+   "rule": "self.airbag"
+  },
+  {
+   "cmd": "exec 3<>~/.zshrc; echo x >&3",
+   "expect": {
+    "decision": "ask"
+   },
+   "rule": "fs.truncate.outside"
+  },
+  {
+   "cmd": "cat <> notes.txt",
+   "expect": {
+    "decision": "allow",
+    "snapshot": "none"
+   },
+   "why": "bare <> is stdin"
+  },
+  {
+   "cmd": "echo '{}' >! ~/.claude/settings.json",
+   "expect": {
+    "decision": "ask"
+   },
+   "rule": "self.hooks",
+   "why": "zsh clobber redirect"
+  },
+  {
+   "cmd": "echo x >! ~/Library/Application\\ Support/Airbag/registry.sqlite",
+   "expect": {
+    "decision": "block"
+   },
+   "rule": "self.airbag"
+  },
+  {
+   "cmd": "echo x &>! ~/.ssh/config",
+   "expect": {
+    "decision": "ask"
+   },
+   "rule": "fs.truncate.outside"
+  },
+  {
+   "cmd": "echo x >&! ~/.zshrc",
+   "expect": {
+    "decision": "ask"
+   },
+   "rule": "fs.truncate.outside"
+  },
+  {
+   "cmd": "echo x >! src/a.ts",
+   "expect": {
+    "decision": "allow",
+    "snapshot": "required"
+   },
+   "rule": "fs.truncate.project"
+  },
+  {
+   "cmd": "rsync -a --del empty/ ~/",
+   "expect": {
+    "decision": "block"
+   },
+   "rule": "fs.rm.catastrophic",
+   "why": "--del is rsync's alias for --delete-during"
+  },
+  {
+   "cmd": "rsync -a --del empty/ /Applications/",
+   "expect": {
+    "decision": "block"
+   },
+   "rule": "fs.rm.catastrophic"
+  },
+  {
+   "cmd": "rsync -a --del /tmp/proj ~/Work",
+   "expect": {
+    "decision": "block"
+   },
+   "rule": "fs.rm.catastrophic"
+  },
+  {
+   "cmd": "rsync -a --delete src/ ~/ --exclude x",
+   "expect": {
+    "decision": "block"
+   },
+   "rule": "fs.rm.catastrophic",
+   "why": "options after operands take their value"
+  },
+  {
+   "cmd": "rsync -avz -e ssh dist/ host:/srv/app",
+   "expect": {
+    "decision": "allow"
+   }
+  },
+  {
+   "cmd": "rsync -aR .claude/settings.json ~",
+   "expect": {
+    "decision": "ask"
+   },
+   "rule": "self.hooks",
+   "why": "-R recreates the source path below the destination"
+  },
+  {
+   "cmd": "rsync -aR Library/Application\\ Support/Airbag ~",
+   "expect": {
+    "decision": "block"
+   },
+   "rule": "self.airbag"
+  },
+  {
+   "cmd": "rsync -a ./a/./.claude/settings.json ~ -R",
+   "expect": {
+    "decision": "ask"
+   },
+   "rule": "self.hooks"
+  },
+  {
+   "cmd": "cp --parents .claude/settings.json ~",
+   "expect": {
+    "decision": "ask"
+   },
+   "rule": "self.hooks"
+  },
+  {
+   "cmd": "gcp -t ~/.claude settings.json",
+   "expect": {
+    "decision": "ask"
+   },
+   "rule": "self.hooks",
+   "why": "-t DIR names the destination first"
+  },
+  {
+   "cmd": "gmv -t ~/Library/Application\\ Support/Airbag registry.sqlite",
+   "expect": {
+    "decision": "block"
+   },
+   "rule": "self.airbag"
+  },
+  {
+   "cmd": "rm ~/.claude/settings.json",
+   "expect": {
+    "decision": "ask"
+   },
+   "rule": "self.hooks",
+   "why": "deleting a hook configuration switches Airbag off"
+  },
+  {
+   "cmd": "mv ~/.claude/settings.json /tmp/",
+   "expect": {
+    "decision": "ask"
+   },
+   "rule": "self.hooks"
+  },
+  {
+   "cmd": "truncate -s 0 ~/.codex/hooks.json",
+   "expect": {
+    "decision": "ask"
+   },
+   "rule": "self.hooks"
+  },
+  {
+   "cmd": "git commit -m \"$(cat <<'EOF'\nFix the parser so it doesn't misread redirects\nEOF\n)\" && rm -rf ~/Documents",
+   "expect": {
+    "decision": "block"
+   },
+   "rule": "fs.rm.catastrophic",
+   "why": "an apostrophe in a here-document inside $( ) is not a quote"
+  },
+  {
+   "cmd": "git commit -m \"$(cat <<'EOF'\nIt's done\nEOF\n)\" && git push --force origin main",
+   "expect": {
+    "decision": "ask"
+   }
+  },
+  {
+   "cmd": "git commit -m \"$(cat <<'EOF'\nIt's done, don't worry\n\nCo-written\nEOF\n)\"",
+   "expect": {
+    "decision": "allow"
+   },
+   "why": "the standard agent commit form stays quiet"
+  },
+  {
+   "cmd": "bash <<'EOF'\nrm -rf ~/Documents\nEOF",
+   "expect": {
+    "decision": "block"
+   },
+   "rule": "fs.rm.catastrophic",
+   "why": "here-document bodies fed to a shell run"
+  },
+  {
+   "cmd": "sh <<-EOF\n\trm -rf ~\n\tEOF",
+   "expect": {
+    "decision": "block"
+   },
+   "rule": "fs.rm.catastrophic"
+  },
+  {
+   "cmd": "python3 <<'EOF'\nimport shutil\nshutil.rmtree('/Users/u/Documents')\nEOF",
+   "expect": {
+    "decision": "allow",
+    "snapshot": "recommended"
+   },
+   "why": "a script fed through a here-document is treated like a script file: snapshot first, no text heuristics (real agent scripts gave false blocks)"
+  },
+  {
+   "cmd": "cat <<EOF > notes.txt\nbuilt on $(rm -rf ~/Documents)\nEOF",
+   "expect": {
+    "decision": "block"
+   },
+   "rule": "fs.rm.catastrophic",
+   "why": "an unquoted delimiter expands substitutions in the body"
+  },
+  {
+   "cmd": "cat <<'EOF' > notes.txt\nbuilt on $(rm -rf ~/Documents)\nEOF",
+   "expect": {
+    "decision": "allow",
+    "snapshot": "required"
+   },
+   "rule": "fs.truncate.project"
+  },
+  {
+   "cmd": "echo 'never closed",
+   "expect": {
+    "decision": "ask"
+   },
+   "rule": "shell.unparsed"
+  },
+  {
+   "cmd": "echo \"$(ls",
+   "expect": {
+    "decision": "ask"
+   },
+   "rule": "shell.unparsed"
   }
  ]
 }

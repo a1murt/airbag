@@ -29,17 +29,26 @@ public final class SnapshotStore {
     }
 
     /// Canonicalises `path` and refuses roots that are too broad to snapshot.
+    /// Folders that are never a project: system locations, the home folder and its standard top-level folders. A `.git`
+    /// in one of them (dotfiles kept in a home-folder repository) does not make the whole folder a project. The autofs
+    /// mount `/home` resolves to `/System/Volumes/Data/home`; folders below it (network home folders) are user data.
+    public static func isSystemOrHomeFolder(_ canonical: String, home homeDirectory: String = NSHomeDirectory()) -> Bool {
+        let home = FileSystem.canonicalPath(homeDirectory) ?? homeDirectory
+        let forbidden: Set<String> = ["/", "/Users", "/System", "/Library", "/Applications", "/private", "/Volumes",
+                                      "/usr", "/bin", "/sbin", "/opt", "/private/var", "/private/tmp", "/private/etc",
+                                      "/home", "/System/Volumes", "/System/Volumes/Data", "/System/Volumes/Data/home",
+                                      home, home + "/Library", home + "/Desktop", home + "/Documents", home + "/Downloads"]
+        if forbidden.contains(canonical) { return true }
+        return canonical.hasPrefix("/System/") && !canonical.hasPrefix("/System/Volumes/Data/")
+    }
+
     public static func validateRoot(_ path: String, paths: AirbagPaths = .resolve()) throws -> String {
         guard let canonical = FileSystem.canonicalPath(path) else { throw SnapshotError.rootMissing(path) }
         var isDir: ObjCBool = false
         guard FileManager.default.fileExists(atPath: canonical, isDirectory: &isDir), isDir.boolValue else {
             throw SnapshotError.rootMissing(path)
         }
-        let home = FileSystem.canonicalPath(NSHomeDirectory()) ?? NSHomeDirectory()
-        let forbidden: Set<String> = ["/", "/Users", "/System", "/Library", "/Applications", "/private", "/Volumes",
-                                      "/usr", "/bin", "/sbin", "/opt", "/private/var", "/private/tmp", "/private/etc",
-                                      home, home + "/Library", home + "/Desktop", home + "/Documents", home + "/Downloads"]
-        if forbidden.contains(canonical) { throw SnapshotError.unsafeRoot(canonical) }
+        if isSystemOrHomeFolder(canonical) { throw SnapshotError.unsafeRoot(canonical) }
         let airbagHome = FileSystem.canonicalPath(paths.home.path) ?? paths.home.path
         if airbagHome == canonical || airbagHome.hasPrefix(canonical + "/") || canonical.hasPrefix(airbagHome + "/") {
             throw SnapshotError.unsafeRoot(canonical)
