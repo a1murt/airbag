@@ -19,6 +19,7 @@ struct PopoverView: View {
                             Text(msg).font(.callout).fixedSize(horizontal: false, vertical: true)
                             Spacer()
                             Button { model.lastMessage = nil } label: { Image(systemName: "xmark").font(.caption) }.buttonStyle(.plain)
+                                .accessibilityLabel(Text("Dismiss"))
                         }
                         .padding(8).background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 8))
                     }
@@ -48,13 +49,15 @@ struct PopoverView: View {
                 }
                 Spacer()
                 Button { open(.settings) } label: { Image(systemName: "gearshape") }
-                    .buttonStyle(.borderless).help(Text("Settings"))
+                    .buttonStyle(.borderless).help(Text("Settings")).accessibilityLabel(Text("Settings"))
                     .keyboardShortcut(",", modifiers: .command)
             }
             Text(model.summaryLine).font(.callout).foregroundStyle(.secondary).lineLimit(2).fixedSize(horizontal: false, vertical: true)
             if model.iconState == .degraded {
-                Label("Agents found, but no hooks installed — snapshots happen only on file changes.", systemImage: "exclamationmark.triangle")
-                    .font(.caption).foregroundStyle(Theme.warning)
+                Label(model.hookStatuses.contains { $0.installed && $0.brokenCommand }
+                      ? "An agent hook points at a missing Airbag copy — open Settings and repair it."
+                      : "Agents found, but no hooks installed — snapshots happen only on file changes.", systemImage: "exclamationmark.triangle")
+                    .font(.caption).foregroundStyle(Theme.warning).fixedSize(horizontal: false, vertical: true)
             }
         }
         .padding(14)
@@ -168,7 +171,7 @@ struct PopoverView: View {
                 Menu("Pause") {
                     Button("For 15 minutes") { model.pause(minutes: 15) }
                     Button("For 1 hour") { model.pause(minutes: 60) }
-                    Button("Until tomorrow") { model.pause(minutes: 60 * 12) }
+                    Button("Until tomorrow morning") { model.pauseUntilTomorrowMorning() }
                 }
                 .menuStyle(.borderlessButton).fixedSize()
             } else {

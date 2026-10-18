@@ -112,8 +112,11 @@ public final class ProcessRadar {
         var out: [LiveAgent] = []
         for n in names where n.hasSuffix(".json") {
             guard let data = FileManager.default.contents(atPath: dir + "/" + n), let o = JSONObject.parse(data),
-                  let pid = o.int("pid"), let sid = o.string("sessionId") else { continue }
-            guard let e = table[Int32(pid)], !e.zombie else { continue }
+                  let rawPid = o.int("pid"), let pid32 = Int32(exactly: rawPid), pid32 > 1, let sid = o.string("sessionId") else { continue }
+            guard let e = table[pid32], !e.zombie else { continue }
+            // A leftover file whose pid now belongs to another program must not make that program an "agent".
+            guard AgentLocator.matches(.claudeCode, exe: ProcInfo.path(pid32), pid: pid32) else { continue }
+            let pid = Int(pid32)
             out.append(LiveAgent(agent: .claudeCode, agentSessionID: sid, pid: Int32(pid), startUs: e.startUs, title: o.string("name"), cwd: o.string("cwd")))
         }
         return out
@@ -145,7 +148,9 @@ public final class ProcessRadar {
         let mine = table.entries.values.filter { $0.uid == myUID && $0.pid > 1 && !$0.zombie }
         let listeners = ListenerScanner.scan(pids: mine.map(\.pid))
         let live = liveAgents(table: table, registry: registry)
-        let livePids = Dictionary(live.map { ($0.pid, $0) }, uniquingKeysWith: { a, _ in a })
+        // One agent process can host several sessions (Codex app-server, Cursor's extension host).
+        let sessionsByPid = Dictionary(grouping: live, by: \.pid)
+        let livePids = sessionsByPid.mapValues { $0[0] }
         var liveSessions = Set(live.map { "\($0.agent.rawValue):\($0.agentSessionID)" })
         // Sessions whose agent process was never located (hook could not walk to it) count as live until they end
         // or go quiet for two hours, so their servers are not reported as orphans while the agent still runs.
@@ -171,10 +176,18 @@ public final class ProcessRadar {
             if !includeAll && !hasListener && cls != .dev && remembered[e.identity] == nil { continue }
             var attribution: Attribution?
             var link: LinkState = .unknown
-            // 1. live ancestry
-            if let a = table.ancestors(of: e.pid).first(where: { livePids[$0.pid] != nil }), let agent = livePids[a.pid] {
-                attribution = Attribution(method: .liveAncestry, confidence: .high, agent: agent.agent, agentSessionID: agent.agentSessionID,
-                                          sessionTitle: agent.title, sessionLive: true, projectRoot: nil)
+            // 1. live ancestry; when the ancestor hosts several sessions, the session marker in the environment
+            //    decides, otherwise only the agent is known.
+            if let a = table.ancestors(of: e.pid).first(where: { livePids[$0.pid] != nil }), let hosted = sessionsByPid[a.pid] {
+                let marker = info.markers["CLAUDE_CODE_SESSION_ID"] ?? info.markers["CODEX_THREAD_ID"] ?? info.markers["CODEX_SESSION_ID"]
+                let agent = hosted.count == 1 ? hosted[0] : hosted.first { $0.agentSessionID == marker }
+                if let agent {
+                    attribution = Attribution(method: .liveAncestry, confidence: .high, agent: agent.agent, agentSessionID: agent.agentSessionID,
+                                              sessionTitle: agent.title, sessionLive: true, projectRoot: nil)
+                } else {
+                    attribution = Attribution(method: .liveAncestry, confidence: .medium, agent: hosted[0].agent, agentSessionID: nil,
+                                              sessionTitle: nil, sessionLive: true, projectRoot: nil)
+                }
                 link = .attached
             }
             // 2. environment markers (survive reparenting to launchd)
@@ -233,9 +246,9 @@ public final class ProcessRadar {
         var argv: [String] = []
         var markers: [String: String] = [:]
         let systemExe = exe.map { $0.hasPrefix("/System/") || $0.hasPrefix("/usr/libexec/") || $0.hasPrefix("/usr/sbin/") || $0.hasPrefix("/Library/Apple/") } ?? false
-        if !systemExe, let args = ProcInfo.arguments(e.pid) {
+        if !systemExe, let args = ProcInfo.arguments(e.pid, envKeys: ProcessRadar.markerKeys) {
             argv = Array(args.argv.prefix(32)).map { $0.count > 300 ? String($0.prefix(300)) + "…" : $0 }
-            for (k, v) in args.env where ProcessRadar.markerKeys.contains(k) { markers[k] = v }
+            markers = args.env
         }
         let r = (exe, argv, markers)
         if cache.count > 4096 { cache.removeAll() }
@@ -306,6 +319,9 @@ public final class ProcessRadar {
     /// processes ended, and ends sessions whose agent process died (doc 11 §8).
     public func persist(_ snap: RadarSnapshot, registry: Registry, sessionGraceMs: Int64 = 15_000) throws {
         let now = Clock.nowMsInt()
+        let table = ProcessTable.capture()
+        // A failed process-table read must not end every session and process.
+        guard table.entries.count > 10 else { return }
         try registry.db.transaction(.immediate) {
             var seen = Set<Int64>()
             for p in snap.processes where p.processClass == .dev || p.attribution?.agentSessionID != nil {
@@ -346,7 +362,6 @@ public final class ProcessRadar {
             }
             // Processes that disappeared.
             let open = try registry.db.all("SELECT id, pid, proc_start FROM processes WHERE ended_at IS NULL") { ($0.int(0), Int32($0.int(1)), $0.int(2)) }
-            let table = ProcessTable.capture()
             for (id, pid, start) in open where !seen.contains(id) && !table.isAlive(ProcessIdentity(pid: pid, startUs: start)) {
                 try registry.db.run("UPDATE processes SET ended_at = ? WHERE id = ?", [now, id])
                 try registry.db.run("UPDATE listeners SET closed_at = ? WHERE process_id = ? AND closed_at IS NULL", [now, id])
@@ -400,11 +415,17 @@ public enum StopResult: Sendable, Equatable {
 
 public enum ProcessStopper {
     /// Pure planning on a process table (unit-testable). `isProtected` returns a reason for pids that must survive.
+    /// Reasons that protect a process by itself but do not stop the user from ending its parent (e.g. a `/usr/bin`
+    /// helper a dev server started).
+    public static let weakProtection: Set<String> = ["system process"]
+
     public static func plan(_ target: ProcessIdentity, table: ProcessTable, isProtected: (Int32) -> String?) -> Result<StopPlan, StopRefusal> {
         guard let t = table[target.pid], t.startUs == target.startUs, !t.zombie else { return .failure(.goneOrReused) }
         if let why = isProtected(t.pid) { return .failure(.protected(why)) }
         let desc = table.descendants(of: t.pid).filter { $0.uid == t.uid && !$0.zombie }
-        if let p = desc.first(where: { isProtected($0.pid) != nil }) { return .failure(.protectedDescendant(isProtected(p.pid)!)) }
+        if let p = desc.first(where: { isProtected($0.pid).map { !weakProtection.contains($0) } ?? false }) {
+            return .failure(.protectedDescendant(isProtected(p.pid)!))
+        }
         let victimSet = Set([t.pid] + desc.map(\.pid))
         let groupMembers = table.entries.values.filter { $0.pgid == t.pgid && !$0.zombie }
         let leaderDead = table[t.pgid] == nil
@@ -418,9 +439,14 @@ public enum ProcessStopper {
     /// Sends SIGTERM (or SIGKILL with `force`) and waits up to `timeoutMs` for every victim to exit.
     public static func execute(_ plan: StopPlan, force: Bool, timeoutMs: Int = 5000) -> StopResult {
         let sig = force ? SIGKILL : SIGTERM
+        let table = ProcessTable.capture()
         switch plan.mode {
-        case .group(let pgid): kill(-pgid, sig)
-        case .individual: for v in plan.victims { kill(v.pid, sig) }
+        case .group(let pgid):
+            kill(-pgid, sig)
+            // Descendants that moved to their own process group or session (setsid daemons) need their own signal.
+            for v in plan.victims where table.isAlive(v) && table[v.pid]?.pgid != pgid { kill(v.pid, sig) }
+        case .individual:
+            for v in plan.victims where table.isAlive(v) { kill(v.pid, sig) }
         }
         let deadline = Clock.monotonicNs() + UInt64(timeoutMs) * 1_000_000
         while true {

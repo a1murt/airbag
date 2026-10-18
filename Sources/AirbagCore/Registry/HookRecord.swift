@@ -211,8 +211,8 @@ extension Registry {
             UPDATE sessions SET last_seen_at = ?, last_event_kind = ?, cwd = coalesce(?, cwd), project_id = coalesce(?, project_id),
               worktree_id = coalesce(?, worktree_id), permission_mode = coalesce(?, permission_mode), model = coalesce(?, model),
               title = coalesce(?, title),
-              ended_at = CASE WHEN ? = 'session_start' THEN NULL ELSE ended_at END,
-              end_reason = CASE WHEN ? = 'session_start' THEN NULL ELSE end_reason END
+              ended_at = CASE WHEN ? = 'session_end' THEN ended_at ELSE NULL END,
+              end_reason = CASE WHEN ? = 'session_end' THEN end_reason ELSE NULL END
             WHERE id = ?
             """, [now, r.kind, r.cwd, projectID, worktreeID, r.permissionMode, r.model, r.title, r.kind, r.kind, id])
             return id

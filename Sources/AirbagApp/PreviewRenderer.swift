@@ -63,7 +63,7 @@ enum PreviewRenderer {
             render(MainWindow().environmentObject(model), size: NSSize(width: 1040, height: 680), to: dir + "/main-\(tab.rawValue).png", settle: 1.5)
         }
         do {
-            RestoreRequest.current = RestoreRequest(root: root, snapshotID: (try? SnapshotStore.open(root: root, paths: home).list(limit: 10).last?.id) ?? "",
+            model.restoreRequest = RestoreRequest(root: root, snapshotID: (try? SnapshotStore.open(root: root, paths: home).list(limit: 10).last?.id) ?? "",
                                                     snapshotLabel: "Before `rm -rf src/legacy`", snapshotTime: now - 600_000, paths: [], liveAgents: 1)
             render(RestoreWindow().environmentObject(model), size: NSSize(width: 520, height: 520), to: dir + "/restore.png", settle: 1.5)
         }
