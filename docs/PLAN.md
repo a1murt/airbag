@@ -46,14 +46,14 @@ checks listed. Status markers: ☐ todo, ◐ in progress, ☑ done.
 - Accept: fake agent tree test (server spawned under a fake session, agent exits, server is reported orphan with
   the session); full poll < 3 ms; stop never touches protected processes.
 
-## M6 ☐ Menu bar app
+## M6 ☑ Menu bar app
 - Status item states and badge policy; popover summary; Timeline window (roots → snapshots → changes → diff →
   restore with confirmation); Radar view (stop/force stop/reveal); Guard view (log, allow once, deny); Settings
   (agents & hooks, projects & excludes, retention, launch at login, language); FSEvents snapshots; retention
   scheduler; socket listener.
 - Accept: manual checklist in `docs/QA.md`; idle CPU < 1 %, RSS < 100 MB measured with `top`/`footprint`.
 
-## M7 ☐ Onboarding, localization, polish
+## M7 ☑ Onboarding, localization, polish
 - First run: detect agents → preview + one-click hook install → protected projects → done (< 60 s).
 - All user-facing strings EN/RU; app icon and menu bar glyph; VoiceOver labels; empty/error states.
 
