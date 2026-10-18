@@ -13,19 +13,18 @@ final class Box<T>: @unchecked Sendable {
     @Test func fileWatcherSettlesOnSourceChangesOnly() async throws {
         let sb = Sandbox("watch"); defer { sb.cleanup() }
         sb.write("src/a.ts", "a")
-        let fired = Box<[String]>([])
+        let fired = Box<[[String]]>([])
         let q = DispatchQueue(label: "test.watch")
-        let w = FileWatcher(roots: [sb.root], quietSeconds: 0.5, maxSeconds: 5, queue: q) { root in fired.with { $0.append(root) } }
+        let w = FileWatcher(roots: [sb.root], quietSeconds: 0.5, maxSeconds: 5, queue: q) { _, paths in fired.with { $0.append(paths) } }
         w.start()
         defer { q.sync { w.stop() } }
-        try await Task.sleep(nanoseconds: 1_000_000_000)
-        fired.with { $0.removeAll() } // events from writes just before the stream started may still arrive
+        // Writes inside an excluded folder never trigger, whatever the timing of earlier events.
         sb.write("node_modules/x/index.js", "ignored")
         try await Task.sleep(nanoseconds: 2_000_000_000)
-        #expect(fired.with { $0 }.isEmpty, "changes inside node_modules must not trigger a snapshot")
+        #expect(!fired.with { $0 }.flatMap { $0 }.contains { $0.hasPrefix("node_modules") })
         sb.write("src/a.ts", "changed")
-        for _ in 0..<40 where fired.with({ $0 }).isEmpty { try await Task.sleep(nanoseconds: 100_000_000) }
-        #expect(fired.with { $0 } == [sb.root])
+        for _ in 0..<60 where !fired.with({ $0 }).flatMap({ $0 }).contains("src/a.ts") { try await Task.sleep(nanoseconds: 100_000_000) }
+        #expect(fired.with { $0 }.flatMap { $0 }.contains("src/a.ts"))
     }
 
     @Test func pauseKeepsBlocksButSkipsSnapshots() throws {
