@@ -73,7 +73,7 @@ checks listed. Status markers: ☐ todo, ◐ in progress, ☑ done.
 - Independent review pass (correctness + security) with fixes.
 - Status 2026-10-18: destructive-script restores covered by tests and `Scripts/e2e-hooks.py`; 5 parallel sessions in
   worktrees attributed correctly incl. survivors (`Scripts/acceptance/parallel-sessions.py`); idle app 0 % CPU / 19 MB;
-  independent review found 5 blockers, 22 major, 19 minor issues — all fixed with regression tests
+  independent review found 5 blockers, 19 major, 22 minor issues — all fixed with regression tests
   (`docs/research/08-independent-review.md`).
 
 ## Deliberately skipped in v1

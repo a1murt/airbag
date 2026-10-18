@@ -20,6 +20,11 @@ Machine's hourly local snapshots miss disasters that take minutes. Meanwhile `rm
 `git clean -fdx` and "cleanup scripts" keep wiping real work, and dev servers outlive the sessions that started
 them. Airbag sits *underneath* the agents, independent of them.
 
+<p align="center">
+  <img src="docs/images/popover-light.png" width="300" alt="Menu bar popover">
+  <img src="docs/images/main-timeline-light.png" width="520" alt="Timeline with diff and restore">
+</p>
+
 ## What it does
 
 | | |
@@ -79,7 +84,7 @@ Protection never depends on the app being open. Details: [docs/ARCHITECTURE.md](
 decisions: [docs/DECISIONS.md](docs/DECISIONS.md), snapshot engine: [docs/design/10-snapshot-engine.md](docs/design/10-snapshot-engine.md),
 breaker: [docs/design/12-circuit-breaker-rules.md](docs/design/12-circuit-breaker-rules.md).
 
-Measured on an M-series Mac: hook overhead p50 ≈ 14 ms; snapshot of an unchanged 5k-file project 10 ms (50k files
+Measured on an M-series Mac: hook overhead p50 ≈ 12–15 ms (process start to reply); snapshot of an unchanged 5k-file project 10 ms (50k files
 ≈ 120 ms); restoring 100 files 60 ms; idle app 0 % CPU and 19 MB.
 
 ## Honest limits
