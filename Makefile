@@ -1,4 +1,4 @@
-.PHONY: build test app universal run-app cli clean
+.PHONY: build test app universal run-app release previews e2e l10n icon clean
 
 build:
 	swift build
@@ -15,8 +15,20 @@ universal:
 run-app: app
 	open build/Airbag.app
 
-cli:
-	swift build -c release --product airbag && cp "$$(swift build -c release --show-bin-path)/airbag" build/airbag
+release:
+	Scripts/package.sh
+
+previews: app
+	build/Airbag.app/Contents/MacOS/Airbag --render-previews build/previews
+
+e2e:
+	python3 -I Scripts/e2e-hooks.py
+
+l10n:
+	python3 -I Scripts/check-l10n.py
+
+icon:
+	swift Scripts/make-icon.swift "$(CURDIR)"
 
 clean:
 	rm -rf .build build

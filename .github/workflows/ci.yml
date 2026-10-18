@@ -1,0 +1,20 @@
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+jobs:
+  test:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build
+        run: swift build
+      - name: Unit and integration tests
+        run: swift test
+      - name: Localization coverage
+        run: python3 -I Scripts/check-l10n.py
+      - name: App bundle (ad-hoc signed)
+        run: Scripts/build-app.sh
+      - name: Hook end-to-end (simulated agent against the release binary)
+        run: python3 -I Scripts/e2e-hooks.py
