@@ -18,9 +18,15 @@ struct RuleFixture: Decodable {
     let context: Context
     let cases: [RuleCase]
 
+    struct Extra: Decodable { let cases: [RuleCase] }
+
+    /// rules.json plus the red-team cases (docs/research/07-breaker-redteam.md), which share its context.
     static let shared: RuleFixture = {
         let url = Bundle.module.url(forResource: "rules", withExtension: "json", subdirectory: "Fixtures")!
-        return try! JSONDecoder().decode(RuleFixture.self, from: Data(contentsOf: url))
+        let base = try! JSONDecoder().decode(RuleFixture.self, from: Data(contentsOf: url))
+        let extraURL = Bundle.module.url(forResource: "rules-redteam", withExtension: "json", subdirectory: "Fixtures")!
+        let extra = try! JSONDecoder().decode(Extra.self, from: Data(contentsOf: extraURL))
+        return RuleFixture(version: base.version, context: base.context, cases: base.cases + extra.cases)
     }()
 }
 

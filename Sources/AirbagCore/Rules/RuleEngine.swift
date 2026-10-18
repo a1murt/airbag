@@ -253,7 +253,7 @@ struct Analyzer {
         "sysctl", "vm_stat", "pgrep", "md5", "shasum", "sha256sum", "md5sum", "base64", "xxd", "hexdump", "strings", "otool",
         "nm", "lipo", "codesign", "spctl", "plutil", "defaults", "mdfind", "mdls", "column", "fold", "fmt", "nl", "rev", "seq",
         "yes", "clear", "tput", "stty", "tty", "locale", "command", "hash", "wait", "jobs", "fg", "bg", "read", "exit", "return",
-        "diskutil", "tmutil", "pmset", "system_profiler", "ioreg", "log", "launchctl", "crontab", "networksetup", "scutil", "dig", "nslookup",
+        "diskutil", "tmutil", "pmset", "system_profiler", "ioreg", "log", "crontab", "networksetup", "scutil", "dig", "nslookup",
         "ping", "host", "whois", "traceroute", "nc", "tldr", "bat", "exa", "eza", "fzf", "gh",
     ]
 
@@ -309,9 +309,17 @@ struct Analyzer {
                 break
             }
         }
+        // busybox/toybox applets: `busybox rm -rf x` is `rm -rf x`.
+        while let f = words.first, ["busybox", "toybox", "box"].contains((f.text as NSString).lastPathComponent), words.count > 1 {
+            words.removeFirst()
+        }
         cmd.words = words
         guard let first = words.first else { return }
-        let name = (first.text as NSString).lastPathComponent
+        var name = (first.text as NSString).lastPathComponent
+        // Homebrew GNU coreutils/findutils install `grm`, `gmv`, `gfind`, ….
+        let gnuTools: Set<String> = ["rm", "mv", "cp", "ln", "dd", "chmod", "chown", "chgrp", "truncate", "find", "xargs", "install",
+                                     "tee", "shred", "rmdir", "unlink", "touch", "tar", "sed"]
+        if name.count > 1, name.hasPrefix("g"), gnuTools.contains(String(name.dropFirst())) { name = String(name.dropFirst()) }
         let args = Array(words.dropFirst())
         let argv = args.map(\.text)
         let whole = words.map(\.text).joined(separator: " ")
@@ -324,6 +332,18 @@ struct Analyzer {
             }
         }
 
+        // Here-strings feed literal code to shells and interpreters: analyse it like `-c`.
+        if let here = cmd.redirects.first(where: { $0.op == "<<<" }) {
+            if Analyzer.shells.contains(name) || Analyzer.shells.contains(first.text) {
+                if here.target.opaque { add("shell.opaque", .ask, .recommended, "it feeds a shell text built from unresolved variables.", whole) }
+                analyze(here.target.text, depth: depth + 1)
+                return
+            }
+            if ["python", "python3", "node", "ruby", "perl", "php", "deno", "bun"].contains(name) {
+                analyzeInterpreter(name, [ShellWord("-c"), here.target], whole: whole, depth: depth)
+                return
+            }
+        }
         // Nested shells: sh -c "…", bash -lc "…", eval "…"
         if Analyzer.shells.contains(first.text) || Analyzer.shells.contains(name) {
             if let ci = argv.firstIndex(where: { $0.hasPrefix("-") && !$0.hasPrefix("--") && $0.contains("c") }), ci + 1 < args.count {
@@ -339,7 +359,7 @@ struct Analyzer {
             analyze(argv.joined(separator: " "), depth: depth + 1)
             return
         }
-        if name == "xargs" {
+        if name == "xargs" || name == "parallel" {
             analyzeXargs(args, previous: previous, whole: whole, depth: depth)
             return
         }
@@ -363,6 +383,43 @@ struct Analyzer {
         case "mv": analyzeMove(args, whole: whole)
         case "cp", "rsync", "ditto": analyzeCopy(name, args, whole: whole)
         case "truncate": analyzeTruncate(args, whole: whole)
+        case "tar", "bsdtar":
+            if argv.contains("--remove-files") {
+                var operands: [ShellWord] = []
+                var i = 0
+                while i < args.count {
+                    let t = args[i].text
+                    if t == "-f" || t == "--file" || t == "-C" || t == "--directory" || t == "-T" || t == "--exclude" { i += 2; continue }
+                    if t.hasPrefix("-") { i += 1; continue }
+                    operands.append(args[i]); i += 1
+                }
+                // In bundled short options (`-czf a.tgz`), the archive name follows the bundle: skip the first operand then.
+                if args.contains(where: { !$0.text.hasPrefix("--") && $0.text.hasPrefix("-") && $0.text.contains("f") && $0.text != "-f" }), !operands.isEmpty {
+                    operands.removeFirst()
+                }
+                classifyDeletion(operands, recursive: true, verb: "archive and then delete", whole: whole)
+            }
+        case "zip":
+            if args.contains(where: { $0.text == "-m" || $0.text == "--move" || ($0.text.hasPrefix("-") && !$0.text.hasPrefix("--") && $0.text.contains("m")) }) {
+                let operands = args.filter { !$0.text.hasPrefix("-") }
+                classifyDeletion(Array(operands.dropFirst()), recursive: true, verb: "zip and then delete", whole: whole)
+            }
+        case "sponge":
+            for t in args where !t.text.hasPrefix("-") { writeCheck(t, truncates: !args.contains { $0.text == "-a" }, whole: whole) }
+        case "install":
+            if !args.contains(where: { $0.text == "-d" }), let last = args.last(where: { !$0.text.hasPrefix("-") }), args.filter({ !$0.text.hasPrefix("-") }).count >= 2 {
+                writeCheck(last, truncates: true, whole: whole)
+            }
+        case "ln":
+            let operands = args.filter { !$0.text.hasPrefix("-") }
+            if operands.count >= 2, let last = operands.last { writeCheck(last, truncates: args.contains { $0.text.hasPrefix("-") && $0.text.contains("f") }, whole: whole) }
+        case "script":
+            // script [-q] [-c 'cmd'] file   (util-linux)   or   script [-q] file cmd args…   (BSD/macOS)
+            if let ci = argv.firstIndex(of: "-c"), ci + 1 < args.count { analyze(args[ci + 1].text, depth: depth + 1) }
+            else {
+                let operands = args.drop(while: { $0.text.hasPrefix("-") })
+                if operands.count > 1 { analyze(operands.dropFirst().map(\.text).joined(separator: " "), depth: depth + 1) }
+            }
         case "sed", "gsed":
             if args.contains(where: { $0.text == "-i" || $0.text.hasPrefix("-i") || $0.text == "--in-place" || ($0.text.hasPrefix("-") && !$0.text.hasPrefix("--") && $0.text.contains("i")) }) {
                 // Operands after the script are files edited in place.
@@ -392,6 +449,15 @@ struct Analyzer {
             if argv.contains(where: { $0.hasPrefix("system") || $0.contains("/System/") }) && argv.contains(where: { ["bootout", "unload", "remove", "disable"].contains($0) }) {
                 add("sys.launchctl.system", .block, .none, "it stops or removes system services.", whole)
             }
+            if let sub = argv.first, ["submit", "asuser", "bsexec"].contains(sub) {
+                if let dd = argv.firstIndex(of: "--"), dd + 1 < args.count {
+                    analyze(args[(dd + 1)...].map { $0.text.contains(" ") ? "'\($0.text)'" : $0.text }.joined(separator: " "), depth: depth + 1)
+                } else {
+                    add("sys.launchctl.run", .ask, .recommended, "it starts a program through launchd, outside the agent's view.", whole)
+                }
+            } else if ["list", "print", "blame", "help", "version", "print-disabled", "managerpid", "manageruid"].contains(argv.first ?? "") {
+                readOnly = readOnly && true
+            }
         case "crontab": if argv.contains("-r") { add("sys.crontab.remove", .block, .none, "it deletes every cron job of the user without confirmation.", whole) }
         case "csrutil", "nvram", "bless", "fdesetup":
             add("sys.security", .block, .none, "it changes low-level system security or boot settings.", whole)
@@ -415,7 +481,7 @@ struct Analyzer {
             if name == "perl", args.contains(where: { $0.text.hasPrefix("-") && $0.text.contains("i") && !$0.text.hasPrefix("--") }) {
                 for t in args.filter({ !$0.text.hasPrefix("-") }).dropFirst() { writeCheck(t, truncates: true, whole: whole) }
             }
-            analyzeInterpreter(name, args, whole: whole)
+            analyzeInterpreter(name, args, whole: whole, depth: depth)
         case "psql", "mysql", "mariadb", "sqlcmd", "clickhouse-client", "cockroach", "mongosh", "mongo", "redis-cli", "sqlite3", "duckdb", "pgcli", "mycli", "litecli":
             analyzeDatabase(name, args, whole: whole)
         case "prisma", "drizzle-kit", "supabase", "rails", "rake", "knex", "sequelize", "typeorm", "artisan", "manage.py", "alembic", "dbmate", "goose", "flyway", "liquibase", "atlas":
@@ -509,7 +575,8 @@ struct Analyzer {
 
     mutating func analyzeFind(_ args: [ShellWord], whole: String) {
         let argv = args.map(\.text)
-        let deletes = argv.contains("-delete") || zip(argv, argv.dropFirst()).contains { ($0 == "-exec" || $0 == "-execdir" || $0 == "-ok") && ["rm", "/bin/rm", "unlink", "shred"].contains($1) }
+        let execTargets = zip(argv, argv.dropFirst()).filter { $0.0 == "-exec" || $0.0 == "-execdir" || $0.0 == "-ok" || $0.0 == "-okdir" }.map { ($0.1 as NSString).lastPathComponent }
+        let deletes = argv.contains("-delete") || execTargets.contains { t in !Analyzer.readOnlyCommands.contains(t) || Analyzer.shells.contains(t) }
         guard deletes else { return } // read-only
         readOnly = false
         var bases = args.prefix(while: { !$0.text.hasPrefix("-") && $0.text != "(" && $0.text != "!" })
@@ -590,12 +657,16 @@ struct Analyzer {
     mutating func analyzeCopy(_ name: String, _ args: [ShellWord], whole: String) {
         let (_, long, operands) = splitOptions(args)
         guard let dest = operands.last, operands.count >= 2 else { return }
-        if name == "rsync", long.contains(where: { $0.hasPrefix("--delete") || $0 == "--remove-source-files" }) {
+        if name == "rsync", long.contains(where: { $0.hasPrefix("--delete") }) {
             if dest.text.contains(":") && !dest.text.hasPrefix("/") {
                 add("fs.rsync.delete.remote", .ask, .none, "it deletes files on a remote machine that are missing locally.", whole)
             } else {
                 classifyDeletion([dest], recursive: true, verb: "delete files not present in the source from", whole: whole)
             }
+        }
+        if long.contains("--remove-source-files") || long.contains("--move") {
+            // The *sources* are deleted after copying.
+            classifyDeletion(Array(operands.dropLast()), recursive: true, verb: "copy and then delete", whole: whole)
         }
         if operands.first?.text == "/dev/null" || operands.first?.text == "/dev/zero" {
             // cp /dev/null file → truncation
@@ -676,12 +747,26 @@ struct Analyzer {
     }
 
     mutating func analyzeGit(_ argv: [String], whole: String) {
-        // Skip global options: git -C dir, -c k=v, --git-dir=…, --work-tree=…
+        // Global options: git -C dir, -c k=v, --git-dir=…, --work-tree=…. -C and --work-tree move the working tree.
         var a = argv[...]
+        var workTree: String?
+        var gitCwd = cwd
         while let f = a.first, f.hasPrefix("-") {
             a = a.dropFirst()
-            if (f == "-C" || f == "-c" || f == "--git-dir" || f == "--work-tree" || f == "--namespace"), !a.isEmpty { a = a.dropFirst() }
+            if f == "-C", let v = a.first { gitCwd = resolve(ShellWord(v))?.path; a = a.dropFirst(); continue }
+            if f == "--work-tree", let v = a.first { workTree = v; a = a.dropFirst(); continue }
+            if f.hasPrefix("--work-tree=") { workTree = String(f.dropFirst("--work-tree=".count)); continue }
+            if (f == "-c" || f == "--git-dir" || f == "--namespace"), !a.isEmpty { a = a.dropFirst() }
         }
+        var effectiveTree = gitCwd
+        if let wt = workTree {
+            let saved = cwd
+            cwd = gitCwd
+            effectiveTree = resolve(ShellWord(wt.hasPrefix("~") ? context.home + wt.dropFirst() : wt))?.path
+            cwd = saved
+        }
+        let treeClass = classify(effectiveTree.map { Resolved(path: $0, contents: false) })
+        let treeProtected: Bool = { if case .insideProject = treeClass { return true }; if case .projectRoot = treeClass { return true }; return false }()
         guard let sub = a.first else { return }
         let rest = Array(a.dropFirst())
         // Subcommands that never change working-tree files (.git itself is not snapshotted, so no snapshot is needed).
@@ -695,26 +780,28 @@ struct Analyzer {
         let hasPrefix = { (x: String) in rest.contains { $0.hasPrefix(x) } }
         switch sub {
         case "reset":
-            if has("--hard") || has("--merge") || has("--keep") { readOnly = false; add("git.reset.hard", .allow, .required, "it discards uncommitted changes (restorable from the snapshot taken first).", whole) }
+            if !has("--hard") && !has("--merge") && !has("--keep") { mutatesWorktree = false }
+            if has("--hard") || has("--merge") || has("--keep") { readOnly = false; addGit(treeProtected, effectiveTree, "git.reset.hard", .allow, .required, "it discards uncommitted changes (restorable from the snapshot taken first).", whole) }
         case "clean":
             if rest.contains(where: { $0 == "-n" || $0 == "--dry-run" || ($0.hasPrefix("-") && !$0.hasPrefix("--") && $0.contains("n")) }) { mutatesWorktree = false; return }
-            add("git.clean", .allow, .required, "it deletes untracked\(rest.contains { $0.contains("x") } ? " and ignored" : "") files (restorable from the snapshot taken first, except dependency and build folders).", whole)
+            addGit(treeProtected, effectiveTree, "git.clean", .allow, .required, "it deletes untracked\(rest.contains { $0.contains("x") } ? " and ignored" : "") files (restorable from the snapshot taken first, except dependency and build folders).", whole)
         case "checkout":
             if has("--") || has(".") || has("-f") || has("--force") || has("-p") || has("--theirs") || has("--ours") {
-                add("git.checkout.discard", .allow, .required, "it overwrites working-tree files (restorable from the snapshot taken first).", whole)
+                addGit(treeProtected, effectiveTree, "git.checkout.discard", .allow, .required, "it overwrites working-tree files (restorable from the snapshot taken first).", whole)
             } else { add("git.checkout", .allow, .recommended, "it switches files in the working tree.", whole) }
         case "restore":
             if (has("--staged") || has("-S")) && !has("--worktree") && !has("-W") { mutatesWorktree = false; return }
             do {
-                add("git.checkout.discard", .allow, .required, "it overwrites working-tree files (restorable from the snapshot taken first).", whole)
+                addGit(treeProtected, effectiveTree, "git.checkout.discard", .allow, .required, "it overwrites working-tree files (restorable from the snapshot taken first).", whole)
             }
         case "switch":
-            if has("-f") || has("--force") || has("--discard-changes") { add("git.checkout.discard", .allow, .required, "it discards local changes (restorable from the snapshot taken first).", whole) }
+            if has("-f") || has("--force") || has("--discard-changes") { addGit(treeProtected, effectiveTree, "git.checkout.discard", .allow, .required, "it discards local changes (restorable from the snapshot taken first).", whole) }
         case "stash":
+            if rest.first.map({ ["list", "show"].contains($0) }) == true { return }
             readOnly = false
             if has("drop") || has("clear") { add("git.stash.drop", .ask, .recommended, "it permanently drops stashed changes, which are not in the working tree and not in snapshots.", whole) }
             else if rest.isEmpty || has("push") || has("save") || has("-u") || has("--include-untracked") || has("--all") {
-                add("git.stash", .allow, .required, "it removes local changes from the working tree into a stash (also covered by the snapshot taken first).", whole)
+                addGit(treeProtected, effectiveTree, "git.stash", .allow, .required, "it removes local changes from the working tree into a stash (also covered by the snapshot taken first).", whole)
             }
         case "branch":
             if has("-D") || (has("-d") && has("--force")) || has("--delete") && has("--force") { readOnly = false; add("git.branch.force-delete", .ask, .recommended, "it force-deletes a branch that may hold unmerged commits.", whole) }
@@ -739,11 +826,19 @@ struct Analyzer {
             if has("remove") && (has("--force") || has("-f")) { readOnly = false; add("git.worktree.remove", .ask, .recommended, "it force-removes a worktree including uncommitted changes.", whole) }
             else if has("remove") || has("prune") { readOnly = false }
         case "rm":
-            add("git.rm", .allow, .required, "it deletes tracked files (restorable from the snapshot taken first).", whole)
+            if has("--cached") { mutatesWorktree = false; return }
+            addGit(treeProtected, effectiveTree, "git.rm", .allow, .required, "it deletes tracked files (restorable from the snapshot taken first).", whole)
         case "submodule":
             if has("deinit") && (has("-f") || has("--force")) { add("git.submodule.deinit", .ask, .recommended, "it force-removes submodule working trees.", whole) }
         default: break
         }
+    }
+
+    /// Destructive git subcommands are recoverable only when the working tree is a protected root.
+    mutating func addGit(_ treeProtected: Bool, _ tree: String?, _ id: String, _ decision: GuardDecision, _ snapshot: SnapshotNeed, _ reason: String, _ matched: String) {
+        if treeProtected { add(id, decision, snapshot, reason, matched); return }
+        let whereText = tree.map { describe($0) } ?? "a directory Airbag cannot resolve"
+        add("git.outside-root", .ask, .recommended, "it runs a destructive git command (\(id.replacingOccurrences(of: "git.", with: ""))) in \(whereText), outside the protected project, so no snapshot covers it.", matched)
     }
 
     mutating func analyzeGH(_ argv: [String], whole: String) {
@@ -770,27 +865,57 @@ struct Analyzer {
         }
     }
 
-    mutating func analyzeInterpreter(_ name: String, _ args: [ShellWord], whole: String) {
-        let inline: Set<String> = ["-c", "-e", "-E", "--eval", "-p", "--print", "eval", "-x"]
+    mutating func analyzeInterpreter(_ name: String, _ args: [ShellWord], whole: String, depth: Int = 0) {
+        let inline: Set<String> = ["-c", "-e", "-E", "--eval", "-p", "--print", "eval", "-x", "-r"]
         guard let i = args.firstIndex(where: { inline.contains($0.text) }), i + 1 < args.count else { return }
         let code = args[i + 1].text
         let lowered = code.lowercased()
-        let deleting = ["rmtree", "os.remove", "os.unlink", "os.rmdir", "removedirs", "unlink(", "rmsync", "rmdirsync", "unlinksync", "fs.rm(", ".rm(", "rimraf",
-                        "file::delete", "fileutils.rm", "rm_rf", "rm_r", "shutil.move", "send2trash", "truncate(", "os.system", "subprocess", "child_process", "execsync",
-                        "spawnsync", "system(", "exec(", "`rm ", "deletesync", "fs.promises.rm", "pathlib", "unlink_missing", "dropdatabase", "drop table", "drop database"]
-        if deleting.contains(where: { lowered.contains($0) }) {
-            // Paths written literally inside project roots are fine; anything else needs a look.
-            let literalOutside = extractPaths(code).map { classify(resolve(ShellWord($0))) }
-            if let bad = literalOutside.first(where: { if case .catastrophic = $0 { return true }; return false }), case .catastrophic(let p) = bad {
-                add("interp.delete.catastrophic", .block, .none, "its inline \(name) code deletes or runs commands against \(describe(p)).", whole)
-                return
-            }
-            if !literalOutside.isEmpty, literalOutside.allSatisfy({ if case .insideProject = $0 { return true }; if case .regenerable = $0 { return true }; if case .temporary = $0 { return true }; return false }) {
-                add("interp.delete.project", .allow, .required, "it deletes files from inline \(name) code inside the project (snapshot taken first).", whole)
-            } else {
-                add("interp.delete", .ask, .recommended, "it deletes files or runs commands from inline \(name) code that Airbag cannot analyze.", whole)
-            }
+        // Code that runs shell commands: analyse the string literals it passes as commands.
+        let runsCommands = ["os.system", "subprocess", "child_process", "execsync", "spawnsync", "exec(", "system(", "popen", "`", "%x(",
+                            "deno.command", "deno.run", "bun.spawn", "shell_exec", "passthru", "proc_open", "runtime.exec"].contains { lowered.contains($0) }
+        if runsCommands {
+            let literals = stringLiterals(code)
+            for lit in literals { analyze(lit, depth: depth + 1) }
+            if literals.count > 1 { analyze(literals.joined(separator: " "), depth: depth + 1) }
         }
+        let deleting = ["rmtree", "os.remove", "os.unlink", "os.rmdir", "removedirs", "unlink(", "unlink ", "rmdir(", "rmdir ", "rmsync",
+                        "rmdirsync", "unlinksync", "fs.rm(", ".rm(", "rimraf", "file::delete", "file.delete", ".delete(", "fileutils.rm",
+                        "rm_rf", "rm_r", "shutil.move", "send2trash", "truncate(", "deletesync", "fs.promises.rm", "removesync",
+                        "deno.remove", "remove_dir_all", "fs::remove", "os.removeall", "dir.delete", "unlink_missing", ".unlink(", "pathlib"]
+        guard deleting.contains(where: { lowered.contains($0) }) else { return }
+        let classes = extractPaths(code).map { classify(resolve(ShellWord($0))) }
+        if let bad = classes.first(where: { if case .catastrophic = $0 { return true }; return false }), case .catastrophic(let p) = bad {
+            add("interp.delete.catastrophic", .block, .none, "its inline \(name) code deletes \(describe(p)).", whole)
+            return
+        }
+        if !classes.isEmpty, classes.allSatisfy({ if case .insideProject = $0 { return true }; if case .regenerable = $0 { return true }; if case .temporary = $0 { return true }; return false }) {
+            add("interp.delete.project", .allow, .required, "it deletes files from inline \(name) code inside the project (snapshot taken first).", whole)
+        } else {
+            add("interp.delete", .ask, .recommended, "it deletes files from inline \(name) code that Airbag cannot fully analyze.", whole)
+        }
+    }
+
+    /// Single- and double-quoted string literals in source code.
+    func stringLiterals(_ code: String) -> [String] {
+        var out: [String] = []
+        let c = Array(code)
+        var i = 0
+        while i < c.count {
+            let q = c[i]
+            if q == "'" || q == "\"" || q == "`" {
+                var j = i + 1
+                var lit = ""
+                while j < c.count && c[j] != q {
+                    if c[j] == "\\", j + 1 < c.count { lit.append(c[j + 1]); j += 2; continue }
+                    lit.append(c[j]); j += 1
+                }
+                if !lit.trimmingCharacters(in: .whitespaces).isEmpty { out.append(lit) }
+                i = j + 1
+                continue
+            }
+            i += 1
+        }
+        return out
     }
 
     func extractPaths(_ code: String) -> [String] {
@@ -861,9 +986,47 @@ struct Analyzer {
             || s.hasPrefix("image prune -a") || (name == "colima" && argv.first == "delete") || (["orb", "orbctl"].contains(name) && argv.first == "delete") {
             add("docker.destructive", .ask, .none, "it deletes container volumes or images, which can hold local databases that file snapshots do not cover.", whole)
         }
-        if argv.contains(where: { $0 == "-v" || $0.hasPrefix("--volume") || $0.hasPrefix("--mount") }) && (s.hasPrefix("run") || s.contains(" run ")) {
-            if s.contains(":/") && (s.contains(" rm ") || s.contains("rm -")) {
-                add("docker.mount.delete", .ask, .recommended, "it mounts host folders into a container and deletes files there, bypassing host-side checks.", whole)
+        if let runIdx = argv.firstIndex(where: { $0 == "run" || $0 == "exec" }) {
+            analyzeContainerRun(Array(argv[(runIdx + 1)...]), whole: whole)
+        }
+    }
+
+    /// `docker run [opts] image cmd…`: deleting inside a container through a host mount bypasses host-side checks.
+    mutating func analyzeContainerRun(_ argv: [String], whole: String) {
+        let valueOpts: Set<String> = ["-v", "--volume", "--mount", "-e", "--env", "-w", "--workdir", "--name", "-p", "--publish", "--entrypoint",
+                                      "--network", "--net", "-u", "--user", "--env-file", "-l", "--label", "--platform", "--hostname", "-h",
+                                      "--add-host", "--cpus", "-m", "--memory", "--restart", "--pull", "--gpus", "--device", "--cap-add", "--cap-drop"]
+        var mounts: [String] = []
+        var i = 0
+        while i < argv.count {
+            let a = argv[i]
+            if a == "--" { i += 1; break }
+            if a.hasPrefix("-") {
+                if a == "-v" || a == "--volume", i + 1 < argv.count { mounts.append(argv[i + 1]) }
+                else if a.hasPrefix("--volume=") { mounts.append(String(a.dropFirst(9))) }
+                else if a == "--mount", i + 1 < argv.count, let src = argv[i + 1].split(separator: ",").first(where: { $0.hasPrefix("source=") || $0.hasPrefix("src=") }) {
+                    mounts.append(String(src.split(separator: "=", maxSplits: 1).last ?? "") + ":/m")
+                }
+                i += valueOpts.contains(a) ? 2 : 1
+                continue
+            }
+            break // image
+        }
+        let command = argv.count > i + 1 ? Array(argv[(i + 1)...]) : []
+        guard !mounts.isEmpty, !command.isEmpty else { return }
+        let text = command.joined(separator: " ")
+        let destructive = text.range(of: #"(^|[\s;&|'"])(rm|shred|truncate|dd|mv|unlink|rmdir)\s|-delete\b|(^|\s)>\s?\S|rimraf|rmtree"#, options: .regularExpression) != nil
+        guard destructive else { return }
+        for m in mounts {
+            let parts = m.split(separator: ":", omittingEmptySubsequences: false).map(String.init)
+            guard parts.count >= 2, parts[0].hasPrefix("/") || parts[0].hasPrefix("~") || parts[0].hasPrefix(".") else { continue } // named volume
+            if parts.count >= 3, parts[2].split(separator: ",").contains("ro") { continue }
+            let host = parts[0].hasPrefix("~") ? context.home + parts[0].dropFirst() : parts[0]
+            switch classify(resolve(ShellWord(host))) {
+            case .insideProject, .regenerable, .temporary:
+                add("docker.mount.delete.project", .allow, .required, "it deletes files in a project folder mounted into a container (snapshot taken first).", whole)
+            default:
+                add("docker.mount.delete", .ask, .recommended, "it mounts \(parts[0]) into a container and deletes files there, bypassing host-side checks.", whole)
             }
         }
     }

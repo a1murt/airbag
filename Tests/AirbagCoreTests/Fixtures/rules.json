@@ -1187,9 +1187,10 @@
   {
    "cmd": "python3 -c 'import os; os.system(\"make clean\")'",
    "expect": {
-    "decision": "ask"
+    "decision": "allow",
+    "snapshot": "recommended"
    },
-   "rule": "interp.delete"
+   "why": "string literals passed to os.system are analysed as shell commands; `make clean` is allowed like when run directly"
   },
   {
    "cmd": "defaults delete com.apple.dock",
