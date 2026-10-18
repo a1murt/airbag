@@ -82,3 +82,29 @@ the card's own snapshot.
 **ADR-024 The reply is printed before persistence.** The agent waits only for the decision and the snapshot; registry
 writes, spool ingestion and the app ping follow. A watchdog timeout prints the conservative reply prepared before
 the snapshot started, never a bare allow.
+
+**ADR-025 Measure the breaker on real agent history.** Fixtures encode what we thought of; the owner's own sessions
+encode what agents actually run. `Scripts/breaker-corpus.py` replays every shell command in `~/.claude/projects`
+through two builds (analysis only) and reports the ask rate and every changed decision. On 1585 commands the first
+public build asked 17 % of the time; the dogfooding fixes brought it to 3.7 %, every remaining ask justified (force
+pushes, history rewrites, overwriting files on the Desktop, `~/.ssh/config`, remote `rm -rf`). A change that raises
+the ask rate needs a reason.
+
+**ADR-026 A write outside the project asks only when it replaces something.** With the real file system, creating a
+new file outside the project destroys nothing, so redirects, `cp` and truncation ask only when the target exists. A
+`mv` that replaces an existing file outside the project asks. Fixtures (no file system) keep assuming it exists.
+
+**ADR-027 A project the command `cd`s into is protected like the session's own.** Sessions often start in a folder
+that is not the project (Claude's "No folder" sessions, a parent directory) and work through `cd ~/Work/app && …`.
+The hook adds the projects of every `cd`/`pushd` target to the protected roots and snapshots them before and after
+the command. The home folder and system folders never become roots, even when the home folder is a git repository.
+
+**ADR-028 Here-documents: shell bodies are analysed, interpreter bodies are scripts.** `bash <<EOF … EOF` is shell
+code and gets the full analysis. A body fed to `python3`, `node` or similar is a whole script and is treated like a
+script file (snapshot, no text heuristics), because the one-liner heuristics flagged string data in real agent
+scripts. An unquoted delimiter still exposes `$(…)` in any body.
+
+**ADR-029 An unterminated quote at the top level asks.** The shell would refuse such a line, so if the lexer sees one
+the lexer and the shell disagree (the case that hid `&& rm -rf` behind an apostrophe in a here-document). Nested
+analyses (re-joined `xargs` words) do not count.
+

@@ -9,10 +9,12 @@ enum GuardCommands {
         let command = a.positionals.joined(separator: " ")
         let cwd = FileSystem.resolvedPath(a.value("cwd") ?? FileManager.default.currentDirectoryPath)
         var roots = a.values("root").map { FileSystem.canonicalPath($0) ?? FileSystem.resolvedPath($0) }
-        if roots.isEmpty { roots = [RootResolver.resolve(cwd: cwd)] }
         let paths = AirbagPaths.resolve()
-        let context = GuardContext(cwd: cwd, roots: roots, environment: ProcessInfo.processInfo.environment,
+        // Same as the hook: a folder Airbag cannot snapshot (home, system) is not a protected root.
+        if roots.isEmpty { roots = [RootResolver.resolve(cwd: cwd)].filter { (try? SnapshotStore.validateRoot($0, paths: paths)) != nil } }
+        var context = GuardContext(cwd: cwd, roots: roots, environment: ProcessInfo.processInfo.environment,
                                    airbagHome: FileSystem.canonicalPath(paths.home.path) ?? paths.home.path)
+        context.roots += HookBridge.visitedRoots(command, context: context, paths: paths) // as the hook does
         let v = RuleEngine().evaluate(command, context: context)
         if a.has("json") {
             Out.encodable(v)

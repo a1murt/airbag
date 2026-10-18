@@ -44,6 +44,15 @@ public final class Registry {
         _ = chmod(path, 0o600)
     }
 
+    /// Earlier versions registered the home folder as a project when it holds a dotfiles repository; such rows only
+    /// mislead the radar and the timeline. Missing roots (an unmounted volume) are left alone.
+    public func archiveSystemOrHomeProjects(nowMs: Int64 = Clock.nowMsInt()) {
+        let rows = (try? db.all("SELECT id, root_path FROM projects WHERE archived_at IS NULL") { ($0.text(0), $0.text(1)) }) ?? []
+        for (id, root) in rows where SnapshotStore.isSystemOrHomeFolder(root) {
+            try? db.run("UPDATE projects SET archived_at = ? WHERE id = ?", [nowMs, id])
+        }
+    }
+
     private static func openChecked(path: String, busyTimeoutMs: Int32) throws -> SQLiteConnection {
         let conn = try SQLiteConnection(path: path, busyTimeoutMs: busyTimeoutMs)
         let appID = try conn.scalarInt("PRAGMA application_id") ?? 0

@@ -23,6 +23,7 @@ public enum Retention {
             }
         }
         if let registry {
+            registry.archiveSystemOrHomeProjects(nowMs: nowMs)
             for s in stores { registry.reconcileSnapshots(rootID: s.rootID, existing: Set(((try? s.list(limit: 100_000)) ?? []).map(\.id))) }
         }
         return total

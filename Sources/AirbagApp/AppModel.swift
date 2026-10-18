@@ -367,12 +367,18 @@ final class AppModel: ObservableObject {
 
     // MARK: radar
 
+    nonisolated static func sameIgnoringUsage(_ a: [RadarProcess], _ b: [RadarProcess]) -> Bool {
+        func strip(_ p: RadarProcess) -> RadarProcess { var p = p; p.footprintBytes = nil; p.cpuTimeNs = nil; return p }
+        return a.count == b.count && zip(a, b).allSatisfy { strip($0) == strip($1) }
+    }
+
     func scheduleRadar() {
         radarTimer?.invalidate()
         let live = projects.contains { $0.liveSessions > 0 }
         let watching = popoverVisible || (mainWindowVisible && selectedTab == .radar)
         let interval: TimeInterval = watching ? 1.5 : (live ? 2 : (servers.isEmpty ? 10 : 5))
         radarTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in Task { @MainActor in self?.scanRadar() } }
+        if watching { scanRadar() } // fresh numbers as soon as the radar becomes visible
     }
 
     func scanRadar() {
@@ -384,8 +390,11 @@ final class AppModel: ObservableObject {
             if let reg { try? radar.persist(snap, registry: reg) }
             let all = snap.processes.filter { !$0.listeners.isEmpty }
             Task { @MainActor in
-                if snap.servers != self.servers { self.servers = snap.servers }
-                if all != self.allListening { self.allListening = all }
+                // Memory and CPU time change on every scan. They are re-published only while someone looks at the radar,
+                // so an idle menu bar app does not re-render its views every couple of seconds.
+                let watching = self.popoverVisible || self.mainWindowVisible
+                if snap.servers != self.servers, watching || !Self.sameIgnoringUsage(snap.servers, self.servers) { self.servers = snap.servers }
+                if all != self.allListening, watching || !Self.sameIgnoringUsage(all, self.allListening) { self.allListening = all }
                 // Orphans are announced after 20 s (doc 11 §6.4): a resumed session takes them back first.
                 let now = Date()
                 let current = Set(self.orphans.map(\.identity))
@@ -616,6 +625,8 @@ final class AppModel: ObservableObject {
                 func scan(_ dir: String, depth: Int) {
                     guard depth >= 0, let names = try? fm.contentsOfDirectory(atPath: dir) else { return }
                     for n in names {
+                        // Claude Code keeps sessions on remote machines under ssh-<id>: their cwd is a remote path.
+                        if n.hasPrefix("ssh-") { continue }
                         let p = dir + "/" + n
                         var isDir: ObjCBool = false
                         guard fm.fileExists(atPath: p, isDirectory: &isDir) else { continue }

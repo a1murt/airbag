@@ -8,6 +8,7 @@ python3 -I Scripts/check-l10n.py             # every UI string has a Russian tra
 python3 -I Scripts/e2e-hooks.py              # simulated agents drive the release hook binary
 python3 -I Scripts/acceptance/parallel-sessions.py   # 5 sessions in worktrees, survivors attributed
 make previews                                # light/dark PNGs of every screen for visual review
+python3 -I Scripts/breaker-corpus.py OLD NEW  # this Mac's real agent commands: ask rate and changed verdicts (ADR-025)
 ```
 
 Manual, on a clean macOS 14 and the current macOS (both architectures for the universal build):

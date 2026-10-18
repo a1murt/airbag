@@ -11,6 +11,7 @@ public enum AskMode: String, Sendable, Codable {
 }
 
 public struct HookBridgeConfig: Sendable {
+
     public var paths: AirbagPaths
     public var environment: [String: String]
     public var snapshotDeadlineMs = 1500
@@ -78,6 +79,16 @@ public final class OutputSlot: @unchecked Sendable {
 }
 
 public struct HookBridge {
+    /// Projects other than the session's that the command `cd`s into (validated; never the home folder).
+    public static func visitedRoots(_ command: String, context: GuardContext, paths: AirbagPaths) -> [String] {
+        var out: [String] = []
+        for dir in RuleEngine().visitedDirectories(command, context: context) {
+            let root = RootResolver.resolve(cwd: dir)
+            guard let valid = try? SnapshotStore.validateRoot(root, paths: paths), !context.roots.contains(valid), !out.contains(valid) else { continue }
+            out.append(valid)
+        }
+        return out
+    }
     public let config: HookBridgeConfig
     public init(config: HookBridgeConfig) { self.config = config }
 
@@ -129,7 +140,8 @@ public struct HookBridge {
         record.dedupeKey = env.dedupeKey
         record.background = env.background
         record.endReason = env.reason
-        if snapshotRoot != nil || layout.commonDir != nil {
+        // Only folders Airbag can snapshot become projects (never the home folder of a dotfiles repository).
+        if snapshotRoot != nil, (try? SnapshotStore.validateRoot(layout.projectRoot, paths: config.paths)) != nil {
             record.project = .init(root: layout.projectRoot, commonDir: layout.commonDir, kind: layout.commonDir == nil ? "plain" : "git",
                                    worktreePath: layout.root, worktreeKind: layout.worktreeKind, worktreeName: layout.worktreeName)
         }
@@ -156,8 +168,10 @@ public struct HookBridge {
             }
         }
 
-        func takeSnapshot(_ trigger: SnapshotTrigger, label: String?) -> (SnapshotInfo?, String?) {
-            guard let r = snapshotRoot else { return (nil, "no_root") }
+        func takeSnapshot(_ trigger: SnapshotTrigger, label: String?, root: String? = nil) -> (SnapshotInfo?, String?) {
+            guard let r = root ?? snapshotRoot else { return (nil, "no_root") }
+            // The event links to the session's own snapshot; a visited project's snapshot only when there is none.
+            let links = root == nil || record.snapshot == nil
             if duplicate { return (nil, "duplicate_route") }
             let exists = SnapshotStore.storeExists(root: r, paths: config.paths)
             guard let store = try? SnapshotStore.open(root: r, paths: config.paths, busyTimeoutMs: Int32(min(config.snapshotDeadlineMs, 1000))) else { return (nil, "store_error") }
@@ -168,13 +182,13 @@ public struct HookBridge {
             case .created(let s, let st):
                 timing["snapshot_files"] = st.walked
                 if !s.complete { spawnBackgroundSnapshot(r) }
-                record.snapshot = .init(id: s.id, rootID: store.rootID, rootPath: r, seq: s.seq, trigger: s.trigger.rawValue,
+                if links { record.snapshot = .init(id: s.id, rootID: store.rootID, rootPath: r, seq: s.seq, trigger: s.trigger.rawValue,
                                         fileCount: s.fileCount, changedCount: s.changedCount, bytesAdded: s.bytesAdded,
-                                        durationMs: st.durationMs, complete: s.complete, label: s.label)
+                                        durationMs: st.durationMs, complete: s.complete, label: s.label) }
                 return (s, s.complete ? nil : "incomplete")
             case .unchanged(let latest, let st):
                 if let l = latest, !l.complete { spawnBackgroundSnapshot(r) }
-                if let l = latest {
+                if let l = latest, links {
                     // Nothing changed since `l`: the event points at it (restoring it = state right before this command).
                     record.snapshot = .init(id: l.id, rootID: store.rootID, rootPath: r, seq: l.seq, trigger: l.trigger.rawValue,
                                             fileCount: l.fileCount, changedCount: l.changedCount, bytesAdded: l.bytesAdded,
@@ -199,9 +213,11 @@ public struct HookBridge {
                 break
             }
             let disabled = Set(registry.flatMap { $0.setting("rules.disabled", as: [String].self) } ?? [])
-            let context = GuardContext(cwd: cwd, home: config.home, roots: roots, environment: config.environment,
+            var context = GuardContext(cwd: cwd, home: config.home, roots: roots, environment: config.environment,
                                        airbagHome: FileSystem.canonicalPath(config.paths.home.path) ?? config.paths.home.path,
                                        disabledRules: disabled)
+            let visitedRoots = HookBridge.visitedRoots(command, context: context, paths: config.paths)
+            context.roots += visitedRoots
             var verdict = RuleEngine().evaluate(command, context: context)
             timing["rules"] = Clock.elapsedMs(since: t0)
             let primary = verdict.primary
@@ -264,6 +280,12 @@ public struct HookBridge {
             if verdict.snapshot != .none || verdict.decision == .ask {
                 let label = "Before `\(String(Redactor.redact(command).prefix(80)))`"
                 (snap, skipped) = takeSnapshot(.preCommand, label: label)
+                if !visitedRoots.isEmpty && skipped == "no_root" { skipped = nil } // the session folder itself is not a project
+                for r in visitedRoots {
+                    let (s, k) = takeSnapshot(.preCommand, label: label, root: r)
+                    if snap == nil { snap = s }
+                    if skipped == nil { skipped = k }
+                }
                 outcome.snapshot = snap
                 outcome.snapshotSkipped = skipped
                 record.snapshotSkipped = skipped
@@ -301,9 +323,13 @@ public struct HookBridge {
             outcome.verdict = verdict
         case .postShell, .shellFailed:
             if let command = env.command, registry?.pausedUntilMs == nil {
-                let context = GuardContext(cwd: cwd, home: config.home, roots: roots, airbagHome: config.paths.home.path)
+                var context = GuardContext(cwd: cwd, home: config.home, roots: roots, airbagHome: config.paths.home.path)
+                let visitedRoots = HookBridge.visitedRoots(command, context: context, paths: config.paths)
+                context.roots += visitedRoots
                 if RuleEngine().evaluate(command, context: context).snapshot != .none {
-                    let (snap, skipped) = takeSnapshot(.postCommand, label: "After `\(String(Redactor.redact(command).prefix(80)))`")
+                    let label = "After `\(String(Redactor.redact(command).prefix(80)))`"
+                    let (snap, skipped) = takeSnapshot(.postCommand, label: label)
+                    for r in visitedRoots { _ = takeSnapshot(.postCommand, label: label, root: r) }
                     outcome.snapshot = snap; outcome.snapshotSkipped = skipped; record.snapshotSkipped = skipped
                 }
             }
