@@ -3,6 +3,21 @@ import Foundation
 
 /// Fire-and-forget wake-up from the CLI to the app over a Unix-domain socket (doc 11 §5). Never blocks long.
 public enum WakeSocket {
+    /// Whether a server accepts connections on `path`.
+    static func isListening(_ path: String) -> Bool {
+        let fd = socket(AF_UNIX, SOCK_STREAM, 0)
+        guard fd >= 0 else { return false }
+        defer { close(fd) }
+        var addr = sockaddr_un()
+        addr.sun_family = sa_family_t(AF_UNIX)
+        withUnsafeMutableBytes(of: &addr.sun_path) { buf in
+            _ = path.withCString { strncpy(buf.baseAddress!.assumingMemoryBound(to: CChar.self), $0, buf.count - 1) }
+        }
+        return withUnsafePointer(to: &addr) { p in
+            p.withMemoryRebound(to: sockaddr.self, capacity: 1) { connect(fd, $0, socklen_t(MemoryLayout<sockaddr_un>.size)) }
+        } == 0
+    }
+
     public static func notify(paths: AirbagPaths, message: [String: Any], timeoutMs: Int32 = 20) {
         let path = paths.socket.path
         guard path.utf8.count < 104 else { return }
@@ -34,6 +49,7 @@ public enum WakeSocket {
 public final class WakeSocketServer {
     private var fd: Int32 = -1
     private var source: DispatchSourceRead?
+    private var boundInode: ino_t?
     private let path: String
     private let queue = DispatchQueue(label: "dev.airbag.wake")
     private let handler: @Sendable ([String: Any]) -> Void
@@ -44,6 +60,9 @@ public final class WakeSocketServer {
     }
 
     public func start() throws {
+        guard path.utf8.count < 104 else { throw FileSystemError.posix(op: "bind (path too long)", path: path, errno: ENAMETOOLONG) }
+        // Another instance already listening? Leave it alone instead of stealing its socket.
+        if WakeSocket.isListening(path) { throw FileSystemError.posix(op: "bind (already served)", path: path, errno: EADDRINUSE) }
         unlink(path)
         fd = socket(AF_UNIX, SOCK_STREAM, 0)
         guard fd >= 0 else { throw FileSystemError.posix(op: "socket", path: path, errno: errno) }
@@ -52,12 +71,14 @@ public final class WakeSocketServer {
         withUnsafeMutableBytes(of: &addr.sun_path) { buf in
             _ = path.withCString { strncpy(buf.baseAddress!.assumingMemoryBound(to: CChar.self), $0, buf.count - 1) }
         }
-        let old = umask(0o177)
+        // The socket lives in Airbag's 0700 directory, so no process-wide umask change is needed.
         let rc = withUnsafePointer(to: &addr) { p in
             p.withMemoryRebound(to: sockaddr.self, capacity: 1) { bind(fd, $0, socklen_t(MemoryLayout<sockaddr_un>.size)) }
         }
-        umask(old)
         guard rc == 0, listen(fd, 16) == 0 else { throw FileSystemError.posix(op: "bind", path: path, errno: errno) }
+        _ = chmod(path, 0o600)
+        var st = stat()
+        if stat(path, &st) == 0 { boundInode = st.st_ino }
         _ = fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK)
         let src = DispatchSource.makeReadSource(fileDescriptor: fd, queue: queue)
         let listenFD = fd
@@ -66,17 +87,19 @@ public final class WakeSocketServer {
             while true {
                 let c = accept(listenFD, nil, nil)
                 if c < 0 { break }
-                // Only accept peers running as the same user.
+                // Accepted sockets inherit O_NONBLOCK on Darwin: read in blocking mode with a short timeout.
+                _ = fcntl(c, F_SETFL, fcntl(c, F_GETFL) & ~O_NONBLOCK)
                 var uid: uid_t = 0, gid: gid_t = 0
                 if getpeereid(c, &uid, &gid) != 0 || uid != getuid() { close(c); continue }
                 var data = Data()
                 var buf = [UInt8](repeating: 0, count: 4096)
-                var tv = timeval(tv_sec: 0, tv_usec: 50_000)
+                var tv = timeval(tv_sec: 0, tv_usec: 100_000)
                 setsockopt(c, SOL_SOCKET, SO_RCVTIMEO, &tv, socklen_t(MemoryLayout<timeval>.size))
                 while data.count < 65536 {
                     let n = recv(c, &buf, buf.count, 0)
                     if n <= 0 { break }
                     data.append(buf, count: n)
+                    if data.last == UInt8(ascii: "\n") { break }
                 }
                 close(c)
                 for line in data.split(separator: UInt8(ascii: "\n")) {
@@ -91,6 +114,8 @@ public final class WakeSocketServer {
     public func stop() {
         source?.cancel()
         if fd >= 0 { close(fd); fd = -1 }
-        unlink(path)
+        // Remove the socket file only if it is still the one this server created.
+        var st = stat()
+        if let ino = boundInode, stat(path, &st) == 0, st.st_ino == ino { unlink(path) }
     }
 }

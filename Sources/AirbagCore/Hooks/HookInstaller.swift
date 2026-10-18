@@ -38,10 +38,13 @@ public struct HookInstaller {
         /// Airbag entries pointing at another binary (the app moved or an old version is referenced).
         public let staleCommand: Bool
         public let note: String?
+        /// An installed Airbag entry points at a binary that does not exist (app moved, DMG ejected).
+        public var brokenCommand = false
 
-        public init(agent: AgentKind, detected: Bool, configPath: String, installed: Bool, current: Bool, staleCommand: Bool, note: String?) {
+        public init(agent: AgentKind, detected: Bool, configPath: String, installed: Bool, current: Bool, staleCommand: Bool, note: String?,
+                    brokenCommand: Bool = false) {
             self.agent = agent; self.detected = detected; self.configPath = configPath; self.installed = installed
-            self.current = current; self.staleCommand = staleCommand; self.note = note
+            self.current = current; self.staleCommand = staleCommand; self.note = note; self.brokenCommand = brokenCommand
         }
     }
 
@@ -377,7 +380,8 @@ public struct HookInstaller {
             var note: String?
             if agent == .codex && installed { note = "Codex runs new hooks only after you trust them: open Codex, type /hooks and press t." }
             return AgentStatus(agent: agent, detected: detected, configPath: path, installed: installed, current: current,
-                               staleCommand: commands.contains { $0 != command }, note: note)
+                               staleCommand: commands.contains { $0 != command }, note: note,
+                               brokenCommand: commands.contains { !FileManager.default.isExecutableFile(atPath: $0) })
         } catch {
             return AgentStatus(agent: agent, detected: detected, configPath: path, installed: false, current: false, staleCommand: false,
                                note: "cannot read \(path): \(error)")

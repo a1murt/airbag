@@ -155,9 +155,20 @@ struct MenuBarLabel: View {
     @ObservedObject var model: AppModel
     @Environment(\.openWindow) private var openWindow
 
+    var accessibilityText: LocalizedStringKey {
+        switch model.iconState {
+        case .blocked: return "Airbag: a command was blocked"
+        case .orphan: return "Airbag: a session left servers running"
+        case .snapshotting: return "Airbag: taking a snapshot"
+        case .degraded: return "Airbag: protection needs attention"
+        case .idle: return "Airbag: nothing protected"
+        case .protected: return "Airbag: projects protected"
+        }
+    }
+
     var body: some View {
         Image(nsImage: MenuBarIcon.image(model.iconState, badge: model.badge))
-            .accessibilityLabel(Text(verbatim: "Airbag"))
+            .accessibilityLabel(Text(accessibilityText))
             .task {
                 if model.needsOnboarding {
                     try? await Task.sleep(nanoseconds: 600_000_000)

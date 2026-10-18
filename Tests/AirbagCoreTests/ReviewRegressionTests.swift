@@ -229,3 +229,86 @@ import Testing
         #expect(HookInstaller(home: "/tmp", command: "/opt/homebrew/bin/airbag").shellCommand == "/opt/homebrew/bin/airbag")
     }
 }
+
+@Suite(.serialized) struct RadarReviewRegressions {
+    func spawn(_ script: String, env: [String: String] = [:], args: [String] = []) throws -> (Process, Pipe) {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+        p.arguments = ["python3", "-c", script] + args
+        var e = ProcessInfo.processInfo.environment.filter { !$0.key.hasPrefix("CLAUDE") && !$0.key.hasPrefix("CODEX") }
+        for (k, v) in env { e[k] = v }
+        p.environment = e
+        let out = Pipe(); p.standardOutput = out
+        try p.run()
+        return (p, out)
+    }
+
+    func readLine(_ pipe: Pipe) -> String {
+        var data = Data()
+        while !data.contains(UInt8(ascii: "\n")) { let d = pipe.fileHandleForReading.availableData; if d.isEmpty { break }; data.append(d) }
+        return String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    @Test func procargsKeepsEmptyArgumentsAndDecodesOnlyAllowlistedEnvironment() throws {
+        let (p, out) = try spawn("import os,time; print(os.getpid(), flush=True); time.sleep(30)",
+                                 env: ["MY_APP_SECRET": "hunter2", "CLAUDE_CODE_SESSION_ID": "sess-x"], args: ["", "after-empty"])
+        defer { p.terminate() }
+        // python may be a child of the /usr/bin/python3 shim: the printed pid is the real interpreter.
+        let pid = try #require(Int32(readLine(out)))
+        let a = try #require(ProcInfo.arguments(pid, envKeys: ProcessRadar.markerKeys))
+        #expect(a.argv.contains("") && a.argv.last == "after-empty")
+        #expect(a.env["CLAUDE_CODE_SESSION_ID"] == "sess-x")
+        #expect(a.env["MY_APP_SECRET"] == nil)
+        #expect(!a.argv.contains { $0.contains("hunter2") })
+    }
+
+    @Test func laterActivityRevivesAnEndedSession() throws {
+        let h = HookSandbox(); defer { h.cleanup() }
+        _ = h.run(.claudeCode, ["session_id": "s1", "cwd": h.root, "hook_event_name": "SessionEnd", "reason": "other"])
+        _ = h.run(.claudeCode, h.claudePre("ls", session: "s1"))
+        #expect(try h.registry().db.scalarInt("SELECT count(*) FROM sessions WHERE agent_session_id = 's1' AND ended_at IS NULL") == 1)
+    }
+
+    @Test func stopReachesDescendantsInTheirOwnSession() throws {
+        let (parent, out) = try spawn("""
+        import os,subprocess,sys,time
+        c = subprocess.Popen([sys.executable, '-c', 'import os,time; print(os.getpid(), flush=True); time.sleep(60)'], start_new_session=True, stdout=subprocess.PIPE)
+        child = c.stdout.readline().decode().strip()
+        print(os.getpid(), child, flush=True)
+        time.sleep(60)
+        """)
+        defer { parent.terminate() }
+        let ids = readLine(out).split(separator: " ").compactMap { Int32($0) }
+        try #require(ids.count == 2)
+        let table = ProcessTable.capture()
+        let target = try #require(table[ids[0]]?.identity)
+        guard case .success(let plan) = ProcessStopper.plan(target, table: table, isProtected: { _ in nil }) else { Issue.record("refused"); return }
+        #expect(plan.victims.contains { $0.pid == ids[1] })
+        #expect(ProcessStopper.execute(plan, force: false, timeoutMs: 3000) == .terminated)
+        #expect(ProcessTable.capture()[ids[1]] == nil || ProcessTable.capture()[ids[1]]?.zombie == true)
+    }
+
+    @Test func staleClaudeSessionFileDoesNotMakeAnotherProgramAnAgent() throws {
+        let t = TempDir("sess"); defer { t.cleanup() }
+        let me = getpid() // this test runner is not Claude Code
+        t.write(".claude/sessions/\(me).json", "{\"pid\": \(me), \"sessionId\": \"stale\", \"cwd\": \"/\"}")
+        t.write(".claude/sessions/huge.json", "{\"pid\": 99999999999, \"sessionId\": \"bad\"}")
+        let radar = ProcessRadar(home: t.path, paths: AirbagPaths(home: t.url.appendingPathComponent("home")))
+        #expect(radar.claudeSessionFiles(table: ProcessTable.capture()).isEmpty)
+    }
+
+    @Test func wakeSocketDeliversMessages() async throws {
+        let t = TempDir("sock"); defer { t.cleanup() }
+        let paths = AirbagPaths(home: URL(fileURLWithPath: "/tmp/ab-\(getpid())-\(Int.random(in: 0..<99999))"))
+        try paths.prepare()
+        defer { try? FileManager.default.removeItem(at: paths.home) }
+        let got = Box<[String]>([])
+        let server = WakeSocketServer(paths: paths) { msg in got.with { $0.append(msg["op"] as? String ?? "?") } }
+        try server.start()
+        defer { server.stop() }
+        #expect(throws: (any Error).self) { try WakeSocketServer(paths: paths) { _ in }.start() } // second instance refused
+        for i in 0..<5 { WakeSocket.notify(paths: paths, message: ["op": "hook\(i)"]) }
+        for _ in 0..<40 where got.with({ $0.count }) < 5 { try await Task.sleep(nanoseconds: 50_000_000) }
+        #expect(got.with { $0.count } == 5)
+    }
+}

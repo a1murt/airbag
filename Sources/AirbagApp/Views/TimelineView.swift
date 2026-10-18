@@ -23,7 +23,8 @@ struct MainWindow: View {
             }
         }
         .frame(minWidth: 900, minHeight: 560)
-        .onAppear { model.refreshAll() }
+        .onAppear { model.mainWindowVisible = true; model.refreshAll() }
+        .onDisappear { model.mainWindowVisible = false }
     }
 }
 
@@ -40,7 +41,7 @@ struct TimelineScreen: View {
         VStack(spacing: 0) {
             HStack {
                 Picker("Project", selection: Binding(get: { model.selectedRoot ?? "" }, set: { model.selectedRoot = $0 })) {
-                    ForEach(model.projects) { p in Text(verbatim: p.name + (p.isWorktree ? " (worktree)" : "")).tag(p.root) }
+                    ForEach(model.projects) { p in (p.isWorktree ? Text("\(p.name) (worktree)") : Text(verbatim: p.name)).tag(p.root) }
                 }
                 .frame(maxWidth: 320)
                 TextField("Search commands and files", text: $query).textFieldStyle(.roundedBorder).frame(maxWidth: 260)
@@ -60,8 +61,9 @@ struct TimelineScreen: View {
             } else {
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 8) {
-                        ForEach(filtered) { e in
-                            TimelineCard(root: model.selectedRoot ?? "", entry: e, expanded: expanded == e.id, selectFirstFile: expandFirst) {
+                        ForEach(Array(filtered.enumerated()), id: \.element.id) { index, e in
+                            TimelineCard(root: model.selectedRoot ?? "", entry: e, previous: index + 1 < filtered.count ? filtered[index + 1] : nil,
+                                         expanded: expanded == e.id, selectFirstFile: expandFirst) {
                                 expanded = expanded == e.id ? nil : e.id
                             }
                         }
@@ -109,6 +111,8 @@ struct TimelineCard: View {
     @Environment(\.openWindow) private var openWindow
     let root: String
     let entry: TimelineEntry
+    /// The snapshot before this one: "undo these changes" restores to it.
+    let previous: TimelineEntry?
     let expanded: Bool
     var selectFirstFile = false
     let toggle: () -> Void
@@ -116,11 +120,19 @@ struct TimelineCard: View {
     @State private var selectedFile: String?
     @State private var diff: TextDiff?
 
+    /// The command that names this moment (and whose agent and session the card shows).
+    var titleCommand: TimelineCommand? {
+        entry.snapshot.trigger == .postCommand
+            ? entry.commands.last(where: { $0.kind == "post_shell" }) ?? entry.commands.last
+            : entry.commands.last(where: { $0.kind == "pre_shell" }) ?? entry.commands.last
+    }
+
     var title: String {
-        if let c = entry.commands.first(where: { $0.kind == "pre_shell" }), entry.snapshot.trigger != .postCommand {
+        // Several commands can point at one snapshot (nothing changed between them): the newest one names the moment.
+        if let c = entry.commands.last(where: { $0.kind == "pre_shell" }), entry.snapshot.trigger != .postCommand {
             return String(localized: "Before `\(String(c.command.prefix(80)))`")
         }
-        if let c = entry.commands.first(where: { $0.kind == "post_shell" }) { return String(localized: "After `\(String(c.command.prefix(80)))`") }
+        if let c = entry.commands.last(where: { $0.kind == "post_shell" }) { return String(localized: "After `\(String(c.command.prefix(80)))`") }
         if let label = entry.snapshot.label { return label }
         switch entry.snapshot.trigger {
         case .fsevents: return String(localized: "File changes")
@@ -144,10 +156,11 @@ struct TimelineCard: View {
                             Text(verbatim: title).font(.callout.weight(.medium)).lineLimit(1).truncationMode(.middle)
                         }
                         HStack(spacing: 8) {
-                            if let c = entry.commands.first {
+                            if let c = titleCommand {
                                 AgentBadge(agent: c.agent)
                                 if let t = c.sessionTitle { Text(verbatim: "“\(t)”").font(.caption).foregroundStyle(.secondary).lineLimit(1) }
                             }
+                            if entry.commands.count > 1 { Text("+\(entry.commands.count - 1) more commands").font(.caption).foregroundStyle(.tertiary) }
                             if !entry.snapshot.complete { Pill(text: "partial", color: Theme.warning) }
                         }
                     }
@@ -157,6 +170,7 @@ struct TimelineCard: View {
                         Image(systemName: entry.snapshot.pinned ? "pin.fill" : "pin").foregroundStyle(entry.snapshot.pinned ? Theme.accent : Color.secondary)
                     }
                     .buttonStyle(.plain).help(Text("Keep this snapshot forever"))
+                    .accessibilityLabel(Text(entry.snapshot.pinned ? "Unpin snapshot" : "Pin snapshot"))
                     Image(systemName: expanded ? "chevron.down" : "chevron.right").foregroundStyle(.tertiary)
                 }
                 .contentShape(Rectangle())
@@ -174,7 +188,8 @@ struct TimelineCard: View {
                         }
                         .buttonStyle(.plain)
                         .contextMenu {
-                            Button("Restore this file") { openRestore(.paths([c.path]), label: c.path) }
+                            if let prev = previous { Button("Restore the version from before this change") { openRestore(.paths([c.path]), to: prev) } }
+                            if c.status != .deleted { Button("Restore this version") { openRestore(.paths([c.path]), to: entry) } }
                             Button("Copy path") { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(c.path, forType: .string) }
                         }
                     }
@@ -185,20 +200,34 @@ struct TimelineCard: View {
                         HStack {
                             Text(verbatim: file).font(Theme.monoSmall.weight(.semibold))
                             Spacer()
-                            Button("Restore this version") { openRestore(.paths([file]), label: file) }.controlSize(.small)
+                            if let prev = previous { Button("Restore previous version") { openRestore(.paths([file]), to: prev) }.controlSize(.small) }
+                            if changes.first(where: { $0.path == file })?.status != .deleted {
+                                Button("Restore this version") { openRestore(.paths([file]), to: entry) }.controlSize(.small)
+                            }
                         }
                         ScrollView([.horizontal, .vertical]) { DiffView(diff: diff).padding(6) }
                             .frame(maxHeight: 320)
                             .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 6))
                     }
                 }
-                HStack {
-                    Button { openRestore(.root, label: nil) } label: { Label("Restore project to here…", systemImage: "arrow.uturn.backward") }
-                    if let folder = commonFolder { Button("Restore folder \(folder)…") { openRestore(.paths([folder]), label: folder) } }
-                    Spacer()
-                    if let c = entry.commands.first(where: { !$0.command.isEmpty }) {
-                        Text(verbatim: c.command).font(Theme.monoSmall).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle).textSelection(.enabled)
+                if !entry.commands.isEmpty {
+                    VStack(alignment: .leading, spacing: 2) {
+                        ForEach(entry.commands.reversed()) { c in
+                            HStack(spacing: 6) {
+                                Text(verbatim: RelativeTime.clock(ms: c.ts)).font(.caption2.monospacedDigit()).foregroundStyle(.tertiary)
+                                Text(c.kind == "post_shell" ? "after" : "before").font(.caption2).foregroundStyle(.tertiary)
+                                Text(verbatim: c.command).font(Theme.monoSmall).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle).textSelection(.enabled)
+                            }
+                        }
                     }
+                }
+                HStack {
+                    if let prev = previous, !changes.isEmpty {
+                        Button { openRestore(.paths(changes.map(\.path)), to: prev) } label: { Label("Undo these changes…", systemImage: "arrow.uturn.backward") }
+                            .help(Text("Put the listed files back as they were before this snapshot"))
+                    }
+                    Button { openRestore(.root, to: entry) } label: { Label("Restore project to this moment…", systemImage: "clock.arrow.circlepath") }
+                    Spacer()
                 }
                 .controlSize(.small)
             }
@@ -242,19 +271,22 @@ struct TimelineCard: View {
         return common.joined(separator: "/")
     }
 
-    func openRestore(_ scope: RestoreScope, label: String?) {
+    func openRestore(_ scope: RestoreScope, to target: TimelineEntry) {
         let paths: [String]
         if case .paths(let p) = scope { paths = p } else { paths = [] }
-        RestoreRequest.current = RestoreRequest(root: root, snapshotID: entry.snapshot.id, snapshotLabel: title,
-                                                snapshotTime: entry.snapshot.createdAt, paths: paths, liveAgents: model.projects.first { $0.root == root }?.liveSessions ?? 0)
+        let label = target.id == entry.id ? title : (TimelineCard(root: root, entry: target, previous: nil, expanded: false, toggle: {}).title)
+        model.restoreRequest = RestoreRequest(root: root, snapshotID: target.snapshot.id, snapshotLabel: label,
+                                              snapshotTime: target.snapshot.createdAt, paths: paths,
+                                              liveAgents: model.projects.first { $0.root == root }?.liveSessions ?? 0)
         openWindow(id: "restore")
         NSApp.activate(ignoringOtherApps: true)
     }
 }
 
 /// The restore confirmation is a separate window rather than a sheet (sheets in agent-style apps lost input on 14.0).
-struct RestoreRequest: Equatable {
-    nonisolated(unsafe) static var current: RestoreRequest?
+struct RestoreRequest: Equatable, Identifiable {
+    var id: String { "\(root)|\(snapshotID)|\(paths.joined(separator: ","))|\(created)" }
+    let created = Date()
     let root: String
     let snapshotID: String
     let snapshotLabel: String
@@ -267,7 +299,7 @@ struct RestoreRequest: Equatable {
 struct RestoreWindow: View {
     @EnvironmentObject var model: AppModel
     @Environment(\.dismiss) private var dismiss
-    @State private var request = RestoreRequest.current
+    var request: RestoreRequest? { model.restoreRequest }
     @State private var plan: RestorePlan?
     @State private var running = false
     @State private var result: String?
@@ -279,7 +311,11 @@ struct RestoreWindow: View {
                 Text(title(r)).font(.title3.weight(.semibold)).fixedSize(horizontal: false, vertical: true)
                 Text(verbatim: r.snapshotLabel).font(Theme.mono).foregroundStyle(.secondary).lineLimit(2)
                 if let plan {
-                    if plan.isEmpty {
+                    if !plan.complete {
+                    Label("This snapshot is partial (taken under a time limit): only the files it captured are restored, and nothing is moved aside.", systemImage: "exclamationmark.triangle")
+                        .font(.callout).foregroundStyle(Theme.warning).fixedSize(horizontal: false, vertical: true)
+                }
+                if plan.isEmpty {
                         Label("Nothing to do: these files already match the snapshot.", systemImage: "checkmark.circle").foregroundStyle(Theme.ok)
                     } else {
                         VStack(alignment: .leading, spacing: 4) {
@@ -324,7 +360,11 @@ struct RestoreWindow: View {
         }
         .padding(20)
         .frame(width: 520)
-        .task { if let r = request { plan = await model.planRestore(root: r.root, snapshot: r.snapshotID, scope: r.scope) } }
+        .task(id: request?.id) {
+            // A new request (the window is reused) starts from a clean state.
+            plan = nil; result = nil; failed = false; running = false
+            if let r = request { plan = await model.planRestore(root: r.root, snapshot: r.snapshotID, scope: r.scope) }
+        }
     }
 
     func title(_ r: RestoreRequest) -> String {
@@ -345,7 +385,7 @@ struct RestoreWindow: View {
             if !rep.failed.isEmpty { s += " " + String(localized: "\(rep.failed.count) failed."); failed = true }
             result = s
         case .failure(let e):
-            result = String(describing: e)
+            result = model.describe(e)
             failed = true
         }
         running = false

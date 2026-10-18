@@ -17,7 +17,7 @@ struct RadarScreen: View {
                 if !model.orphans.isEmpty { Pill(text: "\(model.orphans.count) orphans", color: Theme.warning) }
                 Spacer()
                 Toggle("Show all listening processes", isOn: $showAll).toggleStyle(.checkbox)
-                Button { model.scanRadar() } label: { Image(systemName: "arrow.clockwise") }.help(Text("Rescan"))
+                Button { model.scanRadar() } label: { Image(systemName: "arrow.clockwise") }.help(Text("Rescan")).accessibilityLabel(Text("Rescan"))
             }
             .padding(12)
             Divider()
@@ -78,6 +78,7 @@ struct RadarScreen: View {
             HStack(spacing: 6) {
                 if let why = p.protection {
                     Image(systemName: "lock.fill").foregroundStyle(.tertiary).help(Text(verbatim: why))
+                        .accessibilityLabel(Text("Protected: \(why)"))
                 } else {
                     Button("Stop") { Task { let m = await model.stopProcess(p, force: false); messages[p.identity] = m; triedStop.insert(p.identity) } }
                     if triedStop.contains(p.identity) && !(messages[p.identity] ?? "").isEmpty {
@@ -93,7 +94,7 @@ struct RadarScreen: View {
                     Button("Copy pid") { NSPasteboard.general.clearContents(); NSPasteboard.general.setString("\(p.identity.pid)", forType: .string) }
                     if p.linkState == .orphan { Button("Keep running") { model.keep(p) } }
                 } label: { Image(systemName: "ellipsis.circle") }
-                .menuStyle(.borderlessButton).fixedSize()
+                .menuStyle(.borderlessButton).fixedSize().accessibilityLabel(Text("More actions"))
             }
             .controlSize(.small)
             .frame(width: 150, alignment: .trailing)

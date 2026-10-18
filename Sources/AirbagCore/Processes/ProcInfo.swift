@@ -56,31 +56,39 @@ public enum ProcInfo {
     }
 
     /// argv and environment via `sysctl KERN_PROCARGS2` (same uid; Apple platform binaries hide their env).
-    public static func arguments(_ pid: Int32) -> (argv: [String], env: [String: String])? {
+    /// Only environment entries whose key is in `envKeys` are decoded (nil = all); other values never leave the buffer.
+    public static func arguments(_ pid: Int32, envKeys: Set<String>? = nil) -> (argv: [String], env: [String: String])? {
         var mib: [Int32] = [CTL_KERN, KERN_PROCARGS2, pid]
         var size = 0
-        guard sysctl(&mib, 3, nil, &size, nil, 0) == 0, size > 0 else { return nil }
+        guard sysctl(&mib, 3, nil, &size, nil, 0) == 0, size > MemoryLayout<Int32>.size else { return nil }
         var buf = [UInt8](repeating: 0, count: size)
         guard sysctl(&mib, 3, &buf, &size, nil, 0) == 0, size > MemoryLayout<Int32>.size else { return nil }
-        let argc = buf.withUnsafeBytes { $0.load(as: Int32.self) }
+        let argc = Int(buf.withUnsafeBytes { $0.load(as: Int32.self) })
+        guard argc >= 0, argc < 100_000 else { return nil }
         var i = MemoryLayout<Int32>.size
-        // skip exec path
+        // exec path, then NUL padding up to argv[0]
         while i < size && buf[i] != 0 { i += 1 }
         while i < size && buf[i] == 0 { i += 1 }
-        var strings: [String] = []
-        var start = i
-        while i < size {
-            if buf[i] == 0 {
-                if i > start { strings.append(String(decoding: buf[start..<i], as: UTF8.self)) } else if strings.count >= Int(argc) { break }
-                start = i + 1
-            }
-            i += 1
+        // Exactly argc NUL-terminated strings, empty ones included.
+        var argv: [String] = []
+        argv.reserveCapacity(argc)
+        while argv.count < argc && i < size {
+            var j = i
+            while j < size && buf[j] != 0 { j += 1 }
+            argv.append(String(decoding: buf[i..<j], as: UTF8.self))
+            i = j + 1
         }
-        let argv = Array(strings.prefix(Int(argc)))
+        // Environment: KEY=VALUE strings until an empty string or the end.
         var env: [String: String] = [:]
-        for kv in strings.dropFirst(Int(argc)) {
-            guard let eq = kv.firstIndex(of: "=") else { continue }
-            env[String(kv[..<eq])] = String(kv[kv.index(after: eq)...])
+        while i < size {
+            var j = i
+            while j < size && buf[j] != 0 { j += 1 }
+            if j == i { break }
+            if let eq = buf[i..<j].firstIndex(of: UInt8(ascii: "=")) {
+                let key = String(decoding: buf[i..<eq], as: UTF8.self)
+                if envKeys?.contains(key) ?? true { env[key] = String(decoding: buf[(eq + 1)..<j], as: UTF8.self) }
+            }
+            i = j + 1
         }
         return (argv, env)
     }

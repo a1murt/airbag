@@ -59,7 +59,10 @@ final class AppModel: ObservableObject {
     let demo: Bool
     /// Preview rendering: keep injected data (no radar scans or hook refreshes).
     var frozen = false
+    /// Main-thread connection (UI reads and user actions).
     private(set) var registry: Registry?
+    /// Connection used only on `work` (SQLite connections must not be shared across threads).
+    nonisolated(unsafe) private var workRegistry: Registry?
     let radar: ProcessRadar
     private let work = DispatchQueue(label: "dev.airbag.work", qos: .utility)
     private let snapshotQueue = DispatchQueue(label: "dev.airbag.snapshot", qos: .utility)
@@ -70,6 +73,7 @@ final class AppModel: ObservableObject {
     private var seenGuardIDs = Set<String>()
     private var seenOrphans = Set<ProcessIdentity>()
     private var notifiedSessions = Set<String>()
+    private var notifiedOrphans = Set<ProcessIdentity>()
 
     @Published var selectedTab: MainTab = .timeline
     @Published var selectedRoot: String?
@@ -82,7 +86,12 @@ final class AppModel: ObservableObject {
     @Published var snapshotting = false
     @Published var badge = false
     @Published var lastMessage: String?
-    @Published var popoverVisible = false { didSet { if popoverVisible { badge = false; markSeen(); scheduleRadar() } } }
+    @Published var popoverVisible = false { didSet { if popoverVisible { badge = false; markSeen() }; scheduleRadar() } }
+    @Published var mainWindowVisible = false { didSet { scheduleRadar() } }
+    /// When each orphan was first seen; notifications wait for a grace period (the session may resume).
+    private var orphanSince: [ProcessIdentity: Date] = [:]
+    @Published var restoreRequest: RestoreRequest?
+    private var pauseTimer: Timer?
     @Published var retentionDays: Int = 7
     @Published var budgetGB: Int = 5
     @Published var disabledRules: Set<String> = []
@@ -101,13 +110,32 @@ final class AppModel: ObservableObject {
         if !attentionGuards.filter({ !seenGuardIDs.contains($0.id) }).isEmpty { return .blocked }
         if orphans.contains(where: { !seenOrphans.contains($0.identity) }) { return .orphan }
         if snapshotting { return .snapshotting }
+        if hookStatuses.contains(where: { $0.installed && $0.brokenCommand }) { return .degraded }
         if hookStatuses.contains(where: { $0.detected }) && !hookStatuses.contains(where: { $0.installed }) && !projects.isEmpty { return .degraded }
         if pausedUntil != nil || projects.isEmpty { return .idle }
         return .protected
     }
 
+    /// Why hooks cannot be installed from where the app runs now (a hook must point at a binary that stays put).
+    var installLocationProblem: String? {
+        let path = Bundle.main.bundleURL.path
+        if path.contains("/AppTranslocation/") || path.hasPrefix("/Volumes/") {
+            if stableHomebrewCLI != nil { return nil }
+            return String(localized: "Move Airbag to the Applications folder first: it runs from a disk image or a temporary location, and hooks would break when that goes away.")
+        }
+        return nil
+    }
+
+    private var stableHomebrewCLI: String? {
+        ["/opt/homebrew/bin/airbag", "/usr/local/bin/airbag"].first { FileManager.default.isExecutableFile(atPath: $0) }
+    }
+
+    /// The path written into agent configs: the copy inside an installed app, else the Homebrew link, else this bundle.
     var cliPath: String {
         let bundled = Bundle.main.bundleURL.appendingPathComponent("Contents/Helpers/airbag").path
+        let inApplications = Bundle.main.bundleURL.path.hasPrefix("/Applications/") || Bundle.main.bundleURL.path.hasPrefix(NSHomeDirectory() + "/Applications/")
+        if inApplications && FileManager.default.fileExists(atPath: bundled) { return bundled }
+        if let brew = stableHomebrewCLI { return brew }
         return FileManager.default.fileExists(atPath: bundled) ? bundled : "/Applications/Airbag.app/Contents/Helpers/airbag"
     }
 
@@ -120,7 +148,10 @@ final class AppModel: ObservableObject {
         if !demo {
             try? paths.prepare()
             Log.shared.configure(file: paths.logs.appendingPathComponent("app.log"), category: "app")
-            do { registry = try Registry(paths: paths, role: .app) } catch { lastMessage = "Registry unavailable: \(error)" }
+            do {
+                registry = try Registry(paths: paths, role: .app)
+                workRegistry = try Registry(paths: paths, role: .app)
+            } catch { lastMessage = String(localized: "Airbag's database is unavailable: \(String(describing: error))") }
             loadSettings()
         }
     }
@@ -245,7 +276,7 @@ final class AppModel: ObservableObject {
             snapshotQueue.async { [weak self] in self?.snapshotSync(root: path, trigger: .initial, label: String(localized: "Project added")) }
             lastMessage = String(localized: "Protecting \(url.lastPathComponent)…")
         } catch {
-            lastMessage = String(describing: error)
+            lastMessage = describe(error)
         }
     }
 
@@ -259,7 +290,7 @@ final class AppModel: ObservableObject {
     }
 
     func timeline(root: String) async -> [TimelineEntry] {
-        let reg = registry
+        let reg = workRegistry
         let paths = self.paths
         return await withCheckedContinuation { cont in
             work.async {
@@ -339,24 +370,36 @@ final class AppModel: ObservableObject {
     func scheduleRadar() {
         radarTimer?.invalidate()
         let live = projects.contains { $0.liveSessions > 0 }
-        let interval: TimeInterval = popoverVisible || selectedTab == .radar ? 1.5 : (live ? 2 : (servers.isEmpty ? 10 : 5))
+        let watching = popoverVisible || (mainWindowVisible && selectedTab == .radar)
+        let interval: TimeInterval = watching ? 1.5 : (live ? 2 : (servers.isEmpty ? 10 : 5))
         radarTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in Task { @MainActor in self?.scanRadar() } }
     }
 
     func scanRadar() {
         guard !demo, !frozen else { return }
         let radar = self.radar
-        let reg = registry
+        let reg = workRegistry
         work.async {
             let snap = radar.scan(registry: reg)
             if let reg { try? radar.persist(snap, registry: reg) }
             let all = snap.processes.filter { !$0.listeners.isEmpty }
             Task { @MainActor in
-                let before = Set(self.orphans.map(\.identity))
                 if snap.servers != self.servers { self.servers = snap.servers }
                 if all != self.allListening { self.allListening = all }
-                let newOrphans = self.orphans.filter { !before.contains($0.identity) && !self.seenOrphans.contains($0.identity) }
-                if !newOrphans.isEmpty { self.badge = true; self.notifyOrphans(newOrphans) }
+                // Orphans are announced after 20 s (doc 11 §6.4): a resumed session takes them back first.
+                let now = Date()
+                let current = Set(self.orphans.map(\.identity))
+                self.orphanSince = self.orphanSince.filter { current.contains($0.key) }
+                for o in self.orphans where self.orphanSince[o.identity] == nil { self.orphanSince[o.identity] = now }
+                let due = self.orphans.filter { o in
+                    !self.seenOrphans.contains(o.identity) && !self.notifiedOrphans.contains(o.identity)
+                        && now.timeIntervalSince(self.orphanSince[o.identity] ?? now) >= 20
+                }
+                if !due.isEmpty {
+                    self.notifiedOrphans.formUnion(due.map(\.identity))
+                    self.badge = true
+                    self.notifyOrphans(due)
+                }
             }
         }
     }
@@ -441,6 +484,7 @@ final class AppModel: ObservableObject {
     }
 
     func installHooks(_ agent: AgentKind) {
+        if let problem = installLocationProblem { lastMessage = problem; return }
         do {
             let c = try installer.install(agent, strict: strictMode, backupDirectory: paths.backups.path)
             lastMessage = c.changed ? String(localized: "Hooks installed for \(agent.displayName)") : String(localized: "\(agent.displayName) is already protected")
@@ -463,13 +507,34 @@ final class AppModel: ObservableObject {
     // MARK: pause, retention, settings
 
     func pause(minutes: Int?) {
-        let until = minutes.map { Date().addingTimeInterval(Double($0) * 60) }
+        pause(until: minutes.map { Date().addingTimeInterval(Double($0) * 60) })
+    }
+
+    func pauseUntilTomorrowMorning() {
+        let cal = Calendar.current
+        let tomorrow = cal.date(byAdding: .day, value: 1, to: Date()) ?? Date().addingTimeInterval(86400)
+        pause(until: cal.date(bySettingHour: 8, minute: 0, second: 0, of: tomorrow))
+    }
+
+    func pause(until: Date?) {
         try? registry?.pause(untilMs: until.map { Int64($0.timeIntervalSince1970 * 1000) })
         pausedUntil = until
+        schedulePauseEnd()
         startWatching()
-        if let until {
-            Timer.scheduledTimer(withTimeInterval: until.timeIntervalSinceNow + 1, repeats: false) { [weak self] _ in
-                Task { @MainActor in self?.pausedUntil = nil; self?.startWatching(); self?.lastMessage = String(localized: "Protection resumed") }
+    }
+
+    /// One timer for the end of the pause; replaces any earlier one (also after a relaunch).
+    private func schedulePauseEnd() {
+        pauseTimer?.invalidate()
+        pauseTimer = nil
+        guard let until = pausedUntil else { return }
+        if until <= Date() { pausedUntil = nil; startWatching(); return }
+        pauseTimer = Timer.scheduledTimer(withTimeInterval: until.timeIntervalSinceNow + 0.5, repeats: false) { [weak self] _ in
+            Task { @MainActor in
+                guard let self else { return }
+                self.pausedUntil = nil
+                self.startWatching()
+                self.lastMessage = String(localized: "Protection resumed")
             }
         }
     }
@@ -479,7 +544,8 @@ final class AppModel: ObservableObject {
         let budget = Int64(budgetGB) << 30
         let paths = self.paths
         snapshotQueue.async {
-            let r = Retention.run(paths: paths, policy: policy, globalBudgetBytes: budget)
+            let reg = try? Registry(paths: paths, role: .app)
+            let r = Retention.run(paths: paths, policy: policy, globalBudgetBytes: budget, registry: reg)
             Log.shared.info("retention: deleted \(r.deletedSnapshots) snapshots, freed \(r.freedBytes) bytes")
             Task { @MainActor in self.refreshProjects() }
         }
@@ -500,14 +566,30 @@ final class AppModel: ObservableObject {
         disabledRules = Set(reg.setting("rules.disabled", default: [String]()))
         strictMode = reg.setting("hook.strictMode", default: false)
         pausedUntil = reg.pausedUntilMs.map { Date(timeIntervalSince1970: Double($0) / 1000) }
+        schedulePauseEnd()
     }
 
     var launchAtLogin: Bool {
-        get { SMAppService.mainApp.status == .enabled }
+        get { SMAppService.mainApp.status == .enabled || SMAppService.mainApp.status == .requiresApproval }
         set {
             do { if newValue { try SMAppService.mainApp.register() } else { try SMAppService.mainApp.unregister() } }
-            catch { lastMessage = String(describing: error) }
+            catch { lastMessage = String(localized: "Could not change the login item: \(error.localizedDescription)") }
+            if SMAppService.mainApp.status == .requiresApproval {
+                lastMessage = String(localized: "Allow Airbag in System Settings → General → Login Items to open it at login.")
+                SMAppService.openSystemSettingsLoginItems()
+            }
             objectWillChange.send()
+        }
+    }
+
+    /// User-facing text for an error from the core.
+    func describe(_ error: Error) -> String {
+        switch error {
+        case SnapshotError.busy: return String(localized: "Another snapshot or restore is running; try again in a moment.")
+        case SnapshotError.notFound: return String(localized: "That snapshot no longer exists (it was removed by cleanup).")
+        case SnapshotError.unsafeRoot(let p): return String(localized: "Airbag does not protect \(p): it is too broad (home or a system folder).")
+        case SnapshotError.rootMissing(let p): return String(localized: "The folder \(p) does not exist.")
+        default: return String(describing: error)
         }
     }
 
