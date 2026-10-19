@@ -123,7 +123,9 @@ bundle (or the Homebrew symlink); the doctor flags configs that point elsewhere.
 Swift 6.1 toolchain, `swift-tools-version: 6.0`, Swift 5 language mode (C interop with libproc/SQLite/FSEvents
 stays practical); UI types `@MainActor`; core types are value types or final classes confined to one thread;
 errors are typed enums conforming to `LocalizedError`; logging through a small `Log` facade (file + `os.Logger`).
-User-facing strings live in `Resources/{en,ru}.lproj/Localizable.strings`; agent-facing reasons are English.
+User-facing strings are English in code and translated in `Resources/<lang>.lproj/Localizable.{strings,stringsdict}`
+(19 languages, list in `AppModel.languages`; Settings → Language overrides the system choice); agent-facing reasons are
+English.
 
 ## 9. Overrides of older design documents
 

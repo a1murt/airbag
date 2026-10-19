@@ -4,6 +4,7 @@ import SwiftUI
 
 struct SettingsScreen: View {
     @EnvironmentObject var model: AppModel
+    @State private var languageChanged = false
     @State private var preview: (AgentKind, String)?
 
     var body: some View {
@@ -90,6 +91,17 @@ struct SettingsScreen: View {
                 }
             }
             Section("General") {
+                Picker("Language", selection: Binding(get: { model.languageOverride ?? "" }, set: { model.languageOverride = $0.isEmpty ? nil : $0; languageChanged = true })) {
+                    Text("System").tag("")
+                    ForEach(AppModel.languages, id: \.self) { code in Text(verbatim: AppModel.languageName(code)).tag(code) }
+                }
+                if languageChanged {
+                    HStack {
+                        Text("The new language is used after a restart.").font(.caption).foregroundStyle(.secondary)
+                        Spacer()
+                        Button("Restart Airbag") { model.relaunch() }
+                    }
+                }
                 Toggle("Open Airbag at login", isOn: Binding(get: { model.launchAtLogin }, set: { model.launchAtLogin = $0 }))
                 Toggle("Strict mode: block commands if Airbag's hook fails", isOn: Binding(get: { model.strictMode }, set: { model.setStrict($0) }))
             }

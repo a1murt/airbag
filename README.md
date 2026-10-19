@@ -6,11 +6,9 @@
 command an agent runs, lets you roll any file, folder or the whole project back in one click, stops the few
 commands no snapshot can undo, and shows which agent session left which dev server running.
 
-Free, native, MIT-licensed. No account, no telemetry, no network. macOS 14+.
-
-> *Русский:* Airbag — бесплатная нативная утилита в строке меню, страховка от ИИ-агентов. Снимок проекта перед
-> каждой shell-командой агента, откат в один клик, предохранитель от разрушительных команд и радар dev-серверов с
-> привязкой к сессии агента. Интерфейс на русском и английском.
+Free, native, MIT-licensed. No account, no telemetry, no network. macOS 14+. The interface speaks 19 languages:
+English, Deutsch, Español, Français, Italiano, Nederlands, Polski, Português (Brasil), Türkçe, Українська, Русский,
+Қазақ тілі, हिन्दी, Bahasa Indonesia, Tiếng Việt, 日本語, 한국어, 简体中文 and 繁體中文 (Settings → Language).
 
 ## Why
 

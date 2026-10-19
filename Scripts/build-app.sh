@@ -44,6 +44,12 @@ lipo_or_copy AirbagApp "$APP/Contents/MacOS/Airbag"
 lipo_or_copy airbag "$APP/Contents/Helpers/airbag"
 
 cp -R Sources/AirbagApp/Resources/*.lproj "$APP/Contents/Resources/"
+# Every shipped translation, English first (the source language and the fallback).
+LOCALIZATIONS="<string>en</string>"
+for d in Sources/AirbagApp/Resources/*.lproj; do
+    code="$(basename "$d" .lproj)"
+    [ "$code" = en ] || LOCALIZATIONS="$LOCALIZATIONS<string>$code</string>"
+done
 if [ -f Resources/AppIcon.icns ]; then cp Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"; fi
 printf 'APPL????' > "$APP/Contents/PkgInfo"
 
@@ -58,7 +64,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
     <key>CFBundleIconFile</key><string>AppIcon</string>
     <key>CFBundleIdentifier</key><string>${BUNDLE_ID}</string>
     <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
-    <key>CFBundleLocalizations</key><array><string>en</string><string>ru</string></array>
+    <key>CFBundleLocalizations</key><array>${LOCALIZATIONS}</array>
     <key>CFBundleName</key><string>Airbag</string>
     <key>CFBundlePackageType</key><string>APPL</string>
     <key>CFBundleShortVersionString</key><string>${VERSION}</string>
