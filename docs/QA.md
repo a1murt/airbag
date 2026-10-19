@@ -17,7 +17,9 @@ Manual, on a clean macOS 14 and the current macOS (both architectures for the un
 2. Connect Claude Code: `~/.claude/settings.json` gains the Airbag entries, other keys unchanged, backup present.
 3. In a test repo, ask the agent to `rm -rf src`; restore from the Timeline; `git status` clean afterwards.
 4. Ask the agent to run `rm -rf ~/Documents/x` (sacrificial folder): the agent's own prompt appears (ask).
-5. Codex: trust hooks in `/hooks`; `git push --force` is denied; "Allow once" in Guard; the retry passes.
+5. Codex: trust hooks in `/hooks`; `git push --force` runs and appears in Guard as "ran without asking", with a dot on
+   the icon. Settings → "Stop the agent until I approve": the same command is denied; "Allow once" in Guard; the retry
+   passes. An agent running `airbag allow` itself is blocked.
 6. Start `npm run dev` through the agent, end the session: the popover offers "stop its servers"; Stop works.
 7. Pause for 15 minutes: hooks skip snapshots; a catastrophic command is still blocked; resume.
 8. Settings → Remove for each agent: config files return to the backup content.

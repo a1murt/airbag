@@ -96,6 +96,7 @@ final class AppModel: ObservableObject {
     @Published var budgetGB: Int = 5
     @Published var disabledRules: Set<String> = []
     @Published var strictMode = false
+    @Published var recordInsteadOfAsking = true
 
     var orphans: [RadarProcess] { servers.filter { $0.linkState == .orphan } }
     /// Blocks and approvals that need Airbag (native asks are answered in the agent's own prompt, spec §6.2).
@@ -187,7 +188,8 @@ final class AppModel: ObservableObject {
         refreshProjects()
         // Servers bind a moment after the command that starts them.
         for delay in [0.3, 2.0, 10.0] { DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in self?.scanRadar() } }
-        if let d = msg["decision"] as? String, d == "deny" || d == "deny_fallback" { badge = true }
+        // Blocked, waiting for approval, or run without asking: the user should look.
+        if let d = msg["decision"] as? String, ["deny", "deny_fallback", "allow_fallback"].contains(d) { badge = true }
     }
 
     func refreshAll() {
@@ -507,6 +509,11 @@ final class AppModel: ObservableObject {
         refreshHooks()
     }
 
+    func setRecordInsteadOfAsking(_ on: Bool) {
+        recordInsteadOfAsking = on
+        try? registry?.setSetting("hook.recordInsteadOfAsking", on)
+    }
+
     func setStrict(_ on: Bool) {
         strictMode = on
         try? registry?.setSetting("hook.strictMode", on)
@@ -574,6 +581,7 @@ final class AppModel: ObservableObject {
         budgetGB = reg.setting("retention.budgetGB", default: 5)
         disabledRules = Set(reg.setting("rules.disabled", default: [String]()))
         strictMode = reg.setting("hook.strictMode", default: false)
+        recordInsteadOfAsking = reg.setting("hook.recordInsteadOfAsking", default: true)
         pausedUntil = reg.pausedUntilMs.map { Date(timeIntervalSince1970: Double($0) / 1000) }
         schedulePauseEnd()
     }

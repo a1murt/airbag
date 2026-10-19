@@ -143,7 +143,7 @@
 "added" = "добавлен";
 "agent unknown" = "агент неизвестен";
 "allowed once" = "разрешено однажды";
-"allowed with snapshot" = "разрешено со снимком";
+"ran without asking" = "выполнено без вопроса";
 "asked" = "спрошено";
 "blocked" = "заблокировано";
 "deleted" = "удалён";
@@ -220,3 +220,7 @@
 "Unpin snapshot" = "Открепить снимок";
 "after" = "после";
 "before" = "перед";
+"When a snapshot cannot undo a command" = "Если снимок не сможет отменить команду";
+"Don't interrupt: run it and record it in Guard" = "Не прерывать: выполнить и записать в журнал";
+"Stop the agent until I approve" = "Остановить агента до моего подтверждения";
+"Force pushes, edits outside the project and similar commands. Wiping the home folder, a disk or Airbag itself is always blocked; an agent's own approval prompt, when it shows one, stays." = "Force push, правки вне проекта и похожие команды. Удаление домашней папки, стирание диска и отключение Airbag блокируются всегда; собственный запрос подтверждения агента, если он есть, остаётся.";

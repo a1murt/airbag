@@ -20,7 +20,11 @@ security boundary against a hostile agent, a malicious plugin, or malware runnin
   `python3 - <<EOF`), paths built from loop variables or command output, and `cp`/`mv` destinations given by an
   unresolved variable. Inside a project the snapshot covers them.
 - **Self-protection.** Commands that delete or edit Airbag's data or the agents' hook configuration files are
-  blocked or need approval. A determined same-user process can still remove them.
+  blocked or need approval, and an agent may not approve its own stopped command (`airbag allow`). A determined
+  same-user process can still remove them.
+- **Risky commands without a prompt.** Where the agent cannot show its own approval prompt (bypass permissions,
+  Codex, Gemini), risky commands run after a snapshot and are recorded in Guard by default; Settings can make them
+  wait for approval instead. Blocks never depend on this setting.
 - **Data at rest.** Snapshots are copies of project files, including `.env` and other secrets. They live in
   `~/Library/Application Support/Airbag` with 0700/0600 permissions and are excluded from Time Machine and
   Spotlight. Anyone who can read your home folder can read them.

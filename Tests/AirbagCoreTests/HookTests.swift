@@ -73,17 +73,43 @@ func decode(_ s: String?) -> [String: Any] {
         #expect(try! h.registry().db.scalarText("SELECT decision FROM guard_log") == "deny")
     }
 
-    @Test func claudeNativeAskAndBypassFallback() {
+    @Test func claudeNativeAskAndBypassFallback() throws {
         let h = HookSandbox(); defer { h.cleanup() }
         let ask = decode(h.run(.claudeCode, h.claudePre("git push --force")).output)["hookSpecificOutput"] as? [String: Any]
         #expect(ask?["permissionDecision"] as? String == "ask")
+        // Bypass permissions: by default the command runs after a snapshot and is recorded (ADR-030).
+        let recorded = h.run(.claudeCode, h.claudePre("git push --force", mode: "bypassPermissions"))
+        #expect(recorded.output == "{}")
+        #expect(recorded.finalDecision == "allow_fallback")
+        #expect(recorded.snapshot != nil)
+        #expect(try h.registry().db.scalarText("SELECT decision FROM guard_log ORDER BY rowid DESC LIMIT 1") == "allow_fallback")
+        // "Stop the agent until I approve".
+        try h.registry().setSetting("hook.recordInsteadOfAsking", false)
         let bypass = h.run(.claudeCode, h.claudePre("git push --force", mode: "bypassPermissions"))
         #expect((decode(bypass.output)["hookSpecificOutput"] as? [String: Any])?["permissionDecision"] as? String == "deny")
         #expect(bypass.finalDecision == "deny_fallback")
     }
 
+    @Test func recordingNeverRunsWhatIsBlockedOrWhatCouldNotBeSnapshotted() {
+        let h = HookSandbox(); defer { h.cleanup() }
+        let blocked = h.run(.claudeCode, h.claudePre("rm -rf ~", mode: "bypassPermissions"))
+        #expect(blocked.finalDecision == "deny")
+        // An agent may not approve its own command.
+        let selfApproval = h.run(.claudeCode, h.claudePre("airbag allow 01ABC", mode: "bypassPermissions"))
+        #expect(selfApproval.finalDecision == "deny")
+    }
+
+    @Test func codexAskIsRecordedByDefault() {
+        let h = HookSandbox(); defer { h.cleanup() }
+        let out = h.run(.codex, ["session_id": "thread-9", "turn_id": "t1", "cwd": h.root, "hook_event_name": "PreToolUse", "tool_name": "Bash",
+                                 "tool_input": ["command": "git push --force origin main"], "tool_use_id": "c1"], hint: "pre-bash")
+        #expect(out.output == nil) // Codex: silence means proceed
+        #expect(out.finalDecision == "allow_fallback")
+    }
+
     @Test func codexAskBecomesDenyThenAllowOnce() throws {
         let h = HookSandbox(); defer { h.cleanup() }
+        try h.registry().setSetting("hook.recordInsteadOfAsking", false)
         func payload(_ id: String) -> [String: Any] {
             ["session_id": "thread-9", "turn_id": "t1", "cwd": h.root, "hook_event_name": "PreToolUse", "tool_name": "Bash",
              "tool_input": ["command": "git push --force origin main"], "tool_use_id": id, "model": "gpt-6"]

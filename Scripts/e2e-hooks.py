@@ -5,6 +5,7 @@ temporary sandbox; the "dangerous" targets are sacrificial directories in that s
 import json, os, shutil, subprocess, sys, tempfile, time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+subprocess.run(["swift", "build", "-c", "release", "--product", "airbag"], cwd=ROOT, check=True, capture_output=True)
 BIN = subprocess.run(["swift", "build", "-c", "release", "--show-bin-path"], cwd=ROOT, capture_output=True, text=True).stdout.strip() + "/airbag"
 work = os.path.realpath(tempfile.mkdtemp(prefix="airbag-e2e-"))
 env = dict(os.environ, AIRBAG_HOME=os.path.join(work, "home"))
@@ -64,9 +65,17 @@ check(d == "allow", "git reset --hard allowed with snapshot")
 print("== 4. git push --force (ask)")
 d, r = agent_runs("git push --force origin main", "t4")
 check(d == "ask", "native ask for Claude")
-print("== 5. Codex ask → deny with allowance → allow once")
+print("== 5. Codex ask: recorded by default; with \"stop until I approve\": deny → allow once")
 cx = {"session_id": "e2e-codex", "turn_id": "u1", "cwd": proj, "hook_event_name": "PreToolUse", "tool_name": "Bash",
-      "tool_input": {"command": "terraform destroy"}, "tool_use_id": "c1"}
+      "tool_input": {"command": "terraform destroy"}, "tool_use_id": "c0"}
+check(hook("codex", cx, "pre-bash") is None, "default: Codex is not interrupted (empty reply)")
+entries = json.loads(subprocess.run([BIN, "guard", "--json"], capture_output=True, text=True, env=env).stdout)
+check(entries and entries[0]["decision"] == "allow_fallback", "the command is recorded in Guard as run without asking")
+import sqlite3
+db = sqlite3.connect(os.path.join(env["AIRBAG_HOME"], "registry.sqlite"))
+db.execute("INSERT OR REPLACE INTO settings(key, value, updated_at) VALUES ('hook.recordInsteadOfAsking', 'false', 0)")
+db.commit(); db.close()
+cx["tool_use_id"] = "c1"
 r = hook("codex", cx, "pre-bash")
 check(r and r["hookSpecificOutput"]["permissionDecision"] == "deny", "Codex gets deny with allowance hint")
 gid = json.loads(subprocess.run([BIN, "guard", "--json"], capture_output=True, text=True, env=env).stdout)[0]["id"]
@@ -76,7 +85,7 @@ check(hook("codex", cx, "pre-bash") is None, "after `airbag allow`, the retried 
 print("== 6. restore what the agent destroyed")
 log = json.loads(subprocess.run([BIN, "log", "--json"], capture_output=True, text=True, env=env).stdout)
 snap_for = lambda c: next(e["snapshot"] for e in log if e["command"].startswith(c))
-check(all(e["snapshot"] for e in log if e["decision"] in ("allow", "allow_once")), "every allowed command points at a snapshot")
+check(all(e["snapshot"] for e in log if e["decision"] in ("allow", "allow_once", "allow_fallback")), "every allowed command points at a snapshot")
 subprocess.run([BIN, "restore", snap_for("rm -rf src"), "--root", proj, "--path", "src"], env=env, check=True, capture_output=True)
 check(open(os.path.join(proj, "src/legacy/old.ts")).read() == "old\n", "src/legacy restored from the pre-command snapshot")
 subprocess.run([BIN, "restore", snap_for("git reset --hard"), "--root", proj, "--path", "src/wip.ts"], env=env, check=True, capture_output=True)
