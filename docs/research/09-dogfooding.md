@@ -67,6 +67,14 @@ checked by hand: force pushes, history rewrites, `git worktree remove --force`, 
 Desktop, editing `~/.ssh/config`, `rm -rf` on a remote server. The three former blocks were copies into
 `/Applications` and are now asks naming the app bundle.
 
+## Approvals
+
+Installing the new build through the agent ran into Airbag's own protection of `/Applications/Airbag.app`; the owner
+approved it in chat and the agent recorded the approval with `airbag allow`. That exposed two things: an agent could
+approve its own stopped commands, and the deny-until-approved fallback (bypass permissions, Codex, Gemini) is a manual
+mode that gets rubber-stamped. Risky commands there now run after a snapshot and are recorded; agents may not run
+`airbag allow` (ADR-030).
+
 ## Open
 
 - There is no "stop protecting this folder" in the app; a wrong project from the welcome window cannot be removed.

@@ -201,7 +201,7 @@ struct GuardScreen: View {
         case "deny_fallback": Pill(text: "needs approval", color: Theme.warning)
         case "ask": Pill(text: "asked", color: Theme.warning)
         case "allow_once": Pill(text: "allowed once", color: Theme.ok)
-        case "allow_fallback": Pill(text: "allowed with snapshot", color: Theme.ok)
+        case "allow_fallback": Pill(text: "ran without asking", color: Theme.warning)
         default: Pill(text: LocalizedStringKey(g.decision), color: .secondary)
         }
     }

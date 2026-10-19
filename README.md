@@ -31,17 +31,17 @@ them. Airbag sits *underneath* the agents, independent of them.
 |---|---|
 | **Snapshots** | Before every agent shell command (via hooks) and after file changes (FSEvents). APFS clones: a snapshot of an unchanged 50k-file project costs ~120 ms and almost no disk. `.env` and other git-ignored files are included; `node_modules`, build output and caches are not. |
 | **Timeline & restore** | Every snapshot is labelled with the command it preceded ("Before `rm -rf src/legacy`") and the agent session. See changed files, diffs, restore a file, a folder or the whole project. A restore never deletes anything: files in the way are moved into Airbag's store, and the restore itself is undoable. Even a project folder that was deleted entirely can be brought back. |
-| **Circuit breaker** | Inside the project, destructive-but-recoverable commands are allowed *after* a snapshot. Commands whose damage lies outside every snapshot are blocked (your home folder, system folders, parents of the project, disks, power) or need your approval (other folders, force-push, databases, cloud resources, `curl \| sh`, `sudo`). 386 test cases, including an adversarial red-team set. |
+| **Circuit breaker** | Inside the project, destructive-but-recoverable commands are allowed *after* a snapshot. Commands whose damage lies outside every snapshot are blocked (your home folder, system folders, parents of the project, disks, power) or are risky (other folders, force-push, databases, cloud resources, `curl \| sh`, `sudo`): those show the agent's own approval prompt where it has one, and otherwise run without interrupting and are recorded in Guard (or stop until you approve, if you choose so in Settings). On 1585 real agent commands from one Mac: 3.7 % risky, none blocked. |
 | **Radar** | Listening dev servers with the project, the agent and the session that started them — also after the agent exited, thanks to the environment the agent leaves in its child processes. Orphans (session ended, server still running) are flagged; stop them with SIGTERM, force-stop only as a separate click. |
 
 ## Supported agents
 
-| Agent | Snapshot before shell commands | Block | Ask | Session tracking |
+| Agent | Snapshot before shell commands | Block | Risky command | Session tracking |
 |---|---|---|---|---|
-| Claude Code (CLI, desktop, IDE) | ✓ | ✓ | native prompt | ✓ |
-| Codex (CLI, app) | ✓ | ✓ | deny + "Allow once" in Airbag | ✓ (trust the hooks once in `/hooks`) |
+| Claude Code (CLI, desktop, IDE) | ✓ | ✓ | native prompt; recorded under bypass permissions | ✓ |
+| Codex (CLI, app) | ✓ | ✓ | recorded (or deny + "Allow once") | ✓ (trust the hooks once in `/hooks`) |
 | Cursor (IDE, CLI) | ✓ | ✓ | native prompt | ✓ |
-| Gemini CLI | ✓ | ✓ | deny + "Allow once" in Airbag | ✓ |
+| Gemini CLI | ✓ | ✓ | recorded (or deny + "Allow once") | ✓ |
 | GitHub Copilot CLI | ✓ | ✓ | native prompt | ✓ |
 
 Airbag writes one entry into each agent's **user** settings file (never into project files), keeps a backup, and

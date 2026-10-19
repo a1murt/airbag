@@ -17,7 +17,17 @@ struct SettingsScreen: View {
                         VStack(alignment: .leading, spacing: 2) {
                             Text(stateText(s)).font(.callout)
                             Text(verbatim: (s.configPath as NSString).abbreviatingWithTildeInPath).font(Theme.monoSmall).foregroundStyle(.tertiary)
-                            if let note = s.note, s.installed { Text(verbatim: note).font(.caption).foregroundStyle(Theme.warning).fixedSize(horizontal: false, vertical: true) }
+                            if let note = s.note, s.installed {
+                                // The trust note is fixed text from the core: show the translated onboarding wording.
+                                Group {
+                                    if s.agent == .codex && note.hasPrefix("Codex runs new hooks") {
+                                        Text("Codex asks you to trust new hooks once: open Codex, type /hooks and press t.")
+                                    } else {
+                                        Text(verbatim: note)
+                                    }
+                                }
+                                .font(.caption).foregroundStyle(Theme.warning).fixedSize(horizontal: false, vertical: true)
+                            }
                         }
                         Spacer()
                         if s.installed {
@@ -29,6 +39,12 @@ struct SettingsScreen: View {
                         }
                     }
                 }
+                Picker("When a snapshot cannot undo a command", selection: Binding(get: { model.recordInsteadOfAsking }, set: { model.setRecordInsteadOfAsking($0) })) {
+                    Text("Don't interrupt: run it and record it in Guard").tag(true)
+                    Text("Stop the agent until I approve").tag(false)
+                }
+                Text("Force pushes, edits outside the project and similar commands. Wiping the home folder, a disk or Airbag itself is always blocked; an agent's own approval prompt, when it shows one, stays.")
+                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 if let (agent, text) = preview {
                     VStack(alignment: .leading) {
                         HStack { Text("\(agent.displayName) settings after install").font(.caption.weight(.semibold)); Spacer(); Button("Close") { preview = nil }.controlSize(.small) }

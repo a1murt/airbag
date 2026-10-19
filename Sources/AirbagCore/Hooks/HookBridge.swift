@@ -6,7 +6,7 @@ public enum AskMode: String, Sendable, Codable {
     case native
     /// Deny with an explanation; the user can approve once in Airbag and the agent retries.
     case denyWithAllowance = "deny_with_allowance"
-    /// Snapshot and allow (zero interruptions).
+    /// Snapshot, allow and record in Guard (zero interruptions).
     case allowSnapshot = "allow_snapshot"
 }
 
@@ -19,6 +19,9 @@ public struct HookBridgeConfig: Sendable {
     public var askFallback: [AgentKind: AskMode] = [.claudeCode: .native, .codex: .denyWithAllowance, .cursor: .native,
                                                     .gemini: .denyWithAllowance, .copilot: .native]
     public var askUnderBypass: AskMode = .denyWithAllowance
+    /// Where the agent cannot show its own prompt (bypass permissions, Codex, Gemini), snapshot, allow and record instead
+    /// of stopping the agent until the user approves. Setting `hook.recordInsteadOfAsking` overrides it (ADR-030).
+    public var recordInsteadOfAsking = true
     /// Spawn a detached `airbag snapshot` to finish cold or incomplete snapshots (off in tests).
     public var spawnBackground = true
     public var home: String = NSHomeDirectory()
@@ -247,10 +250,13 @@ public struct HookBridge {
                 break
             }
             let bypass = env.permissionMode == "bypassPermissions"
-            let mode: AskMode = bypass ? config.askUnderBypass
+            var mode: AskMode = bypass ? config.askUnderBypass
                 : (readSetting("hook.askFallback.\(env.agent.rawValue)").flatMap(AskMode.init(rawValue:)) ?? config.askFallback[env.agent] ?? .denyWithAllowance)
             let canNative = AgentAdapter.supportsNativeAsk(declared, kind: env.kind, permissionMode: env.permissionMode)
                 && !(env.agent == .cursor && declared == .claudeCode) // Cursor's preToolUse does not enforce ask
+            // A prompt the user rubber-stamps protects nothing; where the agent has none of its own, record instead.
+            let recordOnly = registry?.setting("hook.recordInsteadOfAsking", as: Bool.self) ?? config.recordInsteadOfAsking
+            if recordOnly && !(mode == .native && canNative) { mode = .allowSnapshot }
 
             /// The question (or its deny fallback) for an ask verdict.
             func askReply(_ v: GuardVerdict, snapshotID: String?) -> (HookReply, String) {
@@ -301,7 +307,8 @@ public struct HookBridge {
                     reply = .allow
                     record.decision = "allow_once"
                     record.guardEntry = guardRef("allow_once")
-                } else if mode == .allowSnapshot && snap != nil {
+                } else if mode == .allowSnapshot && !verdict.findings.contains(where: { $0.ruleId == "snapshot.unavailable" }) {
+                    // Runs and is recorded; when a project change could not be snapshotted, the user still decides.
                     reply = .allow
                     record.decision = "allow_fallback"
                     record.guardEntry = guardRef("allow_fallback")

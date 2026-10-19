@@ -564,6 +564,9 @@ struct Analyzer {
             if argv.contains("uninstall") || (argv.first == "hooks" && argv.contains("uninstall")) {
                 add("self.airbag", .ask, .none, "it removes Airbag's protection; only the user should do that.", whole)
             }
+            if argv.first == "allow" {
+                add("self.allow", .block, .none, "only the user can approve a command Airbag stopped (menu bar → Guard → Allow once); an agent approving its own command makes the question meaningless.", whole)
+            }
         case "brew":
             readOnly = readOnly && ["list", "info", "search", "--version", "config", "doctor", "outdated", "deps", "leaves"].contains(argv.first ?? "")
         default:

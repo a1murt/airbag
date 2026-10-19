@@ -2625,6 +2625,27 @@
     "decision": "ask"
    },
    "rule": "shell.unparsed"
+  },
+  {
+   "cmd": "airbag allow 01M58X3V7PXP798CC39VAVH5DT",
+   "expect": {
+    "decision": "block"
+   },
+   "rule": "self.allow",
+   "why": "an agent approving its own stopped command makes the question meaningless"
+  },
+  {
+   "cmd": "/Applications/Airbag.app/Contents/Helpers/airbag allow 01ABC",
+   "expect": {
+    "decision": "block"
+   },
+   "rule": "self.allow"
+  },
+  {
+   "cmd": "airbag guard",
+   "expect": {
+    "decision": "allow"
+   }
   }
  ]
 }

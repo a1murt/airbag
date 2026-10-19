@@ -108,3 +108,11 @@ scripts. An unquoted delimiter still exposes `$(…)` in any body.
 the lexer and the shell disagree (the case that hid `&& rm -rf` behind an apostrophe in a here-document). Nested
 analyses (re-joined `xargs` words) do not count.
 
+**ADR-030 Record instead of asking where the agent has no prompt.** A question the user rubber-stamps protects nothing,
+and a deny that waits for a click in the menu bar is the manual mode nobody runs agents in. Where the agent can show
+its own approval prompt (Claude Code, Cursor, Copilot outside bypass permissions) that prompt stays. Elsewhere a risky
+command (an ask) now runs after a snapshot, is recorded in Guard as "ran without asking" and puts a dot on the icon.
+Blocks are unchanged, and a destructive project command whose snapshot failed still waits for the user. Settings →
+"Stop the agent until I approve" restores ADR-012's deny with a one-shot allowance. An agent running `airbag allow`
+is blocked (`self.allow`): self-approval would make every question a slower allow.
+
