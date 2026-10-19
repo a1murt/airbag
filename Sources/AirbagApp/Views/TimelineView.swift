@@ -9,8 +9,11 @@ struct MainWindow: View {
         NavigationSplitView {
             List(selection: Binding(get: { model.selectedTab }, set: { if let t = $0 { model.selectedTab = t; model.scheduleRadar() } })) {
                 ForEach(MainTab.allCases) { tab in
-                    Label(String(localized: tab.title), systemImage: tab.symbol).tag(tab)
+                    // `.tag` must be the outermost modifier: after `.badge` the list no longer sees it, no row is
+                    // selectable and clicks in the sidebar do nothing.
+                    Label(String(localized: tab.title), systemImage: tab.symbol)
                         .badge(tab == .guardLog ? model.attentionGuards.count : (tab == .radar ? model.orphans.count : 0))
+                        .tag(tab)
                 }
             }
             .navigationSplitViewColumnWidth(min: 170, ideal: 190)

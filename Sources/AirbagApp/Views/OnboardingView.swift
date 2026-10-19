@@ -174,6 +174,13 @@ struct MenuBarLabel: View {
                     try? await Task.sleep(nanoseconds: 600_000_000)
                     openWindow(id: "welcome")
                     NSApp.activate(ignoringOtherApps: true)
+                } else if let i = CommandLine.arguments.firstIndex(of: "--show") {
+                    // `open -a Airbag --args --show radar`: the main window on a tab (timeline, radar, guard, settings).
+                    let name = i + 1 < CommandLine.arguments.count ? CommandLine.arguments[i + 1] : ""
+                    if let tab = MainTab(rawValue: name) { model.selectedTab = tab }
+                    try? await Task.sleep(nanoseconds: 300_000_000)
+                    openWindow(id: "main")
+                    NSApp.activate(ignoringOtherApps: true)
                 }
             }
     }
