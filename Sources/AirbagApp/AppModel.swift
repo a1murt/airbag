@@ -586,6 +586,37 @@ final class AppModel: ObservableObject {
         schedulePauseEnd()
     }
 
+    // MARK: language
+
+    /// Interface languages shipped in the bundle; English is the source language and the fallback.
+    static let languages = ["en", "de", "es", "fr", "it", "nl", "pl", "pt-BR", "tr", "uk", "ru", "kk", "hi", "id", "vi", "ja", "ko",
+                            "zh-Hans", "zh-Hant"]
+
+    /// The language chosen in Settings, or nil to follow the system (per-app `AppleLanguages`, read at launch).
+    var languageOverride: String? {
+        get { (UserDefaults.standard.persistentDomain(forName: Bundle.main.bundleIdentifier ?? "")?["AppleLanguages"] as? [String])?.first }
+        set {
+            if let code = newValue { UserDefaults.standard.set([code], forKey: "AppleLanguages") }
+            else { UserDefaults.standard.removeObject(forKey: "AppleLanguages") }
+            objectWillChange.send()
+        }
+    }
+
+    /// The language's own name ("Deutsch", "日本語").
+    static func languageName(_ code: String) -> String {
+        let name = Locale(identifier: code).localizedString(forIdentifier: code) ?? code
+        return name.prefix(1).uppercased() + name.dropFirst()
+    }
+
+    /// Starts a fresh copy of the app once this one has quit (a second instance would not get the wake socket).
+    func relaunch() {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/bin/sh")
+        p.arguments = ["-c", "sleep 1; /usr/bin/open -n \"$0\"", Bundle.main.bundlePath]
+        try? p.run()
+        NSApp.terminate(nil)
+    }
+
     var launchAtLogin: Bool {
         get { SMAppService.mainApp.status == .enabled || SMAppService.mainApp.status == .requiresApproval }
         set {

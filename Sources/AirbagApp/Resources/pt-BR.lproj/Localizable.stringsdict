@@ -1,0 +1,192 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>%lld days</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@n@</string>
+		<key>n</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>%lld dia</string>
+			<key>other</key>
+			<string>%lld dias</string>
+		</dict>
+	</dict>
+	<key>%lld files</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@n@</string>
+		<key>n</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>%lld arquivo</string>
+			<key>other</key>
+			<string>%lld arquivos</string>
+			<key>zero</key>
+			<string>%lld arquivos</string>
+		</dict>
+	</dict>
+	<key>%lld files created later will be moved into Airbag's store (not deleted)</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@n@</string>
+		<key>n</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>%lld arquivo criado depois será movido para o armazenamento do Airbag (não será apagado)</string>
+			<key>other</key>
+			<string>%lld arquivos criados depois serão movidos para o armazenamento do Airbag (não serão apagados)</string>
+		</dict>
+	</dict>
+	<key>%lld files will be restored</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@n@</string>
+		<key>n</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>%lld arquivo será restaurado</string>
+			<key>other</key>
+			<string>%lld arquivos serão restaurados</string>
+			<key>zero</key>
+			<string>%lld arquivos serão restaurados</string>
+		</dict>
+	</dict>
+	<key>%lld live</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@n@</string>
+		<key>n</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>%lld ativa</string>
+			<key>other</key>
+			<string>%lld ativas</string>
+		</dict>
+	</dict>
+	<key>%lld orphans</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@n@</string>
+		<key>n</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>%lld órfão</string>
+			<key>other</key>
+			<string>%lld órfãos</string>
+		</dict>
+	</dict>
+	<key>%lld projects protected</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@project@</string>
+		<key>project</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>%lld projeto protegido</string>
+			<key>other</key>
+			<string>%lld projetos protegidos</string>
+			<key>zero</key>
+			<string>%lld projetos protegidos</string>
+		</dict>
+	</dict>
+	<key>%lld servers</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@n@</string>
+		<key>n</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>%lld servidor</string>
+			<key>other</key>
+			<string>%lld servidores</string>
+			<key>zero</key>
+			<string>%lld servidores</string>
+		</dict>
+	</dict>
+	<key>%lld snapshots</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@n@</string>
+		<key>n</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>%lld snapshot</string>
+			<key>other</key>
+			<string>%lld snapshots</string>
+			<key>zero</key>
+			<string>%lld snapshots</string>
+		</dict>
+	</dict>
+	<key>Restore %lld items to %@?</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%1$#@n@</string>
+		<key>n</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>Restaurar %1$lld item ao estado de %2$@?</string>
+			<key>other</key>
+			<string>Restaurar %1$lld itens ao estado de %2$@?</string>
+		</dict>
+	</dict>
+	<key>Session ended — stop its %lld servers?</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@n@</string>
+		<key>n</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>Sessão encerrada — parar %lld servidor?</string>
+			<key>other</key>
+			<string>Sessão encerrada — parar os %lld servidores?</string>
+		</dict>
+	</dict>
+</dict>
+</plist>

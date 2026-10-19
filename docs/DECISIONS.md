@@ -116,3 +116,10 @@ Blocks are unchanged, and a destructive project command whose snapshot failed st
 "Stop the agent until I approve" restores ADR-012's deny with a one-shot allowance. An agent running `airbag allow`
 is blocked (`self.allow`): self-approval would make every question a slower allow.
 
+**ADR-031 English source, 19 interface languages.** Supersedes the language list of ADR-016. The interface is written in
+English and ships in English, German, Spanish, French, Italian, Dutch, Polish, Brazilian Portuguese, Turkish,
+Ukrainian, Russian, Kazakh, Hindi, Indonesian, Vietnamese, Japanese, Korean and Simplified and Traditional Chinese.
+It follows the system language; Settings → Language overrides it for Airbag only (per-app `AppleLanguages`, applied on
+restart). Russian is the hand-reviewed reference that `check-l10n.py` compares every language against (keys, format
+specifiers, CLDR plural forms). Right-to-left languages wait for a layout review. Agent-facing reasons stay English.
+
