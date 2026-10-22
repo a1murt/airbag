@@ -23,6 +23,8 @@ public struct SnapshotRequest: Sendable {
     public var force: Bool
     /// Restores take their undo snapshot even when the disk is nearly full (refused only below 100 MB).
     public var ignoreLowDiskFloor = false
+    /// Restores take their undo snapshot even when the root has outgrown the store's size cap.
+    public var ignoreLimits = false
 
     public init(trigger: SnapshotTrigger, label: String? = nil, sessionKey: String? = nil,
                 deadlineNs: UInt64? = nil, lockWaitMs: Int = 1000, force: Bool = false) {
@@ -56,11 +58,27 @@ public struct SnapshotStats: Sendable, Equatable, Codable {
     public var durationMs = 0
 }
 
+/// Size cap of a root that is not known to be a project (no `.git`, not the folder the agent was started in): a folder
+/// the agent only `cd`s into is snapshotted while it is small (ADR-032). Counts what a snapshot would capture.
+public struct SnapshotLimits: Sendable, Equatable, Codable {
+    public var maxFiles: Int
+    public var maxBytes: Int64
+
+    public init(maxFiles: Int, maxBytes: Int64) {
+        self.maxFiles = maxFiles
+        self.maxBytes = maxBytes
+    }
+
+    public static let folder = SnapshotLimits(maxFiles: 5_000, maxBytes: 500 << 20)
+}
+
 public enum SnapshotOutcome: Sendable {
     case created(SnapshotInfo, SnapshotStats)
     case unchanged(latest: SnapshotInfo?, SnapshotStats)
     case busy
     case lowDisk(availableBytes: Int64)
+    /// The root holds more than its `SnapshotLimits` allow; nothing was captured.
+    case tooLarge(files: Int, bytes: Int64)
     case failed(String)
 
     public var snapshot: SnapshotInfo? {
@@ -100,14 +118,18 @@ public struct RestoreReport: Sendable, Codable {
 
 public struct RetentionPolicy: Sendable {
     public var maxAgeMs: Int64
+    /// The newest snapshots kept whatever their age, so an idle project stays restorable.
     public var keepNewest: Int
+    /// At most this many unpinned snapshots per root, however recent (a busy session adds one per command).
+    public var maxSnapshots: Int
     /// Optional per-store byte budget on captured object bytes; oldest unpinned snapshots beyond `keepNewest`
     /// are deleted until under budget.
     public var maxBytes: Int64?
 
-    public init(maxAgeDays: Int = 7, keepNewest: Int = 20, maxBytes: Int64? = nil) {
+    public init(maxAgeDays: Int = 7, keepNewest: Int = 20, maxSnapshots: Int = 200, maxBytes: Int64? = nil) {
         self.maxAgeMs = Int64(maxAgeDays) * 86_400_000
         self.keepNewest = keepNewest
+        self.maxSnapshots = maxSnapshots
         self.maxBytes = maxBytes
     }
 }
@@ -137,7 +159,7 @@ public enum SnapshotError: Error, CustomStringConvertible, Sendable {
 
     public var description: String {
         switch self {
-        case .unsafeRoot(let p): return "refusing to snapshot \(p): too broad (home, system or Airbag's own directory)"
+        case .unsafeRoot(let p): return "refusing to snapshot \(p): not a project folder (home, system, app, cache, credential or temporary folder, or Airbag's own directory)"
         case .rootMissing(let p): return "root \(p) does not exist or is not a directory"
         case .notFound(let id): return "snapshot \(id) not found"
         case .busy: return "the snapshot store is busy (another snapshot or restore is running)"

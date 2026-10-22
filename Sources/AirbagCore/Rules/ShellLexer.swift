@@ -481,10 +481,16 @@ public struct ShellLexer {
         cur.depth = depth
         var nextConnector: ShellConnector = .start
         var pendingRedirect: String?
+        // Inside a `case` pattern (after `in` or `;;`, up to its `)`): `a|b` there is alternation, not a pipeline, and
+        // the patterns are not commands.
+        var casePattern = false
 
-        func flush() {
+        /// Ends the current command; true when it was a `case WORD in …` header.
+        @discardableResult
+        func flush() -> Bool {
             // Drop leading control keywords (`if`, `then`, `do`, `{`, ...).
             while let first = cur.words.first, !first.quoted, ShellLexer.controlKeywords.contains(first.text) { cur.words.removeFirst() }
+            let caseHeader = cur.words.first.map { !$0.quoted && $0.text == "case" } ?? false
             if let first = cur.words.first, !first.quoted, ["for", "case", "function"].contains(first.text) { cur.words.removeAll() }
             if !cur.words.isEmpty || !cur.redirects.isEmpty || !cur.assignments.isEmpty {
                 cur.connector = nextConnector
@@ -492,16 +498,23 @@ public struct ShellLexer {
             }
             cur = ShellCommand()
             cur.depth = depth
+            return caseHeader
         }
 
         for t in tokens {
             switch t {
             case .op(let op):
+                if casePattern {
+                    if op == ")" { casePattern = false; nextConnector = .sequence }
+                    continue // `|` between alternatives, an optional `(`, newlines before the pattern
+                }
                 if ShellLexer.redirectOps.contains(op) || op.first?.isNumber == true {
                     pendingRedirect = op
                     continue
                 }
-                flush()
+                // `case x in a|b)`: the header's last word is the first pattern unless `)` closes it right away.
+                if flush() && op != ")" { casePattern = true; continue }
+                if op == ";;" { casePattern = true }
                 switch op {
                 case "&&": nextConnector = .and
                 case "||": nextConnector = .or
@@ -510,12 +523,17 @@ public struct ShellLexer {
                 default: nextConnector = .sequence
                 }
             case .word(let w):
+                if casePattern {
+                    if !w.quoted && w.text == "esac" { casePattern = false }
+                    continue
+                }
                 if let r = pendingRedirect {
                     cur.redirects.append(ShellRedirect(op: r, target: w))
                     pendingRedirect = nil
                     continue
                 }
-                if cur.words.isEmpty, let name = w.assignmentName {
+                // Also right after `do`, `then`, `{`…: `for f in *; do n=$(wc -l < $f); …` assigns, it runs nothing.
+                if cur.words.allSatisfy({ !$0.quoted && ShellLexer.controlKeywords.contains($0.text) }), let name = w.assignmentName {
                     var value = w
                     value.text = String(w.text.dropFirst(name.count + 1))
                     value.assignmentName = nil
@@ -526,6 +544,7 @@ public struct ShellLexer {
             }
         }
         flush()
+        if casePattern { unterminated = true } // a pattern never closed: the shell would refuse the line
         return commands
     }
 }

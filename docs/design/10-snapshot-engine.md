@@ -147,6 +147,14 @@ snapshot never removes files (§6).
 - Size cap: 100 MiB per file in clone mode, 20 MiB in copy mode.
 - Nested git repositories: their `.git` is excluded like any `.git`; their working files are captured as ordinary
   files (the git-gitlink problem from research 06 does not exist here).
+- Roots that are never snapshotted (ADR-032): the home folder and its standard top-level folders themselves, and
+  everything inside app bundles (`/Applications`, `~/Applications`), `/Library`, `/usr`, `/private/var` (per-user
+  temporary folders included), `~/.ssh`, `~/.gnupg`, `~/.aws`, `~/.Trash` and the data folders of `~/Library`
+  (Caches, Containers, Group Containers, Mail, Messages, Safari, Logs, Preferences, Developer, …).
+- A root that is neither a git checkout nor the agent's launch folder is snapshotted only while it holds at most
+  5,000 files and 500 MB (`SnapshotLimits.folder`): a larger one never gets a store, and a store created under the cap
+  keeps it (stored in `meta`), so the app and background snapshots stop when the folder outgrows it. Restores ignore
+  the cap.
 
 ## 6. Restore
 
@@ -172,7 +180,8 @@ Restore of a deleted folder = `.paths(["src/legacy"])` against the snapshot befo
 
 ## 7. Retention
 
-Defaults: keep every snapshot younger than 7 days, the newest 20 per root, and all pinned ones; global budget
+Defaults: keep every snapshot younger than 7 days but at most the newest 200 unpinned ones per root, the newest 20
+per root whatever their age, and all pinned ones; global budget
 5 GiB of object bytes across stores (logical size; clone-shared blocks make this an upper bound). Over budget, the
 oldest unpinned snapshots beyond the newest 20 go first, across all stores. Prune runs in the app hourly and in the
 CLI after every 50th snapshot.

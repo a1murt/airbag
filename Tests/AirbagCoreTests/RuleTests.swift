@@ -20,13 +20,16 @@ struct RuleFixture: Decodable {
 
     struct Extra: Decodable { let cases: [RuleCase] }
 
-    /// rules.json plus the red-team cases (docs/research/07-breaker-redteam.md), which share its context.
+    /// rules.json plus the red-team cases (docs/research/07-breaker-redteam.md) and the read-only and security-status
+    /// cases (ADR-032), which share its context.
     static let shared: RuleFixture = {
         let url = Bundle.module.url(forResource: "rules", withExtension: "json", subdirectory: "Fixtures")!
         let base = try! JSONDecoder().decode(RuleFixture.self, from: Data(contentsOf: url))
-        let extraURL = Bundle.module.url(forResource: "rules-redteam", withExtension: "json", subdirectory: "Fixtures")!
-        let extra = try! JSONDecoder().decode(Extra.self, from: Data(contentsOf: extraURL))
-        return RuleFixture(version: base.version, context: base.context, cases: base.cases + extra.cases)
+        let extra = ["rules-redteam", "rules-readonly"].flatMap { name -> [RuleCase] in
+            let extraURL = Bundle.module.url(forResource: name, withExtension: "json", subdirectory: "Fixtures")!
+            return try! JSONDecoder().decode(Extra.self, from: Data(contentsOf: extraURL)).cases
+        }
+        return RuleFixture(version: base.version, context: base.context, cases: base.cases + extra)
     }()
 }
 
@@ -80,5 +83,40 @@ struct RuleFixture: Decodable {
         #expect(parse("cat <<EOF\nrm -rf /\nEOF\nls") == [["cat"], ["ls"]])
         #expect(parse("ls 2>/dev/null >out.txt") == [["ls"]])
         #expect(parse("echo `pwd` $(pwd)") == [["echo", "/p", "/p"]])
+    }
+
+    @Test func assignmentsAfterKeywordsAndCasePatterns() {
+        #expect(parse("for f in a b; do X=1 ls; done") == [["ls"]])
+        #expect(parse("if true; then N=2; fi") == [["true"], []])
+        #expect(parse("case $x in a|*.pub) echo one;; b) ls -l;; esac; pwd") == [["echo", "one"], ["ls", "-l"], ["pwd"]])
+        #expect(parse("case $x in\n  a) echo one ;;\n  *) echo two ;;\nesac") == [["echo", "one"], ["echo", "two"]])
+        var l = ShellLexer(environment: [:], home: "/Users/u")
+        _ = l.parse("case $x in a; rm -rf ~")
+        #expect(l.unterminated) // the pattern is never closed
+    }
+}
+
+@Suite struct ReadOnlyDetectionTests {
+    let context = GuardContext(cwd: "/Users/u/Work/proj", home: "/Users/u", roots: ["/Users/u/Work/proj"], useFileSystem: false)
+
+    @Test func writersNameWhatNeedsTheSnapshot() {
+        let engine = RuleEngine()
+        #expect(engine.writers("du -sh ~/Library/Caches | sort -h; csrutil status; ls -la ~/.ssh", context: context).isEmpty)
+        #expect(engine.writers("sed -i '' s/a/b/ f.txt; ls; python3 tool.py", context: context) == ["sed", "python3"])
+        #expect(engine.writers("echo hi > notes.txt", context: context) == ["> notes.txt"])
+        #expect(engine.writers("ls > /dev/null 2>&1", context: context).isEmpty)
+    }
+
+    @Test(arguments: ["csrutil status", "fdesetup status", "fdesetup isactive", "fdesetup list", "nvram -p", "bless --getBoot"])
+    func securityStatusIsAllowedWithoutSnapshot(_ command: String) {
+        let v = RuleEngine().evaluate(command, context: context)
+        #expect(v.decision == .allow && v.snapshot == .none && v.findings.isEmpty, "\(v)")
+    }
+
+    @Test(arguments: ["csrutil disable", "csrutil status --then-disable", "fdesetup disable", "fdesetup remove -user u", "nvram boot-args=-v",
+                      "nvram -d boot-args", "bless --setBoot --mount /", "bless --unbless /"])
+    func securityChangesStayBlocked(_ command: String) {
+        let v = RuleEngine().evaluate(command, context: context)
+        #expect(v.decision == .block && v.primary?.ruleId == "sys.security", "\(v)")
     }
 }

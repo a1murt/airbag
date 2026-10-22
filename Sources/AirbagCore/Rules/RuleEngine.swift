@@ -113,6 +113,13 @@ public struct RuleEngine: Sendable {
         var seen = Set<String>()
         return analyzer.visited.filter { seen.insert($0).inserted }
     }
+
+    /// The parts of the command that may change files, which is why it gets a snapshot (empty for a read-only command).
+    public func writers(_ command: String, context: GuardContext) -> [String] {
+        var analyzer = Analyzer(context: context)
+        analyzer.analyze(command, depth: 0)
+        return analyzer.writers
+    }
 }
 
 // MARK: - Analyzer
@@ -120,14 +127,22 @@ public struct RuleEngine: Sendable {
 struct Analyzer {
     let context: GuardContext
     var findings: [GuardFinding] = []
-    /// Every command seen so far is known not to modify files.
-    var readOnly = true
+    /// Commands seen so far that may modify files; empty while every command is known not to.
+    var writers: [String] = []
+    var readOnly: Bool { writers.isEmpty }
+    /// Name of the command being analysed (what `mayWrite()` records).
+    var current = ""
     var cwd: String?
     var visited: [String] = []
 
     init(context: GuardContext) {
         self.context = context
         self.cwd = context.cwd
+    }
+
+    mutating func mayWrite(_ what: String? = nil) {
+        let w = what ?? current
+        if !writers.contains(w) { writers.append(w) }
     }
 
     mutating func add(_ id: String, _ decision: GuardDecision, _ snapshot: SnapshotNeed = .recommended, _ reason: String, _ matched: String) {
@@ -144,7 +159,7 @@ struct Analyzer {
         // Only the text the agent wrote: nested analyses re-join words after quote removal (xargs), where a literal quote
         // is data, not syntax.
         if lexer.unterminated && depth == 0 {
-            add("shell.unparsed", .ask, .recommended, "it has a quote or substitution that is never closed, so Airbag cannot tell which commands it runs.", line)
+            add("shell.unparsed", .ask, .recommended, "it has a quote, substitution or case pattern that is never closed, so Airbag cannot tell which commands it runs.", line)
         }
         for sub in lexer.substitutions { analyze(sub, depth: depth + 1) }
         var previous: ShellCommand?
@@ -283,11 +298,226 @@ struct Analyzer {
         "sw_vers", "ps", "top", "lsof", "netstat", "uptime", "history", "true", "false", "test", "[", "sleep", "cd", "pushd",
         "popd", "export", "set", "unset", "alias", "source", ".", "man", "help", "open", "pbcopy", "pbpaste", "say", "nproc",
         "sysctl", "vm_stat", "pgrep", "md5", "shasum", "sha256sum", "md5sum", "base64", "xxd", "hexdump", "strings", "otool",
-        "nm", "lipo", "codesign", "spctl", "plutil", "defaults", "mdfind", "mdls", "column", "fold", "fmt", "nl", "rev", "seq",
+        "nm", "lipo", "spctl", "defaults", "mdfind", "mdls", "column", "fold", "fmt", "nl", "rev", "seq",
         "yes", "clear", "tput", "stty", "tty", "locale", "command", "hash", "wait", "jobs", "fg", "bg", "read", "exit", "return",
-        "diskutil", "tmutil", "pmset", "system_profiler", "ioreg", "log", "crontab", "networksetup", "scutil", "dig", "nslookup",
+        "diskutil", "tmutil", "pmset", "system_profiler", "ioreg", "crontab", "networksetup", "scutil", "dig", "nslookup",
         "ping", "host", "whois", "traceroute", "nc", "tldr", "bat", "exa", "eza", "fzf", "gh",
+        "[[", ":", "local", "declare", "typeset", "readonly", "shift", "getopts", "trap", "let", "ulimit", "umask", "setopt",
+        "unsetopt", "whence", "where", "rehash", "dirs", "shopt", "break", "continue", "times",
+        "cksum", "sum", "b2sum", "sha1sum", "sha224sum", "sha384sum", "sha512sum", "od", "look", "join", "paste", "comm",
+        "expand", "unexpand", "tac", "zcat", "gzcat", "bzcat", "xzcat", "zgrep", "zegrep", "zfgrep", "dwarfdump", "size",
+        "objdump", "uuidgen", "cal", "expr", "w", "who", "last", "users", "groups", "getconf", "kextstat", "vmmap", "heap",
+        "leaks", "footprint", "iostat", "memory_pressure", "zprint", "lsbom", "GetFileInfo", "pagesize", "col", "colrm",
     ]
+
+    /// Whether this invocation only reads files, so it needs no snapshot. Most tools read or write by name alone
+    /// (`readOnlyCommands`); the ones below do either depending on their arguments, and only their reading forms count.
+    func readsOnly(_ name: String, _ args: [ShellWord], input: String? = nil) -> Bool {
+        let argv = args.map(\.text)
+        let (flags, long, operands) = splitOptions(args)
+        switch name {
+        case "sed":
+            return !Analyzer.sedEditsInPlace(args) && !Analyzer.sedScriptWrites(argv)
+        case "sqlite3":
+            return Analyzer.sqliteReadsOnly(argv, input: input)
+        case "launchctl":
+            return ["list", "print", "print-cache", "print-disabled", "blame", "help", "version", "managerpid", "manageruid",
+                    "managername", "dumpstate", "dumpjpcategory", "procinfo", "hostinfo", "resolveport", "examine", "error",
+                    "variant", "getenv", "plist"].contains(argv.first ?? "")
+        case "log":
+            return argv.isEmpty || ["show", "stream", "stats", "help"].contains(argv[0]) // `log collect` writes an archive, `log erase` and `log config` change the system
+        case "csrutil", "fdesetup", "nvram", "bless":
+            return Analyzer.readsSecurityStatus(name, argv)
+        case "ssh-keygen":
+            // -l fingerprints, -y prints a public key, -F finds a host, -L shows a certificate, -e/-i convert to stdout;
+            // generating a key, -p/-c (change passphrase or comment), -R/-H (rewrite known_hosts) and signing write files.
+            let ((f, _, _), values) = splitOptionValues(args, valued: ["-f", "-E", "-F", "-P", "-N", "-C", "-t", "-b", "-s", "-I", "-n", "-O",
+                                                                        "-V", "-z", "-Y", "-D", "-m", "-a", "-r", "-S", "-w", "-M", "-G", "-T", "-J", "-j", "-Z"])
+            if let op = values["-Y"]?.text { return ["verify", "check-novalidate", "find-principals", "match-principals"].contains(op) }
+            if !f.isDisjoint(with: ["R", "p", "c", "s", "k", "A", "u", "K"]) || (f.contains("H") && !f.contains("F")) { return false }
+            return !f.isDisjoint(with: ["l", "y", "F", "L", "B", "Q", "e", "i", "D"])
+        case "security":
+            guard let sub = argv.first else { return true }
+            switch sub {
+            case "list-keychains", "default-keychain", "login-keychain": return !argv.contains("-s")
+            case "authorizationdb": return argv.dropFirst().first == "read"
+            case "cms": return argv.contains("-D") && !argv.contains("-o")
+            default:
+                return ["find-generic-password", "find-internet-password", "find-key", "find-certificate", "find-identity",
+                        "show-keychain-info", "dump-keychain", "dump-trust-settings", "verify-cert", "error", "help"].contains(sub)
+            }
+        case "xattr":
+            return flags.isDisjoint(with: ["w", "d", "c"])
+        case "plutil":
+            // -p, -lint and -type print; the editing verbs rewrite the file unless the result goes to stdout (`-o -`).
+            guard argv.contains(where: { ["-convert", "-insert", "-replace", "-remove", "-extract", "-create"].contains($0) }) else { return true }
+            guard let o = argv.firstIndex(of: "-o"), o + 1 < argv.count else { return false }
+            return ["-", "/dev/stdout"].contains(argv[o + 1])
+        case "codesign":
+            return !flags.contains("s") && !long.contains("--sign") && !long.contains("--remove-signature")
+        case "curl":
+            let ((f, l, _), values) = splitOptionValues(args, valued: Analyzer.curlValued)
+            let toFile = ["-o", "--output", "-D", "--dump-header", "-c", "--cookie-jar", "--stderr"].compactMap { values[$0] }
+                .contains { !["-", "/dev/null", "/dev/stdout", "/dev/stderr"].contains($0.text) }
+            let namesFiles = !f.isDisjoint(with: ["O", "J"]) || values["-K"] != nil || values["--config"] != nil
+                || !l.isDisjoint(with: ["--remote-name", "--remote-name-all", "--remote-header-name", "--output-dir", "--create-dirs",
+                                        "--etag-save", "--libcurl", "--trace", "--trace-ascii", "--hsts", "--alt-svc"])
+            return !toFile && !namesFiles
+        case "ifconfig":
+            return operands.count <= 1 // `ifconfig`, `ifconfig -a`, `ifconfig en0`; anything after the interface configures it
+        case "mount":
+            return operands.isEmpty && flags.isSubset(of: ["v"])
+        case "mdutil":
+            return !flags.isEmpty && flags.isSubset(of: ["s", "t", "L", "v", "a"]) && !flags.isDisjoint(with: ["s", "t", "L"])
+        case "pkgutil":
+            let reads: Set<String> = ["--pkgs", "--pkgs-plist", "--files", "--pkg-info", "--pkg-info-plist", "--file-info", "--file-info-plist",
+                                      "--pkg-groups", "--groups", "--groups-plist", "--group-pkgs", "--export-plist", "--payload-files",
+                                      "--check-signature", "--regexp", "--volume", "--only-files", "--only-dirs", "--help"]
+            let names = long.filter { !$0.contains("=") }
+            return !names.isEmpty && names.isSubset(of: reads)
+        case "xmllint":
+            return !long.contains("--output")
+        case "ipconfig":
+            return ["getifaddr", "getsummary", "getoption", "getpacket", "getv6packet", "getra", "ifcount"].contains(argv.first ?? "")
+        case "dscl":
+            return argv.contains { ["list", "-list", "read", "-read", "readall", "-readall", "search", "-search", "cat"].contains($0) }
+                && !argv.contains { ["create", "-create", "delete", "-delete", "append", "-append", "merge", "-merge", "passwd", "-passwd",
+                                     "change", "-change", "createpl", "-createpl", "deletepl", "-deletepl"].contains($0) }
+        case "systemextensionsctl":
+            return argv.first == "list"
+        case "kmutil":
+            return ["showloaded", "inspect"].contains(argv.first ?? "")
+        case "socketfilterfw":
+            return !long.isEmpty && long.allSatisfy { $0.hasPrefix("--get") || $0 == "--listapps" }
+        case "xcode-select":
+            return !argv.isEmpty && argv.allSatisfy { ["-p", "--print-path", "-v", "--version", "-h", "--help"].contains($0) }
+        default:
+            return Analyzer.readOnlyCommands.contains(name)
+        }
+    }
+
+    static let curlValued: Set<String> = [
+        "-o", "--output", "-D", "--dump-header", "-c", "--cookie-jar", "-K", "--config", "--stderr", "-H", "--header", "-d", "--data",
+        "--data-raw", "--data-binary", "--data-urlencode", "-X", "--request", "-u", "--user", "-A", "--user-agent", "-e", "--referer",
+        "-m", "--max-time", "-w", "--write-out", "-x", "--proxy", "-F", "--form", "-b", "--cookie", "-r", "--range", "-T",
+        "--upload-file", "-E", "--cert", "--connect-timeout", "--retry", "-C", "--continue-at", "-Y", "-y", "-z", "-t", "-U", "-Q", "-P",
+    ]
+
+    /// The command after `perl -e 'alarm N; exec @ARGV'` (or `'alarm shift; exec @ARGV' N`), nil for any other perl code.
+    static func perlTimeoutCommand(_ args: [ShellWord]) -> [ShellWord]? {
+        guard args.count >= 3, ["-e", "-E"].contains(args[0].text), !args[1].opaque,
+              let m = args[1].text.range(of: #"^\s*alarm\s+(shift|\d+)\s*;\s*exec\s*\(?\s*@ARGV\s*\)?\s*;?\s*$"#, options: .regularExpression)
+        else { return nil }
+        var rest = Array(args[2...])
+        if args[1].text[m].contains("shift") {
+            guard let secs = rest.first, !secs.text.isEmpty, secs.text.allSatisfy(\.isNumber) else { return nil }
+            rest.removeFirst()
+        }
+        return rest.isEmpty ? nil : rest
+    }
+
+    /// `-i`, `-i.bak`, `-Ei`, `--in-place[=SUF]` (GNU) and `-I` (BSD) edit the files in place.
+    static func sedEditsInPlace(_ args: [ShellWord]) -> Bool {
+        args.contains { a in
+            let t = a.text
+            return t == "--in-place" || t.hasPrefix("--in-place=") || (t.hasPrefix("-") && !t.hasPrefix("--") && (t.contains("i") || t.contains("I")))
+        }
+    }
+
+    /// A sed script whose `w`/`W` command or `w` flag writes a file, or whose `e` runs a command. Scripts read from a
+    /// file (`-f`) cannot be inspected. Errs towards "writes": a false alarm only costs a snapshot.
+    static func sedScriptWrites(_ argv: [String]) -> Bool {
+        var scripts: [String] = []
+        var i = 0
+        var sawExpression = false
+        while i < argv.count {
+            let a = argv[i]
+            if a == "-f" || a.hasPrefix("--file") || (a.hasPrefix("-") && !a.hasPrefix("--") && a.contains("f")) { return true }
+            if a == "-e" || a == "--expression", i + 1 < argv.count { scripts.append(argv[i + 1]); sawExpression = true; i += 2; continue }
+            if a.hasPrefix("--expression=") { scripts.append(String(a.dropFirst("--expression=".count))); sawExpression = true }
+            else if !a.hasPrefix("-") && !sawExpression { scripts.append(a); sawExpression = true } // the first operand is the script
+            i += 1
+        }
+        let command = #"(^|[;\n{}!\s0-9$/])[gpIimMe0-9]*[wWe](\s|$|;|\})"#
+        return scripts.contains { $0.range(of: command, options: .regularExpression) != nil }
+    }
+
+    /// sqlite3 with SQL that only reads (SELECT, EXPLAIN, PRAGMA queries and display dot-commands). The SQL comes from
+    /// `-cmd` and the arguments after the database; without the latter sqlite3 reads stdin, which is known only for a
+    /// here-document or here-string (`input`), not for a pipe or a file.
+    static func sqliteReadsOnly(_ argv: [String], input: String?) -> Bool {
+        let valued: Set<String> = ["separator", "cmd", "init", "nullvalue", "newline", "mmap", "vfs", "lookaside", "maxsize", "heap",
+                                   "pagecache", "escape", "nonce"]
+        var sql: [String] = []
+        var trailing: [String] = []
+        var database: String?
+        var i = 0
+        while i < argv.count {
+            let a = argv[i]
+            i += 1
+            if a.hasPrefix("-") {
+                let opt = String(a.drop(while: { $0 == "-" }))
+                if ["A", "archive", "init", "append"].contains(opt) { return false } // archive mode writes; -init runs a file
+                if valued.contains(opt), i < argv.count {
+                    if opt == "cmd" { sql.append(argv[i]) }
+                    i += 1
+                }
+                continue
+            }
+            if database == nil { database = a } else { trailing.append(a) }
+        }
+        if trailing.isEmpty {
+            guard let input else { return false }
+            trailing = [input]
+        }
+        sql += trailing
+        let readDot: Set<String> = ["tables", "table", "schema", "indexes", "indices", "databases", "dbinfo", "headers", "header", "mode",
+                                    "width", "show", "help", "stats", "timer", "eqp", "nullvalue", "separator", "print", "quit", "exit",
+                                    "bail", "echo", "changes", "fullschema", "dump", "sha3sum", "explain", "prompt", "scanstats",
+                                    "version", "recover"]
+        var statements: [String] = []
+        for text in sql {
+            for line in text.split(whereSeparator: \.isNewline) {
+                let t = line.trimmingCharacters(in: .whitespaces)
+                if t.hasPrefix(".") {
+                    let dot = t.dropFirst().split(separator: " ").first.map(String.init) ?? ""
+                    if !readDot.contains(dot) { return false }
+                } else {
+                    statements.append(t)
+                }
+            }
+        }
+        let upper = statements.joined(separator: "\n").uppercased()
+        let writes = [#"\b(INSERT|UPDATE|DELETE|REPLACE|UPSERT|CREATE|DROP|ALTER|VACUUM|REINDEX|ATTACH|DETACH|ANALYZE|TRUNCATE)\b"#,
+                      #"\bPRAGMA\s+[A-Z0-9_.]+\s*="#, #"\b(WAL_CHECKPOINT|INCREMENTAL_VACUUM|OPTIMIZE|WRITEFILE|EDIT|LOAD_EXTENSION)\b"#]
+        return !writes.contains { upper.range(of: $0, options: .regularExpression) != nil }
+    }
+
+    /// Status queries of the low-level security tools. Everything else they do (turn SIP or FileVault off, change boot
+    /// settings, write NVRAM) stays blocked, and so does any form Airbag does not know.
+    static func readsSecurityStatus(_ name: String, _ argv: [String]) -> Bool {
+        switch name {
+        case "csrutil":
+            // `csrutil status`, `csrutil authenticated-root status`, `csrutil netboot list`; bare `csrutil` prints usage.
+            return argv.isEmpty || argv == ["status"] || argv == ["authenticated-root", "status"] || argv == ["netboot", "list"]
+        case "fdesetup":
+            guard let verb = argv.first else { return true }
+            return ["status", "isactive", "list", "haspersonalrecoverykey", "hasinstitutionalrecoverykey", "usingrecoverykey",
+                    "supportsauthrestart", "showdeferralinfo", "validaterecovery", "version", "help", "-help"].contains(verb)
+        case "nvram":
+            // `nvram -p`, `nvram -xp`, `nvram NAME` print; `NAME=VALUE`, -d, -c and -f change NVRAM.
+            return argv.allSatisfy { a in
+                a.hasPrefix("-") ? a.count > 1 && a.dropFirst().allSatisfy { "px".contains($0) } : !a.contains("=")
+            }
+        case "bless":
+            // `bless --info [folder]` and `bless --getBoot` report; every other option sets something.
+            let options = argv.filter { $0.hasPrefix("-") }.map { String($0.drop(while: { $0 == "-" })) }
+            return !options.isEmpty && options.allSatisfy { ["info", "getBoot", "verbose", "plist", "quiet", "version", "help"].contains($0) }
+                && options.contains { ["info", "getBoot", "version", "help"].contains($0) }
+        default:
+            return false
+        }
+    }
 
     /// `>`, `2>`, `>>`, `&>`, `>&file`, zsh's `>!` family and `N<>file` (read-write on an output descriptor, which
     /// overwrites the file in place) open a file for writing. `2>&1`, `>&2` and `2>&-` only duplicate or close a
@@ -312,11 +542,11 @@ struct Analyzer {
             let truncates = !r.op.contains(">>")
             if let rp = resolve(r.target), hookConfigFiles.contains(rp.path) {
                 add("self.hooks", .ask, .none, "it rewrites an agent's hook configuration, which can switch Airbag's protection off.", r.target.text)
-                readOnly = false
+                mayWrite("\(r.op) \(r.target.text)")
                 continue
             }
             let cls = classify(resolve(r.target))
-            readOnly = readOnly && cls == .temporary
+            if cls != .temporary { mayWrite("\(r.op) \(r.target.text)") }
             if case .device = cls { add("fs.device.write", .block, .none, "it writes directly to a device, which can destroy a disk.", r.target.text) }
             switch cls {
             case .catastrophic: add("fs.redirect.catastrophic", .block, .none, "it overwrites \(r.target.text), which is not a regular project file.", r.target.text)
@@ -369,6 +599,7 @@ struct Analyzer {
         let gnuTools: Set<String> = ["rm", "mv", "cp", "ln", "dd", "chmod", "chown", "chgrp", "truncate", "find", "xargs", "install",
                                      "tee", "shred", "rmdir", "unlink", "touch", "tar", "sed"]
         if name.count > 1, name.hasPrefix("g"), gnuTools.contains(String(name.dropFirst())) { name = String(name.dropFirst()) }
+        current = name
         let args = Array(words.dropFirst())
         let argv = args.map(\.text)
         let whole = words.map(\.text).joined(separator: " ")
@@ -395,13 +626,21 @@ struct Analyzer {
             analyzeInterpreter(name, [ShellWord("-c"), code], whole: whole, depth: depth)
             return
         }
+        // `perl -e 'alarm 30; exec @ARGV' cmd …` is the usual stand-in for timeout(1) on macOS: judge the command it runs.
+        if name == "perl", let innerWords = Analyzer.perlTimeoutCommand(args) {
+            var inner = cmd
+            inner.words = innerWords
+            inner.redirects = [] // already checked above
+            analyzeCommand(inner, previous: previous, depth: depth)
+            return
+        }
         // Nested shells: sh -c "…", bash -lc "…", eval "…"
         if Analyzer.shells.contains(first.text) || Analyzer.shells.contains(name) {
             if let ci = argv.firstIndex(where: { $0.hasPrefix("-") && !$0.hasPrefix("--") && $0.contains("c") }), ci + 1 < args.count {
                 if args[ci + 1].opaque { add("shell.opaque", .ask, .recommended, "it runs a shell command built from unresolved variables.", whole) }
                 analyze(args[ci + 1].text, depth: depth + 1)
             } else {
-                readOnly = false // runs a script file we cannot inspect
+                mayWrite(name) // runs a script file we cannot inspect
             }
             return
         }
@@ -431,7 +670,9 @@ struct Analyzer {
         }
         if name == "find" { analyzeFind(args, whole: whole); return }
 
-        if !Analyzer.readOnlyCommands.contains(name) && name != "git" && name != "brew" { readOnly = false }
+        if name != "git" && name != "brew" && !readsOnly(name, args, input: (hereString ?? hereDocument.map { ShellWord($0) })?.text) {
+            mayWrite(name)
+        }
         switch name {
         case "rm", "unlink", "rmdir", "srm", "shred", "rimraf", "del", "del-cli", "trash-put": analyzeRemove(name, args, whole: whole)
         case "npx", "pnpx", "bunx", "npm", "pnpm", "yarn", "bun":
@@ -513,12 +754,12 @@ struct Analyzer {
                 } else {
                     add("sys.launchctl.run", .ask, .recommended, "it starts a program through launchd, outside the agent's view.", whole)
                 }
-            } else if ["list", "print", "blame", "help", "version", "print-disabled", "managerpid", "manageruid"].contains(argv.first ?? "") {
-                readOnly = readOnly && true
             }
         case "crontab": if argv.contains("-r") { add("sys.crontab.remove", .block, .none, "it deletes every cron job of the user without confirmation.", whole) }
         case "csrutil", "nvram", "bless", "fdesetup":
-            add("sys.security", .block, .none, "it changes low-level system security or boot settings.", whole)
+            if !Analyzer.readsSecurityStatus(name, argv) {
+                add("sys.security", .block, .none, "it changes low-level system security or boot settings.", whole)
+            }
         case "spctl": if argv.contains(where: { $0.contains("disable") }) { add("sys.security", .block, .none, "it disables Gatekeeper.", whole) }
         case "tmutil":
             if argv.contains(where: { ["delete", "deletelocalsnapshots", "disable", "thinlocalsnapshots", "deleteinprogress"].contains($0) }) {
@@ -568,7 +809,7 @@ struct Analyzer {
                 add("self.allow", .block, .none, "only the user can approve a command Airbag stopped (menu bar → Guard → Allow once); an agent approving its own command makes the question meaningless.", whole)
             }
         case "brew":
-            readOnly = readOnly && ["list", "info", "search", "--version", "config", "doctor", "outdated", "deps", "leaves"].contains(argv.first ?? "")
+            if !["list", "info", "search", "--version", "config", "doctor", "outdated", "deps", "leaves"].contains(argv.first ?? "") { mayWrite() }
         default:
             break
         }
@@ -694,10 +935,24 @@ struct Analyzer {
 
     mutating func analyzeFind(_ args: [ShellWord], whole: String) {
         let argv = args.map(\.text)
-        let execTargets = zip(argv, argv.dropFirst()).filter { $0.0 == "-exec" || $0.0 == "-execdir" || $0.0 == "-ok" || $0.0 == "-okdir" }.map { ($0.1 as NSString).lastPathComponent }
-        let deletes = argv.contains("-delete") || execTargets.contains { t in !Analyzer.readOnlyCommands.contains(t) || Analyzer.shells.contains(t) }
+        // -exec and -ok run a command per match (up to `;` or `+`): the find reads only when that command does.
+        var execs: [[ShellWord]] = []
+        var i = 0
+        while i < args.count {
+            if ["-exec", "-execdir", "-ok", "-okdir"].contains(args[i].text) {
+                var j = i + 1
+                while j < args.count, ![";", "+"].contains(args[j].text) { j += 1 }
+                if j > i + 1 { execs.append(Array(args[(i + 1)..<j])) }
+                i = j
+            }
+            i += 1
+        }
+        let deletes = argv.contains("-delete") || execs.contains { w in
+            let t = (w[0].text as NSString).lastPathComponent
+            return Analyzer.shells.contains(t) || !readsOnly(t, Array(w.dropFirst()))
+        }
         guard deletes else { return } // read-only
-        readOnly = false
+        mayWrite("find")
         var bases = args.prefix(while: { !$0.text.hasPrefix("-") && $0.text != "(" && $0.text != "!" })
         if bases.isEmpty { bases = [ShellWord(".")] }
         let filtered = argv.contains(where: { ["-name", "-iname", "-path", "-ipath", "-regex", "-iregex", "-newer", "-mtime", "-mmin", "-size", "-type", "-empty", "-user", "-perm"].contains($0) })
@@ -729,11 +984,11 @@ struct Analyzer {
         guard i < args.count else { return }
         let inner = Array(args[i...])
         let innerName = (inner[0].text as NSString).lastPathComponent
-        readOnly = readOnly && Analyzer.readOnlyCommands.contains(innerName)
         guard ["rm", "unlink", "rmdir", "shred", "mv", "chmod", "chown"].contains(innerName) else {
-            analyze(inner.map(\.text).joined(separator: " "), depth: depth + 1)
+            analyze(inner.map(\.text).joined(separator: " "), depth: depth + 1) // records whether the inner command writes
             return
         }
+        mayWrite(innerName)
         if let prev = previous, prev.words.first.map({ ($0.text as NSString).lastPathComponent }) == "find" {
             let findArgs = Array(prev.words.dropFirst())
             let bases = findArgs.prefix(while: { !$0.text.hasPrefix("-") && $0.text != "(" && $0.text != "!" })
@@ -929,6 +1184,7 @@ struct Analyzer {
 
     mutating func analyzePermissions(_ name: String, _ args: [ShellWord], whole: String) {
         let (flags, _, operands) = splitOptions(args)
+        if name == "xattr", flags.isDisjoint(with: ["w", "d", "c"]) { return } // lists or prints attributes
         let recursive = flags.contains("R")
         let targets = (name == "xattr") ? operands : Array(operands.dropFirst())
         for t in targets {
@@ -978,13 +1234,13 @@ struct Analyzer {
                                              "ls-tree", "for-each-ref", "name-rev", "check-ignore", "add", "commit", "push", "notes", "count-objects",
                                              "fsck", "rev-list", "ls-remote", "whatchanged", "verify-commit", "bisect", "gc", "prune", "update-ref", "init", "clone", "stage"]
         var mutatesWorktree = !noWorktreeChange.contains(sub)
-        defer { if mutatesWorktree { readOnly = false } }
+        defer { if mutatesWorktree { mayWrite("git \(sub)") } }
         let has = { (x: String) in rest.contains(x) }
         let hasPrefix = { (x: String) in rest.contains { $0.hasPrefix(x) } }
         switch sub {
         case "reset":
             if !has("--hard") && !has("--merge") && !has("--keep") { mutatesWorktree = false }
-            if has("--hard") || has("--merge") || has("--keep") { readOnly = false; addGit(treeProtected, effectiveTree, "git.reset.hard", .allow, .required, "it discards uncommitted changes (restorable from the snapshot taken first).", whole) }
+            if has("--hard") || has("--merge") || has("--keep") { mayWrite("git \(sub)"); addGit(treeProtected, effectiveTree, "git.reset.hard", .allow, .required, "it discards uncommitted changes (restorable from the snapshot taken first).", whole) }
         case "clean":
             if rest.contains(where: { $0 == "-n" || $0 == "--dry-run" || ($0.hasPrefix("-") && !$0.hasPrefix("--") && $0.contains("n")) }) { mutatesWorktree = false; return }
             addGit(treeProtected, effectiveTree, "git.clean", .allow, .required, "it deletes untracked\(rest.contains { $0.contains("x") } ? " and ignored" : "") files (restorable from the snapshot taken first, except dependency and build folders).", whole)
@@ -1001,14 +1257,14 @@ struct Analyzer {
             if has("-f") || has("--force") || has("--discard-changes") { addGit(treeProtected, effectiveTree, "git.checkout.discard", .allow, .required, "it discards local changes (restorable from the snapshot taken first).", whole) }
         case "stash":
             if rest.first.map({ ["list", "show"].contains($0) }) == true { return }
-            readOnly = false
+            mayWrite("git \(sub)")
             if has("drop") || has("clear") { add("git.stash.drop", .ask, .recommended, "it permanently drops stashed changes, which are not in the working tree and not in snapshots.", whole) }
             else if rest.isEmpty || has("push") || has("save") || has("-u") || has("--include-untracked") || has("--all") {
                 addGit(treeProtected, effectiveTree, "git.stash", .allow, .required, "it removes local changes from the working tree into a stash (also covered by the snapshot taken first).", whole)
             }
         case "branch":
-            if has("-D") || (has("-d") && has("--force")) || has("--delete") && has("--force") { readOnly = false; add("git.branch.force-delete", .ask, .recommended, "it force-deletes a branch that may hold unmerged commits.", whole) }
-            else if has("-d") || has("--delete") || has("-m") || has("-M") { readOnly = false }
+            if has("-D") || (has("-d") && has("--force")) || has("--delete") && has("--force") { mayWrite("git \(sub)"); add("git.branch.force-delete", .ask, .recommended, "it force-deletes a branch that may hold unmerged commits.", whole) }
+            else if has("-d") || has("--delete") || has("-m") || has("-M") { mayWrite("git \(sub)") }
         case "push":
             if has("--force") || has("-f") || hasPrefix("--force-with-lease") || has("--force-if-includes") || rest.contains(where: { $0.hasPrefix("+") && !$0.hasPrefix("++") }) || rest.contains(where: { $0.hasPrefix("-") && !$0.hasPrefix("--") && $0.contains("f") }) {
                 add("git.push.force", .ask, .none, "it rewrites history on the remote, which cannot be undone from this machine.", whole)
@@ -1026,8 +1282,8 @@ struct Analyzer {
         case "update-ref":
             if has("-d") { add("git.update-ref.delete", .ask, .recommended, "it deletes a git ref directly.", whole) }
         case "worktree":
-            if has("remove") && (has("--force") || has("-f")) { readOnly = false; add("git.worktree.remove", .ask, .recommended, "it force-removes a worktree including uncommitted changes.", whole) }
-            else if has("remove") || has("prune") { readOnly = false }
+            if has("remove") && (has("--force") || has("-f")) { mayWrite("git \(sub)"); add("git.worktree.remove", .ask, .recommended, "it force-removes a worktree including uncommitted changes.", whole) }
+            else if has("remove") || has("prune") { mayWrite("git \(sub)") }
         case "rm":
             if has("--cached") { mutatesWorktree = false; return }
             addGit(treeProtected, effectiveTree, "git.rm", .allow, .required, "it deletes tracked files (restorable from the snapshot taken first).", whole)
@@ -1250,7 +1506,7 @@ struct Analyzer {
 
     /// npx/pnpm/yarn/bun: unwrap the binary they run and check script names that sound like a database wipe.
     mutating func analyzePackageRunner(_ name: String, _ args: [ShellWord], whole: String, depth: Int) {
-        readOnly = false
+        mayWrite(name)
         var rest = args.drop(while: { $0.text.hasPrefix("-") })
         guard let first = rest.first else { return }
         var inner: [ShellWord] = []
@@ -1287,7 +1543,7 @@ struct Analyzer {
 
     /// ssh host 'command': paths are remote, so only obviously destructive commands are flagged.
     mutating func analyzeRemote(_ args: [ShellWord], whole: String) {
-        readOnly = false
+        mayWrite("ssh")
         let valueOpts: Set<String> = ["-p", "-i", "-l", "-o", "-F", "-J", "-L", "-R", "-D", "-W", "-b", "-c", "-E", "-m", "-S", "-w", "-B", "-e", "-I", "-O", "-Q"]
         var i = 0
         while i < args.count, args[i].text.hasPrefix("-") { i += valueOpts.contains(args[i].text) ? 2 : 1 }

@@ -1,13 +1,16 @@
 import Foundation
 @testable import AirbagCore
 
-/// A unique temporary directory, canonicalised (so /var → /private/var), removed by `cleanup()`.
+/// A unique temporary directory, canonicalised (so /tmp → /private/tmp), removed by `cleanup()`. Not in the per-user
+/// temporary folder: Airbag never snapshots anything below /private/var (ADR-032).
 struct TempDir {
     let path: String
     var url: URL { URL(fileURLWithPath: path, isDirectory: true) }
 
+    static let base = URL(fileURLWithPath: "/private/tmp/airbag-tests-\(getuid())", isDirectory: true)
+
     init(_ label: String = "t") {
-        let base = FileManager.default.temporaryDirectory.appendingPathComponent("airbag-tests", isDirectory: true)
+        let base = TempDir.base
         try? FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
         let dir = base.appendingPathComponent("\(label)-\(ULID.make())", isDirectory: true)
         try! FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
