@@ -19,7 +19,8 @@ enum GuardCommands {
         if a.has("json") {
             Out.encodable(v)
         } else {
-            print("\(v.decision.rawValue.uppercased())  snapshot: \(v.snapshot.rawValue)")
+            let writers = RuleEngine().writers(command, context: context)
+            print("\(v.decision.rawValue.uppercased())  snapshot: \(v.snapshot.rawValue)\(writers.isEmpty ? "" : "  (may change files: \(writers.joined(separator: ", ")))")")
             for f in v.findings { print("  [\(f.ruleId)] \(f.decision.rawValue): \(f.reason)  ← \(f.matched)") }
             if v.decision != .allow { print("\nagent sees: \(v.agentMessage(command: command))") }
         }

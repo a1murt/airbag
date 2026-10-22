@@ -5,7 +5,7 @@ import Testing
 /// Regressions found by running Airbag against a real agent session on a real Mac (2026-10-18).
 @Suite struct DogfoodRegressions {
     func makeTree(_ dirs: [String]) -> String {
-        let base = FileSystem.canonicalPath(NSTemporaryDirectory())! + "/airbag-dogfood-\(ULID.make())"
+        let base = TempDir.base.path + "/airbag-dogfood-\(ULID.make())"
         for d in dirs { try! FileManager.default.createDirectory(atPath: base + "/" + d, withIntermediateDirectories: true) }
         return base
     }

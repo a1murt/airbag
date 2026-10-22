@@ -9,6 +9,13 @@ public final class SnapshotStore {
     public var exclusions: Exclusions
     /// Root and store live on the same volume, so captures are APFS clones rather than copies.
     public let cloneCapable: Bool
+    /// Size cap recorded when the store was created for a folder that is not known to be a project (ADR-032). Every later
+    /// snapshot (hook, app, background) honours it; nil for projects. A root that has become a git checkout is a project.
+    public private(set) var limits: SnapshotLimits?
+    var effectiveLimits: SnapshotLimits? {
+        var st = stat()
+        return lstat(root + "/.git", &st) == 0 ? nil : limits
+    }
 
     let db: SQLiteConnection
     let lock: StoreLock
@@ -32,14 +39,33 @@ public final class SnapshotStore {
     /// Folders that are never a project: system locations, the home folder and its standard top-level folders. A `.git`
     /// in one of them (dotfiles kept in a home-folder repository) does not make the whole folder a project. The autofs
     /// mount `/home` resolves to `/System/Volumes/Data/home`; folders below it (network home folders) are user data.
+    /// Nothing inside `deniedTrees` is a project either (ADR-032).
     public static func isSystemOrHomeFolder(_ canonical: String, home homeDirectory: String = NSHomeDirectory()) -> Bool {
         let home = FileSystem.canonicalPath(homeDirectory) ?? homeDirectory
-        let forbidden: Set<String> = ["/", "/Users", "/System", "/Library", "/Applications", "/private", "/Volumes",
+        let forbidden: Set<String> = ["/", "/Users", "/Users/Shared", "/System", "/Library", "/Applications", "/private", "/Volumes",
                                       "/usr", "/bin", "/sbin", "/opt", "/private/var", "/private/tmp", "/private/etc",
                                       "/home", "/System/Volumes", "/System/Volumes/Data", "/System/Volumes/Data/home",
-                                      home, home + "/Library", home + "/Desktop", home + "/Documents", home + "/Downloads"]
+                                      home, home + "/Library", home + "/Desktop", home + "/Documents", home + "/Downloads",
+                                      home + "/Pictures", home + "/Music", home + "/Movies", home + "/Public", home + "/.config",
+                                      home + "/.claude", home + "/.codex", home + "/.cursor", home + "/.gemini", home + "/.copilot",
+                                      home + "/Library/Application Support", home + "/Library/Mobile Documents", home + "/Library/CloudStorage"]
         if forbidden.contains(canonical) { return true }
+        if deniedTrees(home: home).contains(where: { canonical == $0 || canonical.hasPrefix($0 + "/") }) { return true }
         return canonical.hasPrefix("/System/") && !canonical.hasPrefix("/System/Volumes/Data/")
+    }
+
+    /// Trees that never hold a project: app bundles, system and per-user library data, caches, sandbox containers,
+    /// credentials, privacy-protected data (mail, messages, Safari) and temporary folders. Snapshotting them copied private
+    /// keys and gigabytes of cache churn, and every protected file the walk opened made macOS log a privacy denial.
+    static func deniedTrees(home: String) -> [String] {
+        let library = ["Caches", "Containers", "Group Containers", "Daemon Containers", "Mail", "Messages", "Safari", "Cookies",
+                       "HTTPStorages", "WebKit", "Keychains", "Calendars", "Reminders", "HomeKit", "Metadata", "Biome", "Accounts",
+                       "IdentityServices", "Suggestions", "Logs", "Preferences", "Saved Application State", "Developer", "Trial",
+                       "Application Support/com.apple.TCC", "Application Support/AddressBook", "Application Support/CallHistoryDB",
+                       "Application Support/MobileSync", "Application Support/Knowledge"]
+        return ["/Applications", "/Library", "/usr", "/bin", "/sbin", "/private/etc", "/private/var", "/opt/homebrew", "/cores",
+                home + "/Applications", home + "/.Trash", home + "/.ssh", home + "/.gnupg", home + "/.aws", home + "/.kube", home + "/.docker"]
+            + library.map { home + "/Library/" + $0 }
     }
 
     public static func validateRoot(_ path: String, paths: AirbagPaths = .resolve()) throws -> String {
@@ -65,9 +91,10 @@ public final class SnapshotStore {
         return FileManager.default.fileExists(atPath: storeDirectory(forCanonicalRoot: canonical, paths: paths) + "/manifest.sqlite")
     }
 
+    /// `limits` cap a store created by this call; an existing store keeps the limits it was created with.
     public static func open(root: String, paths: AirbagPaths = .resolve(), exclusions: Exclusions? = nil,
                             create: Bool = true, recreateMissingRoot: Bool = false, allowMissingRoot: Bool = false,
-                            busyTimeoutMs: Int32 = 5000) throws -> SnapshotStore {
+                            limits: SnapshotLimits? = nil, busyTimeoutMs: Int32 = 5000) throws -> SnapshotStore {
         let canonical: String
         if FileSystem.canonicalPath(root) == nil, allowMissingRoot, !recreateMissingRoot {
             // The project folder is gone; open its store as it is (for listing, pruning, diffs). Nothing is created.
@@ -93,7 +120,27 @@ public final class SnapshotStore {
         let manifest = dir + "/manifest.sqlite"
         if !create && !FileManager.default.fileExists(atPath: manifest) { throw SnapshotError.notFound("store for \(canonical)") }
         for d in [dir, dir + "/objects", dir + "/tmp", dir + "/aside"] { try FileSystem.ensureDirectory(d, mode: 0o700) }
-        return try SnapshotStore(root: canonical, directory: dir, exclusions: exclusions ?? .standard, busyTimeoutMs: busyTimeoutMs)
+        return try SnapshotStore(root: canonical, directory: dir, exclusions: exclusions ?? .standard, newStoreLimits: limits,
+                                 busyTimeoutMs: busyTimeoutMs)
+    }
+
+    /// Whether `root` holds more than `limits` allow (a bounded walk; used before creating a capped store, so a folder that
+    /// is too large never gets one). A walk cut short by the deadline is not "too large".
+    public static func exceeds(_ limits: SnapshotLimits, root: String, deadlineNs: UInt64? = nil) -> Bool {
+        guard let canonical = FileSystem.canonicalPath(root) else { return false }
+        return Walker.walk(root: canonical, exclusions: .standard, deadlineNs: deadlineNs, maxEntries: limits.maxFiles,
+                           maxBytes: limits.maxBytes).tooLarge
+    }
+
+    /// Changes the size cap (nil removes it, e.g. when the folder turns out to be the agent's project).
+    public func setLimits(_ newLimits: SnapshotLimits?) throws {
+        if let l = newLimits {
+            let value: [String: Any] = ["maxFiles": l.maxFiles, "maxBytes": l.maxBytes]
+            try db.run("INSERT OR REPLACE INTO meta(key, value) VALUES ('limits', ?)", [JSONOutput.string(value)])
+        } else {
+            try db.run("DELETE FROM meta WHERE key = 'limits'")
+        }
+        limits = newLimits
     }
 
     /// Every store on disk with the root it belongs to (read from store.json).
@@ -110,7 +157,8 @@ public final class SnapshotStore {
         }
     }
 
-    private init(root: String, directory: String, exclusions: Exclusions, busyTimeoutMs: Int32 = 5000) throws {
+    private init(root: String, directory: String, exclusions: Exclusions, newStoreLimits: SnapshotLimits? = nil,
+                 busyTimeoutMs: Int32 = 5000) throws {
         self.root = root
         self.rootID = SnapshotStore.rootID(for: root)
         self.directory = directory
@@ -128,6 +176,10 @@ public final class SnapshotStore {
             try db.run("INSERT OR REPLACE INTO meta(key, value) VALUES ('root', ?), ('created_at', ?)", [root, String(Clock.nowMs())])
             let meta: [String: Any] = ["schema": 1, "root": root, "created_at": Clock.nowMs(), "mode": same ? "clone" : "copy"]
             try FileSystem.writeAtomically(Data(JSONOutput.string(meta, pretty: true).utf8), to: directory + "/store.json", mode: 0o600)
+            if let l = newStoreLimits { try setLimits(l) }
+        } else if let text = try db.scalarText("SELECT value FROM meta WHERE key = 'limits'"), let obj = JSONObject.parse(Data(text.utf8)),
+                  let files = obj.int("maxFiles"), let bytes = obj.int("maxBytes") {
+            limits = SnapshotLimits(maxFiles: files, maxBytes: Int64(bytes))
         }
         for f in ["/manifest.sqlite", "/manifest.sqlite-wal", "/manifest.sqlite-shm"] { _ = chmod(directory + f, 0o600) }
     }
@@ -272,7 +324,14 @@ public final class SnapshotStore {
         }
         var stats = SnapshotStats()
         var (current, strayRows) = try loadCurrentWithStrays()
-        let walk = Walker.walk(root: root, exclusions: ex, deadlineNs: request.deadlineNs)
+        let cap = request.ignoreLimits ? nil : effectiveLimits
+        let walk = Walker.walk(root: root, exclusions: ex, deadlineNs: request.deadlineNs, maxEntries: cap?.maxFiles ?? 400_000,
+                               maxBytes: cap?.maxBytes ?? .max)
+        // A capped folder that has grown past its limits is left alone (nothing captured, nothing recorded as deleted).
+        if walk.tooLarge, let cap {
+            Log.shared.info("snapshot \(root): over its cap (\(cap.maxFiles) files / \(cap.maxBytes) bytes), skipped")
+            return .tooLarge(files: walk.entries.count, bytes: walk.bytes)
+        }
         // Paths that exist but were not captured this time: never recorded as deleted.
         var uncaptured = Set(walk.skippedLarge + walk.unreadableFiles)
         let unreadablePrefixes = walk.unreadableDirs.map { $0 + "/" }
@@ -609,6 +668,7 @@ public final class SnapshotStore {
         let label = "Before restoring to \(target.label ?? target.id)"
         var preRequest = SnapshotRequest(trigger: .preRestore, label: label, force: true)
         preRequest.ignoreLowDiskFloor = true
+        preRequest.ignoreLimits = true
         let pre = try snapshotLocked(preRequest, hints: [:])
         if case .lowDisk(let avail) = pre { throw SnapshotError.io("only \(avail / 1_000_000) MB free: free some disk space first; nothing was changed") }
         guard let preInfo = pre.snapshot, preInfo.complete else {
@@ -721,6 +781,7 @@ public final class SnapshotStore {
 
         var postRequest = SnapshotRequest(trigger: .postRestore, label: "Restored to \(target.label ?? target.id)", force: true)
         postRequest.ignoreLowDiskFloor = true
+        postRequest.ignoreLimits = true
         let post = try snapshotLocked(postRequest, hints: hints)
         report.postSnapshotId = post.snapshot?.id
         return report
@@ -757,7 +818,9 @@ public final class SnapshotStore {
         let all = try db.all("SELECT seq, created_at, pinned FROM snapshots ORDER BY seq") { (seq: $0.int(0), created: $0.int(1), pinned: $0.bool(2)) }
         guard !all.isEmpty else { return report }
         let newest = Set(all.suffix(max(1, policy.keepNewest)).map(\.seq))
-        var keep = Set(all.filter { $0.pinned || newest.contains($0.seq) || $0.created >= nowMs - policy.maxAgeMs }.map(\.seq))
+        // Within the age window, at most `maxSnapshots` unpinned snapshots (the newest).
+        let recent = Set(all.filter { !$0.pinned }.suffix(max(1, policy.maxSnapshots)).map(\.seq))
+        var keep = Set(all.filter { $0.pinned || newest.contains($0.seq) || ($0.created >= nowMs - policy.maxAgeMs && recent.contains($0.seq)) }.map(\.seq))
         var del = all.map(\.seq).filter { !keep.contains($0) }
         if dryRun { report.deletedSnapshots = del.count; return report }
         if !del.isEmpty { try deleteSnapshots(del, keep: keep, report: &report) }

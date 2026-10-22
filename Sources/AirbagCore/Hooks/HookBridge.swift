@@ -16,6 +16,8 @@ public struct HookBridgeConfig: Sendable {
     public var environment: [String: String]
     public var snapshotDeadlineMs = 1500
     public var lockWaitMs = 800
+    /// Size cap for a snapshot root that is neither a git checkout nor the folder the agent was started in (ADR-032).
+    public var folderLimits: SnapshotLimits = .folder
     public var askFallback: [AgentKind: AskMode] = [.claudeCode: .native, .codex: .denyWithAllowance, .cursor: .native,
                                                     .gemini: .denyWithAllowance, .copilot: .native]
     public var askUnderBypass: AskMode = .denyWithAllowance
@@ -171,14 +173,25 @@ public struct HookBridge {
             }
         }
 
+        /// The agent's own folder and git checkouts are projects; any other folder is snapshotted only while it is small.
+        func limits(for r: String) -> SnapshotLimits? {
+            var st = stat()
+            return r == launch || lstat(r + "/.git", &st) == 0 ? nil : config.folderLimits
+        }
+
         func takeSnapshot(_ trigger: SnapshotTrigger, label: String?, root: String? = nil) -> (SnapshotInfo?, String?) {
             guard let r = root ?? snapshotRoot else { return (nil, "no_root") }
             // The event links to the session's own snapshot; a visited project's snapshot only when there is none.
             let links = root == nil || record.snapshot == nil
             if duplicate { return (nil, "duplicate_route") }
             let exists = SnapshotStore.storeExists(root: r, paths: config.paths)
-            guard let store = try? SnapshotStore.open(root: r, paths: config.paths, busyTimeoutMs: Int32(min(config.snapshotDeadlineMs, 1000))) else { return (nil, "store_error") }
+            let cap = limits(for: r)
             let deadline = Clock.monotonicNs() + UInt64(config.snapshotDeadlineMs) * 1_000_000
+            // A folder that is too large never gets a store (an existing store checks its own limits on every snapshot).
+            if !exists, let cap, SnapshotStore.exceeds(cap, root: r, deadlineNs: deadline) { return (nil, "too_large") }
+            guard let store = try? SnapshotStore.open(root: r, paths: config.paths, limits: cap,
+                                                      busyTimeoutMs: Int32(min(config.snapshotDeadlineMs, 1000))) else { return (nil, "store_error") }
+            if r == launch, store.limits != nil { try? store.setLimits(nil) } // the agent's own folder is never capped
             let outcome = store.snapshot(SnapshotRequest(trigger: exists ? trigger : .initial, label: label, sessionKey: sessionKey,
                                                          deadlineNs: deadline, lockWaitMs: config.lockWaitMs))
             switch outcome {
@@ -200,6 +213,7 @@ public struct HookBridge {
                 return (latest, latest?.complete == false ? "incomplete" : nil)
             case .busy: return (nil, "busy")
             case .lowDisk: return (nil, "low_disk")
+            case .tooLarge: return (nil, "too_large")
             case .failed(let m): Log.shared.error("snapshot failed: \(m)"); return (nil, "failed")
             }
         }
@@ -346,7 +360,7 @@ public struct HookBridge {
             outcome.snapshot = snap; outcome.snapshotSkipped = skipped
             reply = .neutral
         case .sessionStart:
-            if let r = snapshotRoot, !SnapshotStore.storeExists(root: r, paths: config.paths) { spawnBackgroundSnapshot(r) }
+            if let r = snapshotRoot, !SnapshotStore.storeExists(root: r, paths: config.paths) { spawnBackgroundSnapshot(r, capped: limits(for: r) != nil) }
             reply = .neutral
         default:
             reply = .neutral
@@ -386,13 +400,14 @@ public struct HookBridge {
         return blocked ? "Airbag blocked `\(cmd)`: \(reason)" : "Airbag: `\(cmd)` needs your approval — \(reason)"
     }
 
-    func spawnBackgroundSnapshot(_ root: String) {
+    /// `capped`: a store this creates gets the folder size cap (an existing store keeps its own).
+    func spawnBackgroundSnapshot(_ root: String, capped: Bool = false) {
         guard config.spawnBackground else { return }
         let marker = SnapshotStore.storeDirectory(forCanonicalRoot: root, paths: config.paths) + "/background.pid"
         if let s = try? String(contentsOfFile: marker, encoding: .utf8), let pid = Int32(s.trimmingCharacters(in: .whitespacesAndNewlines)),
            kill(pid, 0) == 0 { return }
         let exe = ProcInfo.currentExecutablePath()
-        BackgroundSpawner.spawnDetached(exe, ["snapshot", "--root", root, "--initial", "--background-marker", marker],
+        BackgroundSpawner.spawnDetached(exe, ["snapshot", "--root", root, "--initial", "--background-marker", marker] + (capped ? ["--capped"] : []),
                                         environment: ["AIRBAG_HOME": config.paths.home.path])
     }
 }

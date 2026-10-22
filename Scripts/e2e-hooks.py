@@ -7,7 +7,7 @@ import json, os, shutil, subprocess, sys, tempfile, time
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 subprocess.run(["swift", "build", "-c", "release", "--product", "airbag"], cwd=ROOT, check=True, capture_output=True)
 BIN = subprocess.run(["swift", "build", "-c", "release", "--show-bin-path"], cwd=ROOT, capture_output=True, text=True).stdout.strip() + "/airbag"
-work = os.path.realpath(tempfile.mkdtemp(prefix="airbag-e2e-"))
+work = os.path.realpath(tempfile.mkdtemp(prefix="airbag-e2e-", dir="/private/tmp"))  # not below /private/var (ADR-032)
 env = dict(os.environ, AIRBAG_HOME=os.path.join(work, "home"))
 for k in list(env):
     if k.startswith("CLAUDE") or k.startswith("CODEX"): env.pop(k)

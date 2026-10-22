@@ -123,3 +123,19 @@ It follows the system language; Settings → Language overrides it for Airbag on
 restart). Russian is the hand-reviewed reference that `check-l10n.py` compares every language against (keys, format
 specifiers, CLDR plural forms). Right-to-left languages wait for a layout review. Agent-facing reasons stay English.
 
+
+**ADR-032 Read-only commands, never-project folders and a size cap for the rest.** A read-only diagnostics session
+(2026-10-21) cloned `~/Library/Caches` (32k files, 7.9 GB), an app bundle 22 times and the private keys in `~/.ssh`,
+and the walk set off bursts of macOS privacy denials. Three changes. (1) Whether a command reads or writes is decided
+from its arguments for the tools that do both (`sed` without `-i` or a `w` command, `sqlite3` with only SELECT/PRAGMA
+queries, `ssh-keygen -l/-y/-F`, `launchctl print/list`, `log show`, `plutil -p`/`-o -`, `codesign -d`, `xattr -l`,
+`curl` without an output file, …); assignments after `do`/`then`, `case` patterns and `perl -e 'alarm N; exec @ARGV'`
+no longer count as commands. `airbag check` names what makes a command need a snapshot. (2) Nothing inside app
+bundles, `/Library`, `/usr`, `/private/var` (per-user temporary folders included), `~/.ssh`, `~/.gnupg`, `~/.aws`,
+`~/.Trash` or the data folders of `~/Library` (Caches, Containers, Group Containers, Mail, Messages, Safari, Logs,
+Preferences, Developer, …) becomes a root, on top of the home folder and its standard folders themselves (ADR-027).
+Stores made before are left on disk untouched and listed by `airbag usage` for the user to delete. (3) A root that is
+neither a git checkout nor the agent's launch folder is snapshotted only while it holds at most 5,000 files and
+500 MB; the cap is stored with the store, so the app and background snapshots honour it. Retention also caps each root
+at 200 unpinned snapshots within the 7-day window. `csrutil status`, `fdesetup status|isactive|list|…`, `nvram -p`,
+`nvram NAME` and `bless --info|--getBoot` are allowed; every other use of these tools stays blocked (`sys.security`).

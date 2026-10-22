@@ -1,0 +1,514 @@
+{
+ "cases": [
+  {
+   "cmd": "du -sh ~/Library/Caches/* 2>/dev/null | sort -rh | head -20",
+   "expect": {
+    "decision": "allow",
+    "snapshot": "none"
+   }
+  },
+  {
+   "cmd": "ls -la ~/.ssh",
+   "expect": {
+    "decision": "allow",
+    "snapshot": "none"
+   }
+  },
+  {
+   "cmd": "stat -f 'birth=%SB mtime=%Sm' /Applications/Foo.app/Contents/MacOS/foo",
+   "expect": {
+    "decision": "allow",
+    "snapshot": "none"
+   }
+  },
+  {
+   "cmd": "cat config.xml; echo; grep -c ERROR app.log",
+   "expect": {
+    "decision": "allow",
+    "snapshot": "none"
+   }
+  },
+  {
+   "cmd": "ps -axo pid,ppid,%cpu,command | grep '[a]irbag' | head",
+   "expect": {
+    "decision": "allow",
+    "snapshot": "none"
+   }
+  },
+  {
+   "cmd": "/usr/bin/log show --last 10s --style compact --predicate 'process == \"airbag\"'",
+   "expect": {
+    "decision": "allow",
+    "snapshot": "none"
+   }
+  },
+  {
+   "cmd": "sqlite3 -readonly -json registry.sqlite \"SELECT count(*), sum(snapshot_id IS NOT NULL) FROM events WHERE created_at > 0\"",
+   "expect": {
+    "decision": "allow",
+    "snapshot": "none"
+   },
+   "why": "created_at is not CREATE"
+  },
+  {
+   "cmd": "/usr/bin/sqlite3 \"file:$M?immutable=1\" \".tables\" 2>&1",
+   "expect": {
+    "decision": "allow",
+    "snapshot": "none"
+   }
+  },
+  {
+   "cmd": "sqlite3 manifest.sqlite <<'SQL'\n.headers on\nSELECT seq, label FROM snapshots ORDER BY seq;\nPRAGMA table_info(snapshots);\nSQL",
+   "expect": {
+    "decision": "allow",
+    "snapshot": "none"
+   }
+  },
+  {
+   "cmd": "ssh-keygen -y -f ~/.ssh/id_ed25519 > /dev/null && echo ok",
+   "expect": {
+    "decision": "allow",
+    "snapshot": "none"
+   }
+  },
+  {
+   "cmd": "ssh-keygen -lf ~/.ssh/id_ed25519.pub",
+   "expect": {
+    "decision": "allow",
+    "snapshot": "none"
+   }
+  },
+  {
+   "cmd": "ssh-keygen -F github.com",
+   "expect": {
+    "decision": "allow",
+    "snapshot": "none"
+   }
+  },
+  {
+   "cmd": "sed -n 125,160p gen/gen.js",
+   "expect": {
+    "decision": "allow",
+    "snapshot": "none"
+   }
+  },
+  {
+   "cmd": "sed -E 's/[0-9a-fA-F]{32}/<UID32>/g' app.log | sort | uniq -c | sort -rn",
+   "expect": {
+    "decision": "allow",
+    "snapshot": "none"
+   }
+  },
+  {
+   "cmd": "launchctl print system/com.example.daemon 2>&1 | head -40",
+   "expect": {
+    "decision": "allow",
+    "snapshot": "none"
+   }
+  },
+  {
+   "cmd": "launchctl list | grep -i airbag",
+   "expect": {
+    "decision": "allow",
+    "snapshot": "none"
+   }
+  },
+  {
+   "cmd": "curl -s http://localhost:3000/health",
+   "expect": {
+    "decision": "allow",
+    "snapshot": "none"
+   }
+  },
+  {
+   "cmd": "curl -sS -o /dev/null -w '%{http_code}' https://example.com",
+   "expect": {
+    "decision": "allow",
+    "snapshot": "none"
+   }
+  },
+  {
+   "cmd": "xattr -l ~/Library",
+   "expect": {
+    "decision": "allow",
+    "snapshot": "none"
+   },
+   "why": "listing attributes of a system folder only reads"
+  },
+  {
+   "cmd": "plutil -extract root raw -o - store.json",
+   "expect": {
+    "decision": "allow",
+    "snapshot": "none"
+   }
+  },
+  {
+   "cmd": "plutil -p Info.plist",
+   "expect": {
+    "decision": "allow",
+    "snapshot": "none"
+   }
+  },
+  {
+   "cmd": "codesign -dv --verbose=4 /Applications/Foo.app 2>&1",
+   "expect": {
+    "decision": "allow",
+    "snapshot": "none"
+   }
+  },
+  {
+   "cmd": "perl -e 'alarm shift; exec @ARGV' 30 du -sh ~/Library",
+   "expect": {
+    "decision": "allow",
+    "snapshot": "none"
+   },
+   "why": "the macOS stand-in for timeout(1)"
+  },
+  {
+   "cmd": "for f in *.ips; do n=$(wc -l < \"$f\"); echo \"$f $n\"; done",
+   "expect": {
+    "decision": "allow",
+    "snapshot": "none"
+   }
+  },
+  {
+   "cmd": "for k in ~/.ssh/*; do case \"$k\" in *.pub|*known_hosts*|*config*) continue;; *) ssh-keygen -lf \"$k\";; esac; done",
+   "expect": {
+    "decision": "allow",
+    "snapshot": "none"
+   },
+   "why": "case patterns are not commands"
+  },
+  {
+   "cmd": "man launchctl | col -b | head -60",
+   "expect": {
+    "decision": "allow",
+    "snapshot": "none"
+   }
+  },
+  {
+   "cmd": "find . -name '*.json' -exec stat -f %z {} \\;",
+   "expect": {
+    "decision": "allow",
+    "snapshot": "none"
+   }
+  },
+  {
+   "cmd": "pkgutil --pkg-info=com.apple.pkg.CLTools_Executables | grep version",
+   "expect": {
+    "decision": "allow",
+    "snapshot": "none"
+   }
+  },
+  {
+   "cmd": "ifconfig -l; ipconfig getsummary en0 | head",
+   "expect": {
+    "decision": "allow",
+    "snapshot": "none"
+   }
+  },
+  {
+   "cmd": "security find-identity -v -p codesigning",
+   "expect": {
+    "decision": "allow",
+    "snapshot": "none"
+   }
+  },
+  {
+   "cmd": "mdutil -s /",
+   "expect": {
+    "decision": "allow",
+    "snapshot": "none"
+   }
+  },
+  {
+   "cmd": "csrutil status",
+   "expect": {
+    "decision": "allow",
+    "snapshot": "none"
+   }
+  },
+  {
+   "cmd": "csrutil authenticated-root status",
+   "expect": {
+    "decision": "allow",
+    "snapshot": "none"
+   }
+  },
+  {
+   "cmd": "fdesetup status",
+   "expect": {
+    "decision": "allow",
+    "snapshot": "none"
+   }
+  },
+  {
+   "cmd": "fdesetup isactive",
+   "expect": {
+    "decision": "allow",
+    "snapshot": "none"
+   }
+  },
+  {
+   "cmd": "fdesetup list -extended",
+   "expect": {
+    "decision": "allow",
+    "snapshot": "none"
+   }
+  },
+  {
+   "cmd": "nvram -p",
+   "expect": {
+    "decision": "allow",
+    "snapshot": "none"
+   }
+  },
+  {
+   "cmd": "nvram -xp",
+   "expect": {
+    "decision": "allow",
+    "snapshot": "none"
+   }
+  },
+  {
+   "cmd": "nvram boot-args",
+   "expect": {
+    "decision": "allow",
+    "snapshot": "none"
+   }
+  },
+  {
+   "cmd": "bless --info --getBoot",
+   "expect": {
+    "decision": "allow",
+    "snapshot": "none"
+   }
+  },
+  {
+   "cmd": "sudo fdesetup status",
+   "expect": {
+    "decision": "ask"
+   },
+   "rule": "sys.sudo"
+  },
+  {
+   "cmd": "csrutil authenticated-root disable",
+   "expect": {
+    "decision": "block"
+   },
+   "rule": "sys.security"
+  },
+  {
+   "cmd": "csrutil clear",
+   "expect": {
+    "decision": "block"
+   },
+   "rule": "sys.security"
+  },
+  {
+   "cmd": "csrutil enable --without debug",
+   "expect": {
+    "decision": "block"
+   },
+   "rule": "sys.security"
+  },
+  {
+   "cmd": "fdesetup disable",
+   "expect": {
+    "decision": "block"
+   },
+   "rule": "sys.security"
+  },
+  {
+   "cmd": "fdesetup enable -user u",
+   "expect": {
+    "decision": "block"
+   },
+   "rule": "sys.security"
+  },
+  {
+   "cmd": "fdesetup changerecovery -personal",
+   "expect": {
+    "decision": "block"
+   },
+   "rule": "sys.security"
+  },
+  {
+   "cmd": "fdesetup authrestart",
+   "expect": {
+    "decision": "block"
+   },
+   "rule": "sys.security"
+  },
+  {
+   "cmd": "nvram boot-args=\"-v\"",
+   "expect": {
+    "decision": "block"
+   },
+   "rule": "sys.security"
+  },
+  {
+   "cmd": "nvram -d boot-args",
+   "expect": {
+    "decision": "block"
+   },
+   "rule": "sys.security"
+  },
+  {
+   "cmd": "nvram -c",
+   "expect": {
+    "decision": "block"
+   },
+   "rule": "sys.security"
+  },
+  {
+   "cmd": "nvram -f vars.txt",
+   "expect": {
+    "decision": "block"
+   },
+   "rule": "sys.security"
+  },
+  {
+   "cmd": "bless --mount /Volumes/X --setBoot",
+   "expect": {
+    "decision": "block"
+   },
+   "rule": "sys.security"
+  },
+  {
+   "cmd": "bless --folder /System/Library/CoreServices --bootefi",
+   "expect": {
+    "decision": "block"
+   },
+   "rule": "sys.security"
+  },
+  {
+   "cmd": "sudo nvram boot-args=-v",
+   "expect": {
+    "decision": "block"
+   },
+   "rule": "sys.security"
+  },
+  {
+   "cmd": "sed -n 'w out.txt' in.txt",
+   "expect": {
+    "decision": "allow",
+    "snapshot": "recommended"
+   },
+   "why": "sed's w command writes a file"
+  },
+  {
+   "cmd": "sed -e 's/a/b/w changed.txt' in.txt",
+   "expect": {
+    "decision": "allow",
+    "snapshot": "recommended"
+   }
+  },
+  {
+   "cmd": "sqlite3 app.db \"UPDATE users SET admin = 1 WHERE id = 2\"",
+   "expect": {
+    "decision": "allow",
+    "snapshot": "recommended"
+   }
+  },
+  {
+   "cmd": "sqlite3 app.db < migrate.sql",
+   "expect": {
+    "decision": "allow",
+    "snapshot": "recommended"
+   },
+   "why": "SQL from a file is unknown"
+  },
+  {
+   "cmd": "sqlite3 app.db \"PRAGMA journal_mode=WAL\"",
+   "expect": {
+    "decision": "allow",
+    "snapshot": "recommended"
+   }
+  },
+  {
+   "cmd": "ssh-keygen -t ed25519 -f deploy_key -N ''",
+   "expect": {
+    "decision": "allow",
+    "snapshot": "recommended"
+   }
+  },
+  {
+   "cmd": "ssh-keygen -R github.com",
+   "expect": {
+    "decision": "allow",
+    "snapshot": "recommended"
+   }
+  },
+  {
+   "cmd": "curl -sSLO https://example.com/tool.tgz",
+   "expect": {
+    "decision": "allow",
+    "snapshot": "recommended"
+   }
+  },
+  {
+   "cmd": "plutil -convert xml1 Info.plist",
+   "expect": {
+    "decision": "allow",
+    "snapshot": "recommended"
+   }
+  },
+  {
+   "cmd": "codesign --force -s - build/App.app",
+   "expect": {
+    "decision": "allow",
+    "snapshot": "recommended"
+   }
+  },
+  {
+   "cmd": "xattr -d com.apple.quarantine tool.zip",
+   "expect": {
+    "decision": "allow",
+    "snapshot": "recommended"
+   }
+  },
+  {
+   "cmd": "launchctl load ~/Library/LaunchAgents/com.example.plist",
+   "expect": {
+    "decision": "allow",
+    "snapshot": "recommended"
+   }
+  },
+  {
+   "cmd": "log collect --last 1h",
+   "expect": {
+    "decision": "allow",
+    "snapshot": "recommended"
+   }
+  },
+  {
+   "cmd": "find . -name '*.txt' -exec sed -i '' 's/a/b/' {} +",
+   "expect": {
+    "decision": "allow",
+    "snapshot": "required"
+   }
+  },
+  {
+   "cmd": "perl -e 'alarm 40; exec @ARGV' rm -rf ~",
+   "expect": {
+    "decision": "block"
+   },
+   "rule": "fs.rm.catastrophic"
+  },
+  {
+   "cmd": "case $x in a|b) rm -rf ~;; esac",
+   "expect": {
+    "decision": "block"
+   },
+   "rule": "fs.rm.catastrophic"
+  },
+  {
+   "cmd": "case $x in a; rm -rf ~",
+   "expect": {
+    "decision": "ask"
+   },
+   "rule": "shell.unparsed"
+  }
+ ]
+}

@@ -44,13 +44,17 @@ struct WalkResult: Sendable {
     var unreadableFiles: [String] = []
     var errors = 0
     var complete = true
+    /// More than `maxEntries` entries or `maxBytes` bytes: the walk stopped there.
     var tooLarge = false
+    /// Sum of the sizes of the regular files collected.
+    var bytes: Int64 = 0
 }
 
 enum Walker {
     /// Walks `root` physically (no symlink following, no crossing mount points), skipping excluded
     /// directories. Collects regular files and symlinks.
-    static func walk(root: String, exclusions: Exclusions, deadlineNs: UInt64? = nil, maxEntries: Int = 400_000) -> WalkResult {
+    static func walk(root: String, exclusions: Exclusions, deadlineNs: UInt64? = nil, maxEntries: Int = 400_000,
+                     maxBytes: Int64 = .max) -> WalkResult {
         var result = WalkResult()
         let rootC = strdup(root)
         defer { free(rootC) }
@@ -69,7 +73,7 @@ enum Walker {
                 result.complete = false
                 break
             }
-            if result.entries.count >= maxEntries {
+            if result.entries.count > maxEntries || result.bytes > maxBytes {
                 result.complete = false
                 result.tooLarge = true
                 break
@@ -97,6 +101,7 @@ enum Walker {
                     continue
                 }
                 result.entries.append(WalkEntry(relativePath: rel, key: StatKey(st)))
+                result.bytes += Int64(st.st_size)
             case FTS_SL, FTS_SLNONE:
                 guard let st = e.fts_statp?.pointee else { result.errors += 1; continue }
                 result.entries.append(WalkEntry(relativePath: rel, key: StatKey(st)))
@@ -109,6 +114,10 @@ enum Walker {
             default:
                 break // FTS_DP (post-order), FTS_DC (cycle), FTS_DEFAULT (fifo, socket, device): ignored
             }
+        }
+        if result.entries.count > maxEntries || result.bytes > maxBytes { // the last entry crossed the limit
+            result.complete = false
+            result.tooLarge = true
         }
         return result
     }

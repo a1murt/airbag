@@ -2,11 +2,12 @@ import AirbagCore
 import Foundation
 
 enum SnapshotCommands {
-    static let valueOptions: Set<String> = ["root", "label", "trigger", "limit", "path", "keep", "days", "session", "background-marker"]
+    static let valueOptions: Set<String> = ["root", "label", "trigger", "limit", "path", "keep", "days", "max", "session", "background-marker"]
 
-    static func openStore(_ a: Args, recreate: Bool = false) throws -> SnapshotStore {
-        let root = a.value("root") ?? RootResolver.resolve(cwd: FileManager.default.currentDirectoryPath)
-        return try SnapshotStore.open(root: root, recreateMissingRoot: recreate)
+    static func root(_ a: Args) -> String { a.value("root") ?? RootResolver.resolve(cwd: FileManager.default.currentDirectoryPath) }
+
+    static func openStore(_ a: Args, recreate: Bool = false, limits: SnapshotLimits? = nil) throws -> SnapshotStore {
+        try SnapshotStore.open(root: root(a), recreateMissingRoot: recreate, limits: limits)
     }
 
     static func snapshot(_ argv: [String]) throws -> Int32 {
@@ -15,7 +16,13 @@ enum SnapshotCommands {
             try? FileSystem.writeAtomically(Data("\(getpid())".utf8), to: marker, mode: 0o600)
             atexit_b { unlink(marker) }
         }
-        let store = try openStore(a)
+        // --capped: a folder that is not a project gets a store only while it is small (the hook passes it, ADR-032).
+        let limits: SnapshotLimits? = a.has("capped") ? .folder : nil
+        if let limits, !SnapshotStore.storeExists(root: root(a)), SnapshotStore.exceeds(limits, root: root(a)) {
+            print("not snapshotted: \(root(a)) is over the size cap for a folder that is not a project (\(limits.maxFiles) files or \(Out.bytes(limits.maxBytes)))")
+            return 0
+        }
+        let store = try openStore(a, limits: limits)
         let trigger = a.has("initial") ? .initial : (a.value("trigger").flatMap(SnapshotTrigger.init(rawValue:)) ?? .manual)
         let outcome = store.snapshot(SnapshotRequest(trigger: trigger, label: a.value("label"), sessionKey: a.value("session"),
                                                      lockWaitMs: 10_000, force: a.has("force")))
@@ -33,6 +40,9 @@ enum SnapshotCommands {
             return 0
         case .busy: throw CLIError.failed("store is busy")
         case .lowDisk(let avail): throw CLIError.failed("not enough free disk space (\(Out.bytes(avail)) available)")
+        case .tooLarge:
+            let l = store.limits ?? .folder
+            throw CLIError.failed("\(store.root) has outgrown the size cap of its store (\(l.maxFiles) files or \(Out.bytes(l.maxBytes))); nothing captured")
         case .failed(let m): throw CLIError.failed(m)
         }
     }
@@ -105,7 +115,7 @@ enum SnapshotCommands {
 
     static func prune(_ argv: [String]) throws -> Int32 {
         let a = try Args(argv, valueOptions: valueOptions)
-        let policy = RetentionPolicy(maxAgeDays: a.int("days") ?? 7, keepNewest: a.int("keep") ?? 20)
+        let policy = RetentionPolicy(maxAgeDays: a.int("days") ?? 7, keepNewest: a.int("keep") ?? 20, maxSnapshots: a.int("max") ?? 200)
         let stores: [SnapshotStore]
         if a.has("all") {
             stores = SnapshotStore.allStores().filter(\.rootExists).compactMap { try? SnapshotStore.open(root: $0.root, create: false) }
@@ -140,6 +150,12 @@ enum SnapshotCommands {
         let a = try Args(argv, valueOptions: valueOptions)
         var rows: [[String: Any]] = []
         for loc in SnapshotStore.allStores() {
+            var refused = false
+            if loc.rootExists { do { _ = try SnapshotStore.validateRoot(loc.root) } catch SnapshotError.unsafeRoot { refused = true } catch {} }
+            if refused {
+                // Made before the folder was refused (ADR-032): never opened, snapshotted or pruned again.
+                rows.append(["root": loc.root, "rootExists": true, "refused": true, "store": loc.directory]); continue
+            }
             guard loc.rootExists, let s = try? SnapshotStore.open(root: loc.root, create: false), let u = try? s.usage() else {
                 rows.append(["root": loc.root, "rootExists": loc.rootExists]); continue
             }
@@ -150,6 +166,7 @@ enum SnapshotCommands {
         for r in rows {
             let root = r["root"] as? String ?? "?"
             if r["rootExists"] as? Bool == false { print("\(root)  (folder missing — restorable with `airbag restore <id> --root \"\(root)\"`)"); continue }
+            if r["refused"] as? Bool == true { print("\(root)  (not a project folder; Airbag no longer snapshots it — its store can be deleted: \(r["store"] ?? ""))"); continue }
             print("\(root)  \(r["snapshots"] ?? 0) snapshots · \(r["trackedFiles"] ?? 0) files · \(Out.bytes(r["objectBytes"] as? Int64 ?? 0))")
         }
         return 0
