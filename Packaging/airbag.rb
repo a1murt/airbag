@@ -13,7 +13,7 @@ cask "airbag" do
     strategy :github_latest
   end
 
-  depends_on macos: ">= :sonoma"
+  depends_on macos: :sonoma
 
   app "Airbag.app"
   binary "#{appdir}/Airbag.app/Contents/Helpers/airbag"
@@ -29,15 +29,16 @@ cask "airbag" do
               must_succeed: false,
             }
 
-  postflight do
-    system_command "#{appdir}/Airbag.app/Contents/Helpers/airbag",
-                   args:         ["hooks", "install", "--remembered"],
-                   must_succeed: false
-    # Built and ad-hoc signed by the project's public CI until it has a Developer ID; Homebrew users skip the
+  postflight_steps do
+    # The hooks the previous version remembered (upgrade or reinstall); writes only the agents' and Airbag's folders.
+    run "{{appdir}}/Airbag.app/Contents/Helpers/airbag",
+        args:           ["hooks", "install", "--remembered"],
+        must_succeed:   false,
+        writable_paths: [".claude", ".codex", ".cursor", ".gemini", ".copilot", "Library/Application Support/Airbag"],
+        writable_base:  :home
+    # Built and ad-hoc signed by the project's public CI until it has a Developer ID: Homebrew users skip the
     # one-time Gatekeeper prompt the DMG shows.
-    system_command "/usr/bin/xattr",
-                   args:         ["-dr", "com.apple.quarantine", "#{appdir}/Airbag.app"],
-                   must_succeed: false
+    run "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "{{appdir}}/Airbag.app"], must_succeed: false
   end
 
   zap trash: [
