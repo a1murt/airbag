@@ -47,7 +47,17 @@ enum HookCommands {
         return me
     }
 
-    static func agents(from a: Args, installer: HookInstaller, removing: Bool = false) throws -> [AgentKind] {
+    /// Agents whose hooks `hooks uninstall --remember` removed, for `hooks install --remembered` to put back. Homebrew
+    /// runs a cask's uninstall script on upgrades too, so the cask removes hooks with --remember and its postflight
+    /// restores them: an upgrade keeps the protection, a real uninstall leaves no hook pointing at a missing binary.
+    static func rememberedFile(_ paths: AirbagPaths) -> URL { paths.home.appendingPathComponent("hooks-to-restore.json") }
+
+    static func agents(from a: Args, installer: HookInstaller, paths: AirbagPaths, removing: Bool = false) throws -> [AgentKind] {
+        if a.has("remembered") {
+            guard let data = try? Data(contentsOf: rememberedFile(paths)),
+                  let names = try? JSONDecoder().decode([String].self, from: data) else { return [] }
+            return names.compactMap(AgentKind.init(rawValue:)).filter { installer.detect($0) }
+        }
         if a.has("all") { return AgentKind.allCases.filter { removing ? installer.isInstalled($0) : installer.detect($0) } }
         let list = try a.positionals.map { n -> AgentKind in
             guard let k = AgentKind(rawValue: n) else { throw CLIError.usage("unknown agent '\(n)' (use: \(AgentKind.allCases.map(\.rawValue).joined(separator: ", ")))") }
@@ -81,19 +91,29 @@ enum HookCommands {
             if installer.command.contains("/.build/") && !a.has("command") {
                 Out.err("warning: hooks will point at a development build (\(installer.command)); pass --command to choose another path")
             }
-            for agent in try agents(from: a, installer: installer, removing: sub == "uninstall") {
+            let selected = try agents(from: a, installer: installer, paths: paths, removing: sub == "uninstall")
+            if sub == "uninstall", a.has("remember"), !a.has("dry-run") {
+                let installed = selected.filter { installer.isInstalled($0) }.map(\.rawValue)
+                if !installed.isEmpty {
+                    try? paths.prepare()
+                    try? JSONEncoder().encode(installed).write(to: rememberedFile(paths), options: .atomic)
+                }
+            }
+            let strict = a.has("strict") || (a.has("remembered") && ((try? Registry(paths: paths, role: .cli))?.setting("hook.strictMode", as: Bool.self) ?? false))
+            for agent in selected {
                 if a.has("dry-run") {
-                    let change = try installer.plan(agent, install: sub == "install", strict: a.has("strict"))
+                    let change = try installer.plan(agent, install: sub == "install", strict: strict)
                     print("== \(agent.displayName): \(change.path) \(change.changed ? "would change" : "unchanged")")
                     if change.changed { print(change.after ?? "(file removed)") }
                     continue
                 }
                 let change = sub == "install"
-                    ? try installer.install(agent, strict: a.has("strict"), backupDirectory: paths.backups.path)
+                    ? try installer.install(agent, strict: strict, backupDirectory: paths.backups.path)
                     : try installer.uninstall(agent, backupDirectory: paths.backups.path)
                 print("\(agent.displayName): \(change.changed ? (sub == "install" ? "installed" : "removed") : "already \(sub == "install" ? "installed" : "absent")") — \(change.path)\(change.backup.map { " (backup: \($0))" } ?? "")")
                 if sub == "install", agent == .codex, change.changed { print("    Codex: open Codex, type /hooks and trust the Airbag entries (press t).") }
             }
+            if sub == "install", a.has("remembered"), !a.has("dry-run") { try? FileManager.default.removeItem(at: rememberedFile(paths)) }
             return 0
         default:
             throw CLIError.usage("usage: airbag hooks status|install|uninstall [agents…|--all]")

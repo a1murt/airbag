@@ -21,7 +21,8 @@
 </p>
 
 <p align="center">
-  <img src="docs/images/demo.gif" width="720" alt="An agent runs rm -rf, the files disappear, and one click in Airbag's timeline brings them back">
+  <img src="docs/images/demo.gif" width="800" alt="2:07 a.m.: an agent runs rm -rf src/legacy, the folder is gone; Airbag's timeline, Undo these changes, Restore, and the files are back">
+  <br><sub><a href="docs/images/airbag-demo.mp4">▶ Watch in HD</a></sub>
 </p>
 
 <p align="center">
@@ -203,14 +204,20 @@ Airbag.app (menu bar): timeline · restore · Guard · Radar · snapshots after 
 
 ## Install
 
-1. **[Download the latest `.dmg`](https://github.com/a1murt/airbag/releases/latest)**, drag Airbag to Applications
-   and open it.
-2. The welcome window connects your agents and picks your projects. It takes under a minute.
+```bash
+brew install --cask a1murt/airbag/airbag
+```
 
-> [!NOTE]
-> The build isn't notarized yet, so macOS asks once on first launch: right-click Airbag → **Open** (macOS 14), or
-> **System Settings → Privacy & Security → Open Anyway** (macOS 15 and later). Or run
-> `xattr -dr com.apple.quarantine /Applications/Airbag.app`.
+Open Airbag from Applications: the welcome window connects your agents and picks your projects in under a minute.
+Homebrew also puts the `airbag` command on your PATH, and `brew upgrade` keeps your agents connected.
+
+<details>
+<summary><b>Without Homebrew</b></summary>
+
+**[Download the latest `.dmg`](https://github.com/a1murt/airbag/releases/latest)**, drag Airbag to Applications and
+open it. macOS asks once on first launch: **System Settings → Privacy & Security → Open Anyway** (macOS 15 and later),
+or right-click Airbag → **Open** (macOS 14).
+</details>
 
 <p align="center">
   <picture>
@@ -243,7 +250,7 @@ git clone https://github.com/a1murt/airbag && cd airbag && make app   # → buil
 
 ## Command line
 
-The CLI works without the app. It ships inside the bundle; put it on your PATH with:
+The CLI works without the app. Homebrew links it for you; with the DMG, put it on your PATH with:
 
 ```bash
 echo 'alias airbag=/Applications/Airbag.app/Contents/Helpers/airbag' >> ~/.zshrc
@@ -351,7 +358,8 @@ after file changes, plus the timeline, Guard and Radar.
 <details>
 <summary><b>How do I uninstall?</b></summary>
 
-Click **Remove** next to each agent in Airbag's Settings, or run:
+With Homebrew, `brew uninstall --cask airbag` removes Airbag's hooks from every agent too (`--zap` also deletes the
+snapshots). Otherwise click **Remove** next to each agent in Airbag's Settings, or run:
 
 ```bash
 /Applications/Airbag.app/Contents/Helpers/airbag hooks uninstall --all

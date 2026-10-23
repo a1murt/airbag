@@ -21,10 +21,15 @@ release:
 previews: app
 	build/Airbag.app/Contents/MacOS/Airbag --render-previews build/previews
 
-# README hero animation and screenshots from English light/dark previews (needs Pillow).
+# README video (MP4 + GIF) from the app's real screens, and light/dark screenshots (needs Pillow).
 demo: app
-	rm -rf build/previews-en && build/Airbag.app/Contents/MacOS/Airbag --render-previews build/previews-en -AppleLanguages "(en)"
-	python3 Scripts/make-demo-gif.py build/previews-en docs/images/demo.gif
+	rm -rf build/demo build/previews-en
+	build/Airbag.app/Contents/MacOS/Airbag --render-demo build/demo/screens -AppleLanguages "(en)"
+	python3 Scripts/make-demo-video.py build/demo/screens build/demo
+	swiftc -O Scripts/encode-video.swift -o build/demo/encode-video
+	build/demo/encode-video build/demo/frames docs/images/airbag-demo.mp4 30
+	cp build/demo/demo.gif docs/images/demo.gif
+	build/Airbag.app/Contents/MacOS/Airbag --render-previews build/previews-en -AppleLanguages "(en)"
 	for f in popover main-timeline main-radar main-guard restore welcome; do cp build/previews-en/$$f-light.png build/previews-en/$$f-dark.png docs/images/; done
 
 e2e:

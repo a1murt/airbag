@@ -5,7 +5,7 @@ cask "airbag" do
 
   url "https://github.com/a1murt/airbag/releases/download/v#{version}/Airbag-#{version}.zip"
   name "Airbag"
-  desc "Safety net for AI coding agents: snapshots, rollback, destructive-command breaker, port radar"
+  desc "Undo for AI coding agents: snapshots before every agent command"
   homepage "https://github.com/a1murt/airbag"
 
   livecheck do
@@ -20,12 +20,25 @@ cask "airbag" do
 
   # Remove Airbag's hook entries from every agent before the binary disappears: a hook pointing at a missing
   # program fails open for most agents, but GitHub Copilot CLI denies every shell command when a hook errors.
+  # Homebrew runs this on upgrades as well, so the hooks are remembered and the postflight of the new version puts
+  # them back; after a real uninstall none is left pointing at the missing binary.
   uninstall quit:   "dev.airbag.Airbag",
             script: {
-              executable: "#{appdir}/Airbag.app/Contents/Helpers/airbag",
-              args:       ["hooks", "uninstall", "--all"],
+              executable:   "#{appdir}/Airbag.app/Contents/Helpers/airbag",
+              args:         ["hooks", "uninstall", "--all", "--remember"],
               must_succeed: false,
             }
+
+  postflight do
+    system_command "#{appdir}/Airbag.app/Contents/Helpers/airbag",
+                   args:         ["hooks", "install", "--remembered"],
+                   must_succeed: false
+    # Built and ad-hoc signed by the project's public CI until it has a Developer ID; Homebrew users skip the
+    # one-time Gatekeeper prompt the DMG shows.
+    system_command "/usr/bin/xattr",
+                   args:         ["-dr", "com.apple.quarantine", "#{appdir}/Airbag.app"],
+                   must_succeed: false
+  end
 
   zap trash: [
     "~/Library/Application Support/Airbag",

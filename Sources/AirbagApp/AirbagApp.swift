@@ -37,7 +37,7 @@ struct AirbagApp: App {
 
 extension AppModel {
     static let shared: AppModel = {
-        let demo = CommandLine.arguments.contains("--render-previews")
+        let demo = CommandLine.arguments.contains("--render-previews") || CommandLine.arguments.contains("--render-demo")
         return AppModel(demo: demo)
     }()
 }
@@ -50,6 +50,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let i = CommandLine.arguments.firstIndex(of: "--render-previews") {
             let dir = i + 1 < CommandLine.arguments.count ? CommandLine.arguments[i + 1] : NSTemporaryDirectory()
             MainActor.assumeIsolated { PreviewRenderer.renderAll(to: dir) }
+            exit(0)
+        }
+        if let i = CommandLine.arguments.firstIndex(of: "--render-demo") {
+            let dir = i + 1 < CommandLine.arguments.count ? CommandLine.arguments[i + 1] : NSTemporaryDirectory()
+            MainActor.assumeIsolated { PreviewRenderer.renderDemo(to: dir) }
             exit(0)
         }
         let center = NotificationCenter.default
