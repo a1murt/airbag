@@ -18,7 +18,8 @@ PLURALS = {
 }
 ONE_OTHER = {'one', 'other'}
 
-INT = re.compile(r'(\.count\b|\bn\b|liveSessions|pinnedCount|snapshotCount|changedCount|\bport\b|\$0\b|[+-]\s*\d)')
+# Interpolations Swift formats as %lld. Name integer values …Count / …count (or use .count) so they are recognised.
+INT = re.compile(r'(\.count\b|[cC]ount\b|\bn\b|liveSessions|commandsToday|unprotectedDuringPause|\bport\b|\$0\b|[+-]\s*\d)')
 SPEC = re.compile(r'%(?:(\d+)\$)?(lld|ld|d|@)')
 VARIABLE = re.compile(r'%#@(\w+)@')
 
@@ -62,7 +63,7 @@ def same_specs(reference, translated):
 
 
 def source_keys():
-    pat = re.compile(r'(?:bullet\("[^"]*",\s*|\bTextField|\bText|\bButton|\bLabel|\bToggle|\bPicker|\bSection|\bMenu|String\(localized:|Pill\(text:|SectionHeader\(title:|EmptyState\(symbol: "[^"]*", title:|, message:|case \.\w+: return|resolutionText.*return)\s*\(?\s*"((?:[^"\\]|\\.)*)"')
+    pat = re.compile(r'(?:bullet\("[^"]*",\s*|\bTextField|\bText|\bButton|\bLabel|\bToggle|\bPicker|\bSection|\bMenu|\bLink|\bTableColumn|\bContentUnavailableView|\bLocalizedStringKey|\bLocalizedStringResource|\.navigationTitle|\.navigationSubtitle|\.confirmationDialog|\.alert|\.help|prompt:|String\(localized:|Pill\(text:|StatusDot\(text:|Callout\(\.\w+,|SectionHeader\(title:|EmptyState\(symbol: "[^"]*", title:|, message:|case \.\w+: return|resolutionText.*return|title = )\s*\(?\s*"((?:[^"\\]|\\.)*)"')
     symbols = re.compile(r'^[a-z]+(\.[a-z.]+)*$')
     sf = {'airplane', 'camera', 'diamond', 'gearshape', 'shield', 'sparkle', 'terminal', 'folder', 'pin', 'lock'}
     out = {}

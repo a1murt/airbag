@@ -137,19 +137,13 @@ enum ProtectionIssue: Equatable, Identifiable {
     case lowDisk(free: Int64)
     case brokenHooks([AgentKind])
     case noAgentConnected
-    var id: String {
-        switch self {
-        case .databaseUnavailable: return "db"
-        case .lowDisk: return "disk"
-        case .brokenHooks: return "broken"
-        case .noAgentConnected: return "none"
-        }
-    }
+    var id: String { fixTitle }
     var text: String {
         switch self {
         case .databaseUnavailable: return String(localized: "Airbag's database is unavailable")
         case .lowDisk(let free):
-            return String(localized: "Snapshots paused: only \(ByteCountFormatter.string(fromByteCount: free, countStyle: .file)) free")
+            let freeText = ByteCountFormatter.string(fromByteCount: free, countStyle: .file)
+            return String(localized: "Snapshots paused: only \(freeText) free")
         case .brokenHooks(let agents):
             return String(localized: "\(ListFormatter.localizedString(byJoining: agents.map(\.displayName)))'s connection is broken")
         case .noAgentConnected: return String(localized: "No agents connected. Only file saves are snapshotted.")
@@ -507,8 +501,10 @@ final class AppModel: ObservableObject {
         case .created(let info, _): return .created(changed: info.changedCount)
         case .unchanged: return .unchanged
         case .busy: return .failed(String(localized: "Another snapshot or restore is running; try again in a moment."))
-        case .lowDisk(let avail): return .failed(String(localized: "Snapshots paused: only \(ByteCountFormatter.string(fromByteCount: avail, countStyle: .file)) free"))
-        case .tooLarge(let files, _): return .failed(String(localized: "This folder is too large to snapshot (\(files) files)."))
+        case .lowDisk(let avail):
+            let freeText = ByteCountFormatter.string(fromByteCount: avail, countStyle: .file)
+            return .failed(String(localized: "Snapshots paused: only \(freeText) free"))
+        case .tooLarge(let fileCount, _): return .failed(String(localized: "This folder is too large to snapshot (\(fileCount) files)."))
         case .failed(let why): return .failed(why)
         case nil: return .failed(String(localized: "The folder could not be read."))
         }
@@ -519,9 +515,9 @@ final class AppModel: ObservableObject {
 
     func snapshotAll() {
         Task {
-            var created = 0
-            for p in projects where p.rootExists { if case .created = await snapshotNow(p.root) { created += 1 } }
-            show(created > 0 ? String(localized: "Snapshot taken of \(created) projects") : String(localized: "No changes since the last snapshot"),
+            var createdCount = 0
+            for p in projects where p.rootExists { if case .created = await snapshotNow(p.root) { createdCount += 1 } }
+            show(createdCount > 0 ? String(localized: "Snapshot taken of \(createdCount) projects") : String(localized: "No changes since the last snapshot"),
                  style: .success)
         }
     }
@@ -893,7 +889,7 @@ final class AppModel: ObservableObject {
             let agent = procs.first?.attribution?.agent?.displayName
             let servers = ListFormatter.localizedString(byJoining: procs.map { "\($0.name) :\($0.listeners.first?.port ?? 0)" })
             Notifier.shared.post(.orphans, id: sid,
-                                 title: agent.map { String(localized: "\($0) session ended") } ?? String(localized: "An agent session ended"),
+                                 title: agent.map { name in String(localized: "\(name) session ended") } ?? String(localized: "An agent session ended"),
                                  body: String(localized: "It left \(procs.count) servers running: \(servers)"),
                                  info: ["session": sid], thread: procs.first?.attribution?.projectRoot)
         }

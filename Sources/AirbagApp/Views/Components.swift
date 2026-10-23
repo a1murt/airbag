@@ -82,7 +82,7 @@ struct SectionHeader: View {
         HStack {
             Text(title).font(.caption.weight(.semibold)).foregroundStyle(.secondary)
             Spacer()
-            if let count, count > 0 { Text("\(count)").font(.caption.monospacedDigit()).foregroundStyle(.secondary) }
+            if let count, count > 0 { Text(count, format: .number).font(.caption.monospacedDigit()).foregroundStyle(.secondary) }
         }
         .accessibilityAddTraits(.isHeader)
     }
@@ -164,7 +164,8 @@ struct CommandText: View {
 }
 
 extension Text {
-    /// Placeholder for a command inside a localized sentence: `String(localized: "Undo changes from \(Text.commandMarker)?")`.
+    /// Placeholder for a command inside a localized sentence: interpolate it where the command goes, e.g.
+    /// String(localized: …"from \(Text.commandMarker)?"), and pass the result to `withCommand`.
     static let commandMarker = "\u{FFFC}"
 
     /// A localized sentence with the command set in monospace where the marker is (word order stays the translator's).
@@ -285,9 +286,10 @@ struct PortLink: View {
     let port: Int
     var font: Font = .caption
     var body: some View {
-        Button(":\(String(port))") { NSWorkspace.shared.open(URL(string: "http://localhost:\(port)")!) }
+        let portText = String(port)
+        Button { NSWorkspace.shared.open(URL(string: "http://localhost:\(portText)")!) } label: { Text(verbatim: ":" + portText) }
             .buttonStyle(.link).font(font.monospacedDigit())
-            .help(Text("Open localhost:\(String(port)) in Browser"))
+            .help(Text("Open localhost:\(portText) in Browser"))
     }
 }
 
@@ -296,13 +298,13 @@ struct ChangeCounts: View {
     let changes: [FileChange]
     var font: Font = .caption
     var body: some View {
-        let deleted = changes.filter { $0.status == .deleted }.count
-        let modified = changes.filter { $0.status == .modified || $0.status == .typeChanged }.count
-        let added = changes.filter { $0.status == .added }.count
+        let deletedCount = changes.filter { $0.status == .deleted }.count
+        let changedCount = changes.filter { $0.status == .modified || $0.status == .typeChanged }.count
+        let addedCount = changes.filter { $0.status == .added }.count
         HStack(spacing: 8) {
-            if deleted > 0 { item(Text("\(deleted) deleted"), Theme.danger) }
-            if modified > 0 { item(Text("\(modified) changed"), Theme.warning) }
-            if added > 0 { item(Text("\(added) added"), Theme.ok) }
+            if deletedCount > 0 { item(Text("\(deletedCount) deleted"), Theme.danger) }
+            if changedCount > 0 { item(Text("\(changedCount) changed"), Theme.warning) }
+            if addedCount > 0 { item(Text("\(addedCount) added"), Theme.ok) }
         }
         .font(font)
     }
