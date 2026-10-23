@@ -8,7 +8,8 @@ import SwiftUI
 enum PreviewRenderer {
     static func renderAll(to dir: String) {
         try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
-        let work = NSTemporaryDirectory() + "airbag-preview-" + ULID.make()
+        // Not the per-user temporary folder: it can never be a protected root (ADR-032), so the demo would be empty.
+        let work = "/private/tmp/airbag-preview-" + ULID.make()
         let home = AirbagPaths(home: URL(fileURLWithPath: work + "/home"))
         let proj = work + "/shop-app"
         seed(project: proj)
