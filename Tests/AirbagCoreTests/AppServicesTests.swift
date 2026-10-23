@@ -58,6 +58,43 @@ final class Box<T>: @unchecked Sendable {
         #expect(g.first?.agent == .claudeCode)
     }
 
+    @Test func evidenceAndCountsForTheUI() throws {
+        let h = HookSandbox(); defer { h.cleanup() }
+        let start = Clock.nowMsInt() - 1
+        _ = h.run(.claudeCode, h.claudePre("ls", id: "e-1"))
+        _ = h.run(.claudeCode, h.claudePre("git push --force", id: "e-2"))
+        let reg = try h.registry()
+        // The hook leaves evidence per agent (the app shows "last command 2 min ago" instead of trusting config files).
+        #expect((reg.lastHookEvents()[.claudeCode] ?? 0) >= start)
+        #expect(reg.lastHookEvents()[.codex] == nil)
+        #expect(reg.commandCounts(since: start).checked >= 2)
+        #expect(reg.commandCounts(since: start).unprotected == 0)
+        try reg.pause(untilMs: Clock.nowMsInt() + 60_000)
+        _ = h.run(.claudeCode, h.claudePre("touch a", id: "e-3"))
+        #expect(reg.commandCounts(since: start).unprotected == 1)
+        try reg.pause(untilMs: nil)
+        // A guard entry points at the snapshot taken right before its command, when there was one.
+        let g = reg.guardEntries().first { $0.ruleID == "git.push.force" }
+        #expect(g != nil)
+        if let sid = g?.snapshotID { #expect(try SnapshotStore.open(root: h.root, paths: h.paths).info(sid) != nil) }
+    }
+
+    @Test func searchFindsSnapshotsByFilePath() throws {
+        let sb = Sandbox("touch"); defer { sb.cleanup() }
+        let store = try sb.store()
+        sb.write("src/legacy/cart.ts", "a")
+        sb.write("src/app.ts", "a")
+        _ = store.snapshot(SnapshotRequest(trigger: .manual))
+        sb.write("src/legacy/cart.ts", "b")
+        guard case .created(let second, _) = store.snapshot(SnapshotRequest(trigger: .manual)) else { Issue.record("no snapshot"); return }
+        try FileManager.default.removeItem(atPath: sb.root + "/src/legacy/cart.ts")
+        guard case .created(let third, _) = store.snapshot(SnapshotRequest(trigger: .manual)) else { Issue.record("no snapshot"); return }
+        let hits = try store.snapshotIDs(touchingPathContaining: "CART")
+        #expect(hits.contains(second.id) && hits.contains(third.id))
+        #expect(try store.snapshotIDs(touchingPathContaining: "app.ts").count == 1)
+        #expect(try store.snapshotIDs(touchingPathContaining: "%").isEmpty) // LIKE wildcards are literal
+    }
+
     @Test func globalRetentionHonoursBudget() throws {
         let sb = Sandbox("ret"); defer { sb.cleanup() }
         let store = try sb.store()

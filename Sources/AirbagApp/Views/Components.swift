@@ -61,9 +61,9 @@ enum MenuBarIcon {
             let b = base.size
             base.draw(in: NSRect(x: 0, y: (rect.height - b.height) / 2, width: b.width, height: b.height))
             if badge {
-                let dot = NSRect(x: rect.width - 6.5, y: rect.height - 7, width: 6, height: 6)
+                let dot = NSRect(x: rect.width - 5.5, y: rect.height - 6, width: 5.2, height: 5.2)
                 NSGraphicsContext.current?.compositingOperation = .destinationOut
-                NSBezierPath(ovalIn: dot.insetBy(dx: -1.6, dy: -1.6)).fill()
+                NSBezierPath(ovalIn: dot.insetBy(dx: -1.5, dy: -1.5)).fill()
                 NSGraphicsContext.current?.compositingOperation = .sourceOver
                 NSColor.black.setFill()
                 NSBezierPath(ovalIn: dot).fill()

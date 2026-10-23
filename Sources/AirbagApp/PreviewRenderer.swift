@@ -94,8 +94,38 @@ enum PreviewRenderer {
             render(RestoreWindow().environmentObject(model), size: NSSize(width: 520, height: 520), to: dir + "/restore.png", settle: 1.5)
         }
         render(OnboardingView().environmentObject(model), size: NSSize(width: 560, height: 480), to: dir + "/welcome.png", settle: 1.5)
+        renderMenuBarIcons(to: dir + "/menubar.png")
         try? FileManager.default.removeItem(atPath: work)
         print("rendered previews into \(dir)")
+    }
+
+    /// Every menu bar glyph state, with and without the dot, at 6x on a light and a dark menu bar (for review only).
+    static func renderMenuBarIcons(to path: String) {
+        let states: [IconState] = [.idle, .protected, .paused, .needsYou, .degraded]
+        let scale: CGFloat = 6, cell = NSSize(width: 30 * scale, height: 24 * scale)
+        let size = NSSize(width: cell.width * CGFloat(states.count + 1), height: cell.height * 4)
+        let img = NSImage(size: size, flipped: true) { _ in
+            for (row, (bg, ink)) in [(NSColor(white: 0.93, alpha: 1), NSColor.black), (NSColor(white: 0.16, alpha: 1), NSColor.white)].enumerated() {
+                bg.setFill()
+                NSRect(x: 0, y: CGFloat(row) * cell.height * 2, width: size.width, height: cell.height * 2).fill()
+                for badge in [false, true] {
+                    let items: [(IconState, Bool)] = states.map { ($0, false) } + [(.protected, true)]
+                    for (col, (state, tick)) in items.enumerated() {
+                        let icon = MenuBarIcon.image(state, badge: badge, tick: tick)
+                        let tinted = NSImage(size: icon.size, flipped: false) { r in
+                            icon.draw(in: r); ink.set(); r.fill(using: .sourceAtop); return true
+                        }
+                        let w = icon.size.width * scale, h = icon.size.height * scale
+                        let y = CGFloat(row) * cell.height * 2 + (badge ? cell.height : 0) + (cell.height - h) / 2
+                        tinted.draw(in: NSRect(x: CGFloat(col) * cell.width + (cell.width - w) / 2, y: y, width: w, height: h))
+                    }
+                }
+            }
+            return true
+        }
+        if let tiff = img.tiffRepresentation, let rep = NSBitmapImageRep(data: tiff), let png = rep.representation(using: .png, properties: [:]) {
+            try? png.write(to: URL(fileURLWithPath: path))
+        }
     }
 
     static func seed(project: String) {
