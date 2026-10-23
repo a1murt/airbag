@@ -387,7 +387,8 @@ public struct HookBridge {
                 Registry.spool(record, paths: config.paths)
             }
             WakeSocket.notify(paths: config.paths, message: ["op": "hook", "kind": env.kind.rawValue, "agent": env.agent.rawValue,
-                                                             "decision": record.decision ?? ""])
+                                                             "decision": record.decision ?? "",
+                                                             "skipped": record.snapshotSkipped ?? ""])
         }
         outcome.record = record
         Log.shared.info("hook \(env.agent.rawValue)/\(env.rawEvent) session=\(env.sessionID?.prefix(8) ?? "-") decision=\(record.decision ?? "-") snapshot=\(outcome.snapshot?.id ?? outcome.snapshotSkipped ?? "-") total=\(timing["total"] ?? 0)ms")

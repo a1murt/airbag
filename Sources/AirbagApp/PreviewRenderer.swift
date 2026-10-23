@@ -69,11 +69,12 @@ enum PreviewRenderer {
             model.projects = model.projects.map { var p = $0; p.ports = []; return p }
             render(PopoverView().environmentObject(model), size: NSSize(width: 380, height: 520), to: dir + "/popover.png")
             model.selectedTab = .timeline
-            render(MainWindow().environmentObject(model), size: NSSize(width: 1040, height: 680), to: dir + "/main-timeline.png", settle: 1.5)
+            render(MainWindow().environmentObject(model), size: NSSize(width: 1040, height: 680), to: dir + "/main-timeline.png", settle: 1.5, chrome: true)
             let snaps = (try? SnapshotStore.open(root: root, paths: home).list(limit: 10)) ?? []
             if let before = snaps.first(where: { $0.label?.hasPrefix("Before `rm -rf") == true }) ?? snaps.last {
-                model.restoreRequest = RestoreRequest(root: root, snapshotID: before.id, snapshotLabel: "Before `rm -rf src/legacy`",
-                                                      snapshotTime: before.createdAt, paths: ["src/legacy/cart.ts", "src/legacy/checkout.ts"], liveAgents: 0)
+                model.restoreRequest = RestoreRequest(root: root, snapshotID: before.id, snapshotTime: before.createdAt,
+                                                      paths: ["src/legacy/cart.ts", "src/legacy/checkout.ts"], intent: .undo,
+                                                      command: "rm -rf src/legacy", title: nil, liveAgents: 0)
                 render(RestoreWindow().environmentObject(model), size: NSSize(width: 520, height: 420), to: dir + "/restore.png", settle: 1.5)
             }
             try? FileManager.default.removeItem(atPath: work)
@@ -81,13 +82,15 @@ enum PreviewRenderer {
             return
         }
         render(PopoverView().environmentObject(model), size: NSSize(width: 380, height: 640), to: dir + "/popover.png")
-        for tab in [MainTab.timeline, .radar, .guardLog, .settings] {
+        for tab in MainTab.allCases {
             model.selectedTab = tab
-            render(MainWindow().environmentObject(model), size: NSSize(width: 1040, height: 680), to: dir + "/main-\(tab.rawValue).png", settle: 1.5)
+            render(MainWindow().environmentObject(model), size: NSSize(width: 1040, height: 680), to: dir + "/main-\(tab.rawValue).png", settle: 1.5, chrome: true)
         }
+        render(SettingsScreen().environmentObject(model), size: NSSize(width: 640, height: 720), to: dir + "/settings.png", settle: 1.5)
         do {
             model.restoreRequest = RestoreRequest(root: root, snapshotID: (try? SnapshotStore.open(root: root, paths: home).list(limit: 10).last?.id) ?? "",
-                                                    snapshotLabel: "Before `rm -rf src/legacy`", snapshotTime: now - 600_000, paths: [], liveAgents: 1)
+                                                    snapshotTime: now - 600_000, paths: [], intent: .restore, command: "rm -rf src/legacy",
+                                                    title: nil, liveAgents: 1)
             render(RestoreWindow().environmentObject(model), size: NSSize(width: 520, height: 520), to: dir + "/restore.png", settle: 1.5)
         }
         render(OnboardingView().environmentObject(model), size: NSSize(width: 560, height: 480), to: dir + "/welcome.png", settle: 1.5)
@@ -120,23 +123,39 @@ enum PreviewRenderer {
         try? p.run(); p.waitUntilExit()
     }
 
-    static func render<V: View>(_ view: V, size: NSSize, to path: String, settle: TimeInterval = 0.8) {
+    /// Renders a view into `<path>-light.png` and `<path>-dark.png`. With `chrome`, the view sits in a real titled window
+    /// whose toolbar and title come from SwiftUI (scene bridging), and the whole window frame is captured.
+    static func render<V: View>(_ view: V, size: NSSize, to path: String, settle: TimeInterval = 0.8, chrome: Bool = false, title: String = "Airbag") {
         for (suffix, name) in [("light", NSAppearance.Name.aqua), ("dark", NSAppearance.Name.darkAqua)] {
             let appearance = NSAppearance(named: name)
-            let host = NSHostingView(rootView: view.frame(width: size.width, height: size.height)
-                .background(Color(nsColor: .windowBackgroundColor)))
-            host.appearance = appearance
-            host.frame = NSRect(origin: .zero, size: size)
-            let window = NSWindow(contentRect: host.frame, styleMask: [.borderless], backing: .buffered, defer: false)
+            let window: NSWindow
+            let target: NSView
+            if chrome {
+                let controller = NSHostingController(rootView: view.frame(width: size.width, height: size.height))
+                controller.sceneBridgingOptions = .all
+                window = NSWindow(contentRect: NSRect(origin: .zero, size: size), styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
+                                  backing: .buffered, defer: false)
+                window.contentViewController = controller
+                window.title = title
+                window.toolbarStyle = .unified
+                window.setContentSize(size)
+                target = window.contentView?.superview ?? controller.view
+            } else {
+                let host = NSHostingView(rootView: view.frame(width: size.width, height: size.height)
+                    .background(Color(nsColor: .windowBackgroundColor)))
+                host.frame = NSRect(origin: .zero, size: size)
+                window = NSWindow(contentRect: host.frame, styleMask: [.borderless], backing: .buffered, defer: false)
+                window.contentView = host
+                target = host
+            }
             window.appearance = appearance
             window.backgroundColor = .windowBackgroundColor
-            window.contentView = host
             window.setFrameOrigin(NSPoint(x: -10_000, y: -10_000))
             window.orderFrontRegardless()
             RunLoop.main.run(until: Date().addingTimeInterval(settle))
-            host.layoutSubtreeIfNeeded()
-            guard let rep = host.bitmapImageRepForCachingDisplay(in: host.bounds) else { continue }
-            appearance?.performAsCurrentDrawingAppearance { host.cacheDisplay(in: host.bounds, to: rep) }
+            target.layoutSubtreeIfNeeded()
+            guard let rep = target.bitmapImageRepForCachingDisplay(in: target.bounds) else { continue }
+            appearance?.performAsCurrentDrawingAppearance { target.cacheDisplay(in: target.bounds, to: rep) }
             let out = path.replacingOccurrences(of: ".png", with: "-\(suffix).png")
             if let data = rep.representation(using: .png, properties: [:]) { try? data.write(to: URL(fileURLWithPath: out)) }
             window.orderOut(nil)

@@ -31,6 +31,8 @@ public struct GuardEntry: Sendable, Identifiable, Equatable {
     public let command: String
     public let reason: String
     public let resolution: String?
+    /// The snapshot taken right before the command (nil when none was taken).
+    public var snapshotID: String? = nil
     /// The agent may retry it after an approval (ask turned into deny, still unresolved).
     /// Only asks that were turned into a deny (agent without a native prompt) can be approved in Airbag; a native ask is
     /// answered in the agent's own prompt and a hard block is not overridable.
@@ -59,14 +61,31 @@ extension Registry {
 
     public func guardEntries(limit: Int = 100, unresolvedOnly: Bool = false) -> [GuardEntry] {
         (try? db.all("""
-        SELECT g.id, g.ts, g.agent, s.agent_session_id, s.title, p.root_path, g.rule_id, g.decision, g.command, g.reason, g.resolution
+        SELECT g.id, g.ts, g.agent, s.agent_session_id, s.title, p.root_path, g.rule_id, g.decision, g.command, g.reason, g.resolution,
+          g.snapshot_id
         FROM guard_log g LEFT JOIN sessions s ON s.id = g.session_id LEFT JOIN projects p ON p.id = g.project_id
         WHERE g.severity != 'warn' AND (? = 0 OR g.resolved_at IS NULL)
         ORDER BY g.ts DESC LIMIT ?
         """, [unresolvedOnly, limit]) { r in
             GuardEntry(id: r.text(0), ts: r.int(1), agent: AgentKind(rawValue: r.text(2)), agentSessionID: r.textOrNil(3), sessionTitle: r.textOrNil(4),
-                       projectRoot: r.textOrNil(5), ruleID: r.text(6), decision: r.text(7), command: r.text(8), reason: r.text(9), resolution: r.textOrNil(10))
+                       projectRoot: r.textOrNil(5), ruleID: r.text(6), decision: r.text(7), command: r.text(8), reason: r.text(9), resolution: r.textOrNil(10),
+                       snapshotID: r.textOrNil(11))
         }) ?? []
+    }
+
+    /// When each agent last called Airbag's hook (evidence that its hook works, not just that it is installed).
+    public func lastHookEvents() -> [AgentKind: Int64] {
+        let rows = (try? db.all("SELECT agent, max(ts) FROM events WHERE agent IS NOT NULL GROUP BY agent") { ($0.text(0), $0.int(1)) }) ?? []
+        return Dictionary(rows.compactMap { a, ts in AgentKind(rawValue: a).map { ($0, ts) } }, uniquingKeysWith: max)
+    }
+
+    /// Agent shell commands checked since `ms`, and how many of them ran without a snapshot because Airbag was paused.
+    public func commandCounts(since ms: Int64) -> (checked: Int, unprotected: Int) {
+        let checked = (try? db.scalarInt("SELECT count(*) FROM events WHERE ts >= ? AND kind = 'pre_shell'", [ms])) ?? nil
+        let paused = (try? db.scalarInt("""
+        SELECT count(*) FROM events WHERE ts >= ? AND kind = 'pre_shell' AND json_extract(payload, '$.snapshot_skipped') = 'paused'
+        """, [ms])) ?? nil
+        return (Int(checked ?? 0), Int(paused ?? 0))
     }
 
     public func dismissGuard(_ id: String) throws {

@@ -13,12 +13,12 @@ struct PopoverView: View {
             Divider()
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
-                    if let msg = model.lastMessage {
+                    if let msg = model.toast?.text {
                         HStack(alignment: .top) {
                             Image(systemName: "info.circle").foregroundStyle(.secondary)
                             Text(msg).font(.callout).fixedSize(horizontal: false, vertical: true)
                             Spacer()
-                            Button { model.lastMessage = nil } label: { Image(systemName: "xmark").font(.caption) }.buttonStyle(.plain)
+                            Button { model.dismissToast() } label: { Image(systemName: "xmark").font(.caption) }.buttonStyle(.plain)
                                 .accessibilityLabel(Text("Dismiss"))
                         }
                         .padding(8).background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 8))
@@ -42,13 +42,13 @@ struct PopoverView: View {
     var header: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack {
-                Image(systemName: model.iconState.symbol).foregroundStyle(model.iconState == .blocked ? Theme.danger : Theme.accent)
+                Image(systemName: model.iconState.symbol).foregroundStyle(model.iconState == .needsYou ? Theme.warning : Theme.accent)
                 Text(verbatim: "Airbag").font(.headline)
                 if let until = model.pausedUntil {
                     Pill(text: "Paused until \(until.formatted(date: .omitted, time: .shortened))", color: Theme.warning)
                 }
                 Spacer()
-                Button { open(.settings) } label: { Image(systemName: "gearshape") }
+                Button { model.windowRequest = .settings } label: { Image(systemName: "gearshape") }
                     .buttonStyle(.borderless).help(Text("Settings")).accessibilityLabel(Text("Settings"))
                     .keyboardShortcut(",", modifiers: .command)
             }

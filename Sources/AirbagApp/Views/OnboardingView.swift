@@ -149,39 +149,3 @@ struct OnboardingView: View {
         step += 1
     }
 }
-
-/// The menu bar label; also opens the first-run window once.
-struct MenuBarLabel: View {
-    @ObservedObject var model: AppModel
-    @Environment(\.openWindow) private var openWindow
-
-    var accessibilityText: LocalizedStringKey {
-        switch model.iconState {
-        case .blocked: return "Airbag: a command was blocked"
-        case .orphan: return "Airbag: a session left servers running"
-        case .snapshotting: return "Airbag: taking a snapshot"
-        case .degraded: return "Airbag: protection needs attention"
-        case .idle: return "Airbag: nothing protected"
-        case .protected: return "Airbag: projects protected"
-        }
-    }
-
-    var body: some View {
-        Image(nsImage: MenuBarIcon.image(model.iconState, badge: model.badge))
-            .accessibilityLabel(Text(accessibilityText))
-            .task {
-                if model.needsOnboarding {
-                    try? await Task.sleep(nanoseconds: 600_000_000)
-                    openWindow(id: "welcome")
-                    NSApp.activate(ignoringOtherApps: true)
-                } else if let i = CommandLine.arguments.firstIndex(of: "--show") {
-                    // `open -a Airbag --args --show radar`: the main window on a tab (timeline, radar, guard, settings).
-                    let name = i + 1 < CommandLine.arguments.count ? CommandLine.arguments[i + 1] : ""
-                    if let tab = MainTab(rawValue: name) { model.selectedTab = tab }
-                    try? await Task.sleep(nanoseconds: 300_000_000)
-                    openWindow(id: "main")
-                    NSApp.activate(ignoringOtherApps: true)
-                }
-            }
-    }
-}

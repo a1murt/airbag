@@ -524,6 +524,17 @@ public final class SnapshotStore {
         }
     }
 
+    /// Snapshots whose recorded changes include a path containing `text` (case-insensitive), e.g. a file name.
+    /// A change kept from a snapshot removed by retention belongs to the next retained snapshot, as in `changes(in:)`.
+    public func snapshotIDs(touchingPathContaining text: String, limit: Int = 500) throws -> Set<String> {
+        let escaped = text.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "%", with: "\\%").replacingOccurrences(of: "_", with: "\\_")
+        let ids = try db.all("""
+        SELECT DISTINCT (SELECT s.id FROM snapshots s WHERE s.seq >= c.seq ORDER BY s.seq LIMIT 1)
+        FROM changes c WHERE c.path LIKE ? ESCAPE '\\' LIMIT ?
+        """, ["%" + escaped + "%", limit]) { $0.textOrNil(0) }
+        return Set(ids.compactMap { $0 })
+    }
+
     /// Files changed by the given snapshot, compared with the previous retained snapshot.
     public func changes(in id: String) throws -> [FileChange] {
         let s = try requireInfo(id)
