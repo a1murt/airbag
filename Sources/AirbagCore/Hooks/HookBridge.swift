@@ -96,14 +96,20 @@ public struct HookBridge {
         return roots.filter { targeted.contains($0) && !taken.contains($0) }
     }
 
-    /// Projects other than the session's that the command `cd`s into (validated; never the home folder).
+    /// Folders besides the session's that the command works in, each snapshotted as a root of its own (validated; never
+    /// the home folder): projects it `cd`s into, then agent worktrees it names inside a protected project
+    /// (`rm -rf .claude/worktrees/x`), which that project's snapshots skip.
     public static func visitedRoots(_ command: String, context: GuardContext, paths: AirbagPaths) -> [String] {
         var out: [String] = []
-        for dir in RuleEngine().visitedDirectories(command, context: context) {
-            let root = RootResolver.resolve(cwd: dir)
-            guard let valid = try? SnapshotStore.validateRoot(root, paths: paths), !context.roots.contains(valid), !out.contains(valid) else { continue }
+        func add(_ root: String) {
+            guard let valid = try? SnapshotStore.validateRoot(root, paths: paths), !context.roots.contains(valid), !out.contains(valid) else { return }
             out.append(valid)
         }
+        let engine = RuleEngine()
+        for dir in engine.visitedDirectories(command, context: context) { add(RootResolver.resolve(cwd: dir)) }
+        var visited = context
+        visited.roots += out
+        for worktree in engine.worktreeRoots(command, context: visited) { add(worktree) }
         return out
     }
     public let config: HookBridgeConfig

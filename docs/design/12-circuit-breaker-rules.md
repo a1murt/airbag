@@ -1,7 +1,7 @@
 # 12 — Circuit breaker (rules engine)
 
 Status: implemented in `Sources/AirbagCore/Rules/` (M3). Fixture: `Tests/AirbagCoreTests/Fixtures/rules.json`
-(307 cases, all green).
+(408 cases, all green).
 
 ## Principle
 
@@ -41,7 +41,26 @@ The verdict is the maximum over all findings; snapshot need is the maximum over 
 4. Paths resolve against the working directory, normalise `..`, resolve symlinked parents (a trailing slash
    follows the link), and globs classify their directory (`dir/*` = contents of `dir`, which never includes `.git`).
 5. Classification: `catastrophic`, `airbag`, `gitInternals`, `projectRoot`, `insideProject`, `regenerable`
-   (excluded build/dependency folders, user caches), `temporary`, `device`, `outside`, `unknown`.
+   (excluded build/dependency folders, `.idea/caches`, user caches), `agentWorktree`, `holdsWorktrees`,
+   `temporary`, `device`, `outside`, `unknown`.
+
+## Agent worktrees
+
+`.claude/worktrees` and `.codex/worktrees` are excluded from a project's snapshots because each worktree in them is a
+snapshot root of its own (doc 10). A path inside one is therefore not "inside the project" for the rules:
+
+- The hook (and `airbag check`) adds every worktree the command names to the protected roots, next to the projects it
+  `cd`s into (`HookBridge.visitedRoots`), and snapshots it before the command. The rules then judge it as a project:
+  `rm -rf .claude/worktrees/x/src` is `fs.rm.project`, `rm -rf .claude/worktrees/x` is `fs.rm.project-root` and
+  allowed, since a worktree's `.git` is a file and the history it points to stays in the main checkout. When that
+  snapshot fails (busy, too large, deadline), the hook escalates to `ask` as for any `required` finding.
+- A worktree that is not a protected root (it cannot be snapshotted, or the analysis runs without a hook) is
+  `agentWorktree`: deleting, moving or overwriting in it asks (`fs.rm.worktree`, `fs.mv.worktree`, `fs.write.worktree`).
+- The worktree folder itself, or a folder holding it (`.claude`), is `holdsWorktrees` while it has anything in it:
+  deleting or moving it asks rather than snapshotting every worktree. A worktree folder that does not exist yet is
+  harmless (`regenerable`), and so are dependency and build folders inside a worktree.
+- The worktree is the outermost folder below `.claude/worktrees` with a `.git` (Codex nests `<id>/<repo>`), else the
+  first folder.
 
 ## Rule catalog
 
@@ -65,6 +84,7 @@ The verdict is the maximum over all findings; snapshot need is the maximum over 
 | `fs.mv.opaque` | ask | recommended | it moves a path built from an unresolved variable. |
 | `fs.mv.outside` | ask | none | it moves (s.text), which is outside the protected project. |
 | `fs.mv.project` | allow | required | it moves project files (restorable from the snapshot taken first). |
+| `fs.mv.worktree` | ask | recommended | it moves (s.text), which is in an agent worktree: this project's snapshots skip agent worktrees … |
 | `fs.overwrite.catastrophic` | block | none | it would (verb) (describe(p)). |
 | `fs.perm.opaque` | ask | recommended | it recursively changes permissions of a path built from an unresolved variable. |
 | `fs.perm.outside` | ask | none | it recursively changes permissions outside the protected project. |
@@ -74,6 +94,7 @@ The verdict is the maximum over all findings; snapshot need is the maximum over 
 | `fs.rm.outside` | ask | none | it would (verb) (t.text) outside the protected project, where no snapshot can restore it. |
 | `fs.rm.project` | allow | required | it deletes project files (restorable from the snapshot taken first). |
 | `fs.rm.project-root` | allow, ask | required | it deletes the whole project folder (restorable from the snapshot taken first). |
+| `fs.rm.worktree` | ask | recommended | it would (verb) (t.text), an agent worktree / which holds agent worktrees: this project's snapshots skip agent worktrees (each is a snapshot root of its own), so the snapshot taken first does not cover uncommitted work there. |
 | `fs.rsync.delete.remote` | ask | none | it deletes files on a remote machine that are missing locally. |
 | `fs.trash.empty` | block | none | it empties the Trash permanently. |
 | `fs.truncate.opaque` | ask | recommended | it empties a file whose path depends on an unresolved variable. |
@@ -81,6 +102,7 @@ The verdict is the maximum over all findings; snapshot need is the maximum over 
 | `fs.truncate.project` | allow | required | it empties a project file (a snapshot is taken first). |
 | `fs.write.outside` | ask | recommended | it overwrites (target.text) outside the protected project, where no snapshot can restore it. |
 | `fs.write.project` | allow | recommended | it edits project files (a snapshot is taken first). |
+| `fs.write.worktree` | ask | recommended | it overwrites (target.text), which is in an agent worktree: this project's snapshots skip agent worktrees … |
 | `gh.api.delete` | ask | none | it sends a DELETE request to the GitHub API. |
 | `gh.delete` | ask | none | it deletes data on GitHub. |
 | `gh.repo.delete` | block | none | it deletes a GitHub repository with all its issues and history. |

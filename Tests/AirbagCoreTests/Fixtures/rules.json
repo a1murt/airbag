@@ -2823,6 +2823,142 @@
    "expect": {
     "decision": "allow"
    }
+  },
+  {
+   "cmd": "rm -rf .claude/worktrees/bright-running-fox",
+   "expect": {
+    "decision": "ask",
+    "snapshot": "recommended"
+   },
+   "rule": "fs.rm.worktree",
+   "why": "an agent worktree is a snapshot root of its own, which the project's snapshots skip; a hook snapshots it first and then allows"
+  },
+  {
+   "cmd": "rm -f .claude/worktrees/bright-running-fox/src/app.ts",
+   "expect": {
+    "decision": "ask",
+    "snapshot": "recommended"
+   },
+   "rule": "fs.rm.worktree"
+  },
+  {
+   "cmd": "rm -rf .claude/worktrees/*",
+   "expect": {
+    "decision": "ask",
+    "snapshot": "recommended"
+   },
+   "rule": "fs.rm.worktree"
+  },
+  {
+   "cmd": "rm -rf .claude/worktrees",
+   "expect": {
+    "decision": "ask",
+    "snapshot": "recommended"
+   },
+   "rule": "fs.rm.worktree",
+   "why": "deletes every worktree at once: asks rather than snapshotting each"
+  },
+  {
+   "cmd": "rm -rf .claude",
+   "expect": {
+    "decision": "ask",
+    "snapshot": "recommended"
+   },
+   "rule": "fs.rm.worktree",
+   "why": "holds .claude/worktrees"
+  },
+  {
+   "cmd": "rm -rf ../proj/.codex/worktrees/3f9a/proj",
+   "expect": {
+    "decision": "ask",
+    "snapshot": "recommended"
+   },
+   "rule": "fs.rm.worktree"
+  },
+  {
+   "cmd": "find .claude/worktrees/bright-running-fox -name '*.orig' -delete",
+   "expect": {
+    "decision": "ask"
+   },
+   "rule": "fs.rm.worktree"
+  },
+  {
+   "cmd": "cd .claude/worktrees/bright-running-fox && rm -rf src",
+   "expect": {
+    "decision": "ask"
+   },
+   "rule": "fs.rm.worktree"
+  },
+  {
+   "cmd": "rm -rf .claude/worktrees/build/src",
+   "expect": {
+    "decision": "ask"
+   },
+   "rule": "fs.rm.worktree",
+   "why": "a worktree named like a build folder is still a worktree"
+  },
+  {
+   "cmd": "mv .claude/worktrees/bright-running-fox ../keep",
+   "expect": {
+    "decision": "ask",
+    "snapshot": "recommended"
+   },
+   "rule": "fs.mv.worktree"
+  },
+  {
+   "cmd": "echo done > .claude/worktrees/bright-running-fox/NOTES.md",
+   "expect": {
+    "decision": "ask",
+    "snapshot": "recommended"
+   },
+   "rule": "fs.write.worktree"
+  },
+  {
+   "cmd": "truncate -s 0 .claude/worktrees/bright-running-fox/app.log",
+   "expect": {
+    "decision": "ask"
+   },
+   "rule": "fs.write.worktree"
+  },
+  {
+   "cmd": "echo done >> .claude/worktrees/bright-running-fox/NOTES.md",
+   "expect": {
+    "decision": "allow",
+    "snapshot": "recommended"
+   },
+   "why": "appending destroys nothing"
+  },
+  {
+   "cmd": "rm -rf .claude/worktrees/bright-running-fox/node_modules",
+   "expect": {
+    "decision": "allow",
+    "snapshot": "recommended"
+   },
+   "why": "dependency folders inside a worktree are regenerable too"
+  },
+  {
+   "cmd": "rm .claude/settings.local.json",
+   "expect": {
+    "decision": "allow",
+    "snapshot": "required"
+   },
+   "rule": "fs.rm.project",
+   "why": "the rest of .claude is in the project's snapshots"
+  },
+  {
+   "cmd": "cp notes.md .claude/",
+   "expect": {
+    "decision": "allow",
+    "snapshot": "recommended"
+   }
+  },
+  {
+   "cmd": "rm -rf .idea/caches",
+   "expect": {
+    "decision": "allow",
+    "snapshot": "recommended"
+   },
+   "why": "IDE caches are excluded from snapshots and rebuild themselves"
   }
  ]
 }
