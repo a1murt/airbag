@@ -1,7 +1,7 @@
 # Homebrew cask for Airbag. Lives in a tap (github.com/a1murt/homebrew-airbag) until it qualifies for homebrew/cask.
 cask "airbag" do
-  version "0.1.1"
-  sha256 "27da224ba619f37f7540b7f881bea0b4c5bdfb229e936d1e64020cd2ae998542"
+  version "0.1.2"
+  sha256 "2cf69579d98e9a495e12822facad689bc70c45bad1a4712a5e7bc935790dd95a"
 
   url "https://github.com/a1murt/airbag/releases/download/v#{version}/Airbag-#{version}.zip"
   name "Airbag"
