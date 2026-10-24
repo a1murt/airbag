@@ -5,7 +5,7 @@ cask "airbag" do
 
   url "https://github.com/a1murt/airbag/releases/download/v#{version}/Airbag-#{version}.zip"
   name "Airbag"
-  desc "Undo for AI coding agents: snapshots before every agent command"
+  desc "Undo for AI coding agents: snapshots before agent commands that change files"
   homepage "https://github.com/a1murt/airbag"
 
   livecheck do

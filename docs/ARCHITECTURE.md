@@ -39,7 +39,10 @@ snapshots between agent commands (FSEvents), the UI, the radar, retention and ho
 
 Build: `Scripts/build-app.sh` assembles `Airbag.app` from `swift build -c release` (CLT only; arm64 + x86_64
 via `--triple` + `lipo`), writes Info.plist (LSUIElement), copies `.lproj` resources (own bundle accessor, not
-`Bundle.module`), signs ad-hoc locally or with Developer ID + hardened runtime in CI, notarizes and staples.
+`Bundle.module`) and signs with the hardened runtime: ad-hoc by default, with a Developer ID when `SIGN_IDENTITY`
+is set. `Scripts/package.sh` notarizes and staples only when given a Developer ID and a notary profile; the release
+workflow passes them only when Developer ID secrets are configured. There is no Developer ID yet, so 0.1.x releases
+are ad-hoc signed and not notarized (the cask removes the quarantine flag; the DMG asks once).
 
 ## 3. On-disk layout
 
@@ -60,7 +63,8 @@ via `--triple` + `lipo`), writes Info.plist (LSUIElement), copies `.lproj` resou
 **Pre-command hook** (budget p50 < 300 ms, p95 < 2 s on 50k files): stdin (≤ 1 MiB) → adapter by payload shape
 → resolve root (walk up from `cwd` to the nearest `.git` file/dir or registered root) → rules verdict → if deny:
 guard row + reply deny (no snapshot; nothing changes on deny) → else snapshot (`pre_command`, label = redacted
-command) → event row linking the snapshot → reply (allow / native ask / deny-with-allowance) → socket ping.
+command) → event row linking the snapshot → reply (allow / native ask / deny-with-allowance / allow and record in
+Guard, ADR-030) → socket ping.
 The watchdog thread fires at the hard deadline, prints the already-decided answer and `_exit(0)`s; the
 uncommitted snapshot transaction rolls back and the flock is released by process exit.
 
@@ -95,9 +99,19 @@ record a fingerprint; uninstall removes only Airbag entries. Codex hooks additio
 
 - Rules never depend on the registry, the store or the app. Registry trouble → spool; store trouble → snapshot
   skipped and logged; both → the hook still decides correctly.
-- Hooks fail open on the agent side by default (crash/timeout = command runs). Strict mode (opt-in) sets
-  `onFailure: block` (Claude ≥ 2.1.295) and `failClosed: true` (Cursor) on the pre-shell hook only.
+- On the agent side, Claude Code, Codex and Cursor fail open by default (crash/timeout = command runs); Copilot CLI
+  denies on a hook error (a timeout runs), Gemini CLI denies on a non-zero exit other than 1 that prints text (doc 11
+  §4.4, §4.7). Strict mode (opt-in) sets `onFailure: block` (Claude ≥ 2.1.295) and `failClosed: true` (Cursor) on
+  the pre-shell hook only.
 - `ask` without a registry never becomes allow: native ask where supported, otherwise deny with explanation.
+- A command whose verdict needs a snapshot (`snapshot: required`) and did not get a usable one becomes an ask
+  (`snapshot.unavailable`), also when its verdict was already an ask; a `snapshot: recommended` command still runs.
+  A folder with no files counts as captured only when the walk saw all of it, found no files, skipped none for size
+  and hit no errors (`snapshot_skipped = "empty"`); a folder the user stopped protecting (`not_protected`) needs no
+  snapshot either. Both apply only when that folder is the only root the rules protect for the command (not when the
+  launch folder or a worktree's main checkout is protected too). A walk cut short is incomplete.
+- Where an ask is recorded instead of asked (ADR-030), `snapshot.unavailable` and every `self.*` finding still
+  stop the agent until the user approves (ADR-035). While Airbag is paused nothing waits; blocks still apply.
 - Restore never deletes: anything in its way goes to `aside/` inside the store, covered by retention.
 
 ## 6. Performance budgets
@@ -109,6 +123,8 @@ record a fingerprint; uninstall removes only Airbag entries. Codex hooks additio
 | Snapshot, 50k files, no change | < 150 ms |
 | Radar full poll | < 3 ms median |
 | App idle CPU / RSS | < 1 % / < 100 MB |
+
+Hook and snapshot measurements: `BENCHMARKS.md`. App idle CPU / RSS has not been measured against its budget yet.
 
 ## 7. Security and privacy
 
@@ -131,7 +147,8 @@ English.
 
 - Doc 11's references to git commits/refs in the snapshot store (`commit_oid`, `tree_oid`, git child process
   groups, "cold snapshot 6–8 s") are replaced by doc 10: `registry.snapshots` stores `root_id`, `seq`, counts and
-  bytes; there is no git child to kill; the cold snapshot runs detached.
+  bytes; there is no git child to kill; the hook takes the first snapshot itself under its 1.5 s deadline and
+  leaves an incomplete one to a detached `airbag snapshot` (doc 10 §4.6).
 - Store keying: doc 10 keys stores by root (each worktree its own store); doc 11's project keying is kept for the
   registry only.
 - Hook binary path: `Airbag.app/Contents/Helpers/airbag` (doc 11 §4.10).

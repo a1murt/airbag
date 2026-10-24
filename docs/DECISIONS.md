@@ -113,8 +113,8 @@ and a deny that waits for a click in the menu bar is the manual mode nobody runs
 its own approval prompt (Claude Code, Cursor, Copilot outside bypass permissions) that prompt stays. Elsewhere a risky
 command (an ask) now runs after a snapshot, is recorded in Guard as "ran without asking" and puts a dot on the icon.
 Blocks are unchanged, and a destructive project command whose snapshot failed still waits for the user. Settings →
-"Stop the agent until I approve" restores ADR-012's deny with a one-shot allowance. An agent running `airbag allow`
-is blocked (`self.allow`): self-approval would make every question a slower allow.
+"When a snapshot can't undo a command" → "Stop Until I Approve" restores ADR-012's deny with a one-shot allowance.
+An agent running `airbag allow` is blocked (`self.allow`): self-approval would make every question a slower allow.
 
 **ADR-031 English source, 19 interface languages.** Supersedes the language list of ADR-016. The interface is written in
 English and ships in English, German, Spanish, French, Italian, Dutch, Polish, Brazilian Portuguese, Turkish,
@@ -158,3 +158,32 @@ today"). Notifications: an agent waiting for approval rings (Allow Once / Show);
 without asking go quietly to Notification Center, one per session; servers left running offer Stop / Keep Running;
 nothing while the popover already shows the item, and nothing for snapshots, restores done in the app or pauses.
 "Keep Running" is stored, so kept servers stay quiet after a relaunch. Settings is a real Settings window (⌘,).
+
+**ADR-035 Switching Airbag off and a missing snapshot wait for the user whatever the setting; an empty folder
+counts as captured.** Three changes for 0.1.1 (2026-10-24). (1) An exception to ADR-030: a finding from a `self.`
+rule is never just recorded. It stops the agent until the user approves, with the agent's own prompt where it has one
+and otherwise a deny with "Allow Once" in Airbag, also for Claude Code under bypass permissions, Codex and Gemini CLI
+and whatever Settings → "When a snapshot can't undo a command" says. The rules cover editing, emptying, moving or
+removing the user-level hook files of Claude Code (`~/.claude/settings.json`, `settings.local.json`), Codex
+(`~/.codex/hooks.json`, `config.toml`), Cursor (`~/.cursor/hooks.json`), Gemini CLI (`~/.gemini/settings.json`) and
+Copilot CLI (any `~/.copilot/hooks/*.json`, `~/.copilot/settings.json`, `settings.local.json`); removing or moving a
+folder that holds one (such as `~/.copilot/hooks`); `airbag hooks uninstall` (not with `--dry-run` or `--help`);
+`airbag hooks install --command` or `--home`, which re-point the hooks; and `brew uninstall|remove|rm` of the cask.
+Recording them would let an agent switch off the protection that does the recording. Not covered: the agents' own
+file-edit tools (the hooks match shell tools only, for Claude Code `Bash|Monitor`; Codex's `apply_patch` only gets a
+snapshot before the edit), project-level settings (a project's `.claude/settings*.json` with `disableAllHooks`),
+interpreter one-liners that write the file (`python3 -c`, `node -e`), and anything while Airbag is paused (SQL that
+writes to Airbag's own database through `sqlite3` is a hard block, `self.airbag`). The rules read command text, so a hostile process running as the
+user can get around them. Hard blocks (`self.airbag` on Airbag's data, `self.allow`) are unchanged, and a pause still
+skips every question (ADR-021). (2) A command whose verdict needs a snapshot (`snapshot: required`: `rm`/`mv` in the
+project, `git reset --hard`, `git clean`, …) and did not get a usable one waits for the user even when its verdict
+was already an ask; before, where asks are only recorded (ADR-030), such an ask ran. Commands that only recommend a
+snapshot (`sed -i`, scripts, `cp` onto a project file) still run when it fails. (3) A folder with no files has
+nothing to snapshot, which read as "snapshot unavailable": the first file an agent wrote into a new empty folder
+needed approval, or was denied under bypass permissions. When the walk saw the whole folder (no deadline, nothing unreadable), found no
+files, skipped none for size and hit no errors, the snapshot requirement now counts as met (the command is allowed
+unless another rule asks) and the event records `snapshot_skipped = "empty"`. A folder the user stopped protecting
+(`snapshot_skipped = "not_protected"`) is treated the same: it gets no snapshot and needs none; blocks still apply.
+Both hold only when that folder is the only one the rules protect for the command: when the agent was started in
+another folder or works in a worktree whose main checkout is also protected, the command still waits for the user.
+A walk cut short proves nothing and still counts as incomplete.

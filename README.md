@@ -9,8 +9,8 @@
 </p>
 
 <p align="center">
-  A free Mac menu bar app that snapshots your project before every command<br>
-  Claude Code, Codex, Cursor, Gemini CLI or Copilot CLI runs,<br>
+  A free Mac menu bar app that snapshots your project before each shell command that can change files,<br>
+  whether Claude Code, Codex, Cursor, Gemini CLI or Copilot CLI runs it,<br>
   so a deleted folder, a <code>git reset --hard</code> or a wiped <code>.env</code> is one click back.
 </p>
 
@@ -52,8 +52,8 @@ Three hours of uncommitted work, gone. Your `.env` too, because git never tracke
 its own file edits, not what it runs in the shell, and Time Machine's last local snapshot is up to an hour old.
 
 **With Airbag, that's one click.** A snapshot landed right before the command ran. Click the shield in the menu bar:
-`git clean -fdx && git reset --hard` is at the top of *Recent changes*. Press **Undo**. Everything is back, `.env`
-included, and the undo itself can be undone.
+`git clean -fdx && git reset --hard` is at the top of *Recent changes*. Press **Undo**. Your uncommitted work is back,
+`.env` included, and the undo itself can be undone.
 
 ## Snapshot first, block last
 
@@ -68,16 +68,16 @@ So Airbag works the other way round. It sits underneath your agents, independent
 before any command that can change files. Blocking is kept for the few commands no snapshot can undo.
 
 I wanted one safety net under every agent I use, whichever one I open that day. That's what an airbag is for: not
-to make you drive slower, but to let you drive. **Keep full-auto on.**
+to make you drive slower, but to let you drive.
 
 ### What each safety net catches
 
 | | **Airbag** | Agent checkpoints | git | Time Machine |
 |---|:---:|:---:|:---:|:---:|
-| Saves | before every command | per prompt | when you commit | about hourly |
+| Saves | before each command that can change files | per prompt | when you commit | about hourly |
 | Shell commands (`rm`, `mv`, scripts) | ✓ | Claude Code: no¹ | if committed | last hourly snapshot |
 | Uncommitted work | ✓ | own edits only | ✗ | last hourly snapshot |
-| `.env` and git-ignored files | ✓ | own edits only | ✗ | last hourly snapshot |
+| `.env` and git-ignored files | ✓² | own edits only | ✗ | last hourly snapshot |
 | All your agents, one timeline | ✓ | one agent each | — | — |
 | Blocks what nothing can undo | ✓ | ✗ | ✗ | ✗ |
 | Dev servers agents left running | ✓ Radar | ✗ | ✗ | ✗ |
@@ -85,19 +85,23 @@ to make you drive slower, but to let you drive. **Keep full-auto on.**
 <sub>¹ Claude Code's <a href="https://code.claude.com/docs/en/checkpointing">checkpointing docs</a>: a file that only
 Bash commands changed isn't tracked. Cursor's <a href="https://cursor.com/docs/agent/chat/checkpoints">checkpoints</a>
 capture the files its agent modified. Time Machine keeps a
-<a href="https://support.apple.com/en-us/102154">local snapshot about once an hour</a>.</sub>
+<a href="https://support.apple.com/en-us/102154">local snapshot about once an hour</a>.
+² Except <code>node_modules</code>, build output and caches, which Airbag skips, files over 100 MiB (20 MiB on another
+volume, 1 MiB when the disk is low), and folders the agent only <code>cd</code>s into that aren't git repositories once
+they pass 5,000 files or 500 MB.</sub>
 
 ## What you get
 
-- **Keep full-auto on.** Airbag works in every permission mode, including bypass permissions and `--yolo`.
+- **Works in full-auto.** Airbag works in every permission mode, including bypass permissions and `--yolo`.
 - **Undo** what the agent just did in one click from the menu bar, `.env` included. A file, a folder or a whole
   deleted project comes back too.
-- **See** what every command changed: the timeline lists each command with what it deleted, changed and added.
+- **See** what each command changed: the timeline lists every command that can change files, with what it deleted,
+  changed and added.
 - **Stop** the few commands no snapshot can undo, like `rm -rf ~` or wiping a disk, before they run.
 - **Find** the dev server an agent left on `:3000`, and the session that started it.
 - **Set it up in under a minute.** One timeline for Claude Code, Codex, Cursor, Gemini CLI and Copilot CLI.
 
-### Timeline: every command, and what it changed
+### Timeline: what each command changed
 
 One row per agent command: `rm -rf src/legacy` · 2 deleted · Claude Code, grouped by day. **Undo** puts back exactly
 what that command changed. Open a row for its files and diffs, or search a file name to find when it disappeared.
@@ -107,11 +111,14 @@ what that command changed. Open a row for its files and diffs, or search a file 
   <img src="docs/images/main-timeline-light.png" width="820" alt="Airbag timeline: agent commands with what each changed, an Undo button and a diff">
 </picture>
 
-### Undo and Restore: nothing is ever lost
+### Undo and Restore: both can be undone
 
-**Undo** is instant, because it is reversible: Airbag snapshots before it too, and the message offers Undo again.
-**Restore** takes a whole project (or one file) back to a chosen moment; it asks first and shows what comes back,
-what gets reverted and what is set aside. A restore never deletes, and even a deleted project folder comes back.
+**Undo** runs without asking, because it is reversible: Airbag snapshots before it too, and the message offers Undo
+again. **Restore** takes a whole project (or one file) back to a chosen moment; it asks first and shows what comes
+back, what gets reverted and what is set aside. A restore never deletes, and even a deleted project folder comes back.
+What a snapshot doesn't hold, it can't bring back: git history (`.git`), files outside the project, `node_modules`,
+build output and caches, files over 100 MiB (20 MiB for a project on another volume, 1 MiB when the disk is low), and a
+folder the agent only `cd`s into that isn't a git repository, once it passes 5,000 files or 500 MB.
 
 <p align="center">
   <picture>
@@ -125,9 +132,13 @@ what gets reverted and what is set aside. A restore never deletes, and even a de
 Deleting your home folder or system folders, wiping a disk, deleting Airbag's own data: blocked before it runs, and
 the agent is told to ask you instead of retrying. Agents can't approve their own commands.
 
-Risky commands (force push, writes outside the project, databases, cloud resources, `curl | sh`, `sudo`) don't
-interrupt the agent. They land in Guard with a dot on the menu bar icon, or go to the agent's own approval prompt
-where it has one. Prefer to approve them first? One setting makes them wait for you, and a notification with
+Risky commands (force push, writes outside the project, dropping databases, deleting cloud resources, `curl | sh`,
+`sudo`) don't interrupt the agent. They land in Guard with a dot on the menu bar icon, or go to the agent's own
+approval prompt where it has one. Two kinds wait for you even where other risky commands are only recorded: shell
+commands that edit, move or remove an agent's user-level hook settings, `airbag hooks uninstall` and `brew uninstall`
+of Airbag, and a command that needs a snapshot (`rm`, `mv`, `git reset --hard`, `git clean`…) when Airbag couldn't
+take one. While Airbag is paused nothing waits; blocks still apply. Prefer to approve the rest first too? Set
+**When a snapshot can't undo a command** to **Stop Until I Approve** in Settings, and a notification with
 **Allow Once** tells you an agent is waiting.
 
 <picture>
@@ -135,7 +146,7 @@ where it has one. Prefer to approve them first? One setting makes them wait for 
   <img src="docs/images/main-guard-light.png" width="820" alt="Guard listing risky commands with the agent, session and rule that flagged each one">
 </picture>
 
-### Radar: "Port 3000 is already in use", solved
+### Radar: what is on port 3000, and who started it
 
 Every listening dev server with its project, agent and session, even after the agent has exited. Servers left
 running by an ended session come first, with **Stop** and **Keep Running** (also right in the notification). Stop
@@ -190,19 +201,23 @@ Airbag.app (menu bar): timeline · restore · Guard · Radar · snapshots after 
 
 | | |
 |---|---|
-| Real agent shell commands replayed from the author's Mac | **1,987** |
-| Ran silently (a snapshot first when they changed files) | **96 %** |
-| Flagged as risky | **4.1 %** |
-| Blocked | **1** |
-| Hook overhead, median | **~13 ms** |
-| Snapshot of an unchanged 5k-file project | **~10 ms** |
-| Snapshot of an unchanged 50k-file project | **~120 ms** |
-| Restoring 100 files | **~60 ms** |
-| Idle app | **~0.3 % CPU, ~21 MB** |
-| Guard test cases, including an adversarial red-team set | **444** |
-| Automated tests, run in CI | **109** |
+| Distinct Claude Code shell commands replayed from the author's Mac | **2,578** |
+| Allowed (a snapshot first when they can change files) | **95.7 %** |
+| Flagged as risky | **4.2 %** |
+| Blocked | **2** |
+| Hook time per read-only command, process start to reply, median | **13 ms** |
+| Hook time per file-changing command, unchanged 500- to 5k-file project, median | **15–26 ms** |
+| First file-changing command in a new 5k-file project, initial snapshot included | **566–729 ms** |
+| Snapshot of an unchanged 5k-file project † | **9–11 ms** |
+| Snapshot of an unchanged 50k-file project † | **116–184 ms** |
+| Restoring 100 files, 5k / 50k-file project † | **60 / 410 ms** |
+| Guard test cases, including an adversarial red-team set | **542** |
+| Automated tests, run in CI | **118** |
 
-<sub>Deep dives: [architecture](docs/ARCHITECTURE.md) · [decisions](docs/DECISIONS.md) ·
+<sub>Apple M4, release build. Replay and hook times: 0.1.1, 2026-10-24; method, scripts and full results in
+[benchmarks](docs/BENCHMARKS.md). † From [design/10 §11](docs/design/10-snapshot-engine.md) (2026-10-18), not
+re-measured for 0.1.1.<br>
+Deep dives: [architecture](docs/ARCHITECTURE.md) · [decisions](docs/DECISIONS.md) ·
 [snapshot engine](docs/design/10-snapshot-engine.md) · [Guard rules](docs/design/12-circuit-breaker-rules.md) ·
 [dogfooding](docs/research/09-dogfooding.md)</sub>
 
@@ -219,8 +234,8 @@ Homebrew also puts the `airbag` command on your PATH, and `brew upgrade` keeps y
 <summary><b>Without Homebrew</b></summary>
 
 **[Download the latest `.dmg`](https://github.com/a1murt/airbag/releases/latest)**, drag Airbag to Applications and
-open it. macOS asks once on first launch: **System Settings → Privacy & Security → Open Anyway** (macOS 15 and later),
-or right-click Airbag → **Open** (macOS 14).
+open it. Releases are not notarized yet (there is no Developer ID), so macOS asks once on first launch:
+**System Settings → Privacy & Security → Open Anyway** (macOS 15 and later), or right-click Airbag → **Open** (macOS 14).
 </details>
 
 <p align="center">
@@ -266,7 +281,7 @@ airbag changes ID                      files changed by a snapshot
 airbag diff FROM [TO] [--path F]       what changed (no TO = working tree)
 airbag restore ID [--path P]           restore; never deletes, undoable
 airbag check "<command>"               what Guard decides, and why (runs nothing)
-airbag guard | allow ID                flagged commands; approve one once (you, not the agent)
+airbag guard | allow ID                flagged commands; let one waiting command run once (you, not the agent)
 airbag ports | stop PID [--force]      dev servers and the session that started them
 airbag hooks status | install | uninstall [--all]
 ```
@@ -276,13 +291,13 @@ Ask Guard what it would do, without running anything:
 ```console
 $ airbag check "rm -rf ~"
 BLOCK  snapshot: recommended  (may change files: rm)
-  [fs.rm.catastrophic] block: it would delete your home directory, which no snapshot covers.
+  [fs.rm.catastrophic] block: it would delete your home directory, which no snapshot covers.  ← /Users/you
 
 agent sees: Airbag blocked `rm -rf ~`: it would delete your home directory, which no snapshot covers. Do not retry this command or work around it with another tool; choose a safer, narrower command or ask the user.
 
 $ airbag check "git reset --hard"
 ALLOW  snapshot: required  (may change files: git reset)
-  [git.reset.hard] allow: it discards uncommitted changes (restorable from the snapshot taken first).
+  [git.reset.hard] allow: it discards uncommitted changes (restorable from the snapshot taken first).  ← git reset --hard
 ```
 
 ## Privacy
@@ -300,9 +315,13 @@ The threat model is in [SECURITY.md](SECURITY.md).
 <details>
 <summary><b>Will it slow my agent down or keep interrupting me?</b></summary>
 
-No. The hook adds about 13 ms per command (median), a snapshot of an unchanged 5k-file project takes about 10 ms,
-and read-only commands need no snapshot at all. Replaying 1,987 real agent shell commands, 96 % ran silently,
-4.1 % were flagged as risky, and 1 was blocked.
+Rarely. The hook takes about 13 ms for a read-only command, which needs no snapshot, and 15–26 ms for one that can
+change files in a 500- to 5,000-file project that hasn't changed since the last snapshot (median, process start to
+reply); that time grows with the project's size. The first command that can change files in a project Airbag hasn't
+snapshotted yet waits for that first snapshot: 566–729 ms for 5,000 files. In a large project (tens of thousands of
+files) the first snapshot takes longer than the hook's 1.5 s limit and finishes in the background; until it is done,
+commands that need a snapshot (`rm`, `mv`, `git reset --hard`…) wait for you. Replaying 2,578 distinct Claude Code
+shell commands from the author's Mac, 95.7 % were allowed, 4.2 % were flagged as risky, and 2 were blocked.
 </details>
 
 <details>
@@ -339,16 +358,23 @@ snapshot can cover. A sandbox limits what an agent can do; Airbag makes what it 
 <details>
 <summary><b>What about databases, cloud resources and force pushes?</b></summary>
 
-They live outside your project's files, so Airbag guards them at the command instead. Force pushes, database and
-cloud-resource commands are flagged as risky and recorded in Guard, or go to the agent's own approval prompt. Change
-one setting and they wait for you.
+They live outside your project's files, so Airbag guards them at the command instead. Force pushes, commands that
+drop or wipe a database (`DROP` or `TRUNCATE` through a client, `dropdb`, `mysqladmin drop`, migration resets) and
+cloud-resource deletions are flagged as risky and recorded in Guard, or go to the agent's own approval prompt. Set
+**When a snapshot can't undo a command** to **Stop Until I Approve** and they wait for you.
 </details>
 
 <details>
 <summary><b>Can an agent switch Airbag off?</b></summary>
 
-Deleting Airbag's data is blocked, touching its hooks is caught by Guard, and agents can't approve their own
-commands: `airbag allow` works only for you.
+File commands that target Airbag's data (`rm`, `mv`, `cp`, `sed -i`, redirects…) and SQL written into its database are
+blocked. Shell commands that edit, move or remove an agent's user-level hook settings, `airbag hooks uninstall` and
+`brew uninstall` of Airbag stop the agent until you approve them (in the agent's own prompt, or with **Allow Once** in
+Airbag), even where other risky commands are only recorded. And agents can't approve their own commands:
+`airbag allow` is blocked when an agent runs it. Guard reads the command text, so it doesn't see an agent's own file-edit
+tools, project-level settings (such as `disableAllHooks` in a project's `.claude/settings.json`), or a script or
+`python -c` that writes the file; while Airbag is paused only its blocks apply, and a hostile program running as you
+can get around all of it.
 </details>
 
 <details>
