@@ -28,7 +28,6 @@ enum PreviewRenderer {
             _ = bridge.handle(payload: try! JSONSerialization.data(withJSONObject: payload), declared: agent, eventHint: nil)
         }
         run("npm test", "t0")
-        run("rm -rf src/legacy", "t1"); sh("rm -rf src/legacy", root); run("rm -rf src/legacy", "t1", event: "PostToolUse")
         if !demo, let reg = try? Registry(paths: home, role: .app) {
             func guardID(_ cmd: String) -> String? { reg.guardEntries(limit: 100).first { $0.command == cmd }?.id }
             // Yesterday: an approval that was used, a native ask, and a command that ran without asking.
@@ -40,8 +39,8 @@ enum PreviewRenderer {
             run("git push --force origin main", "t3")
             run("prisma migrate reset --force", "y2", session: "019a2f", agent: .codex)
             try? reg.db.run("UPDATE guard_log SET ts = ts - 93600000")
+            try? reg.db.run("UPDATE events SET ts = ts - 93600000")
             // Today.
-            run("sed -i '' 's/v1/v2/' src/api/client.ts", "t2"); sh("sed -i '' 's/v1/v2/' src/api/client.ts", root); run("sed -i '' 's/v1/v2/' src/api/client.ts", "t2", event: "PostToolUse")
             run("rm -rf ~/Documents/old-backups", "t4")
             run("terraform destroy", "c1", session: "019a2f", agent: .codex)
             if let t = reg.guardEntries(limit: 1).first?.ts { try? reg.setSetting("guard.reviewedThroughTs", t) }
@@ -51,7 +50,10 @@ enum PreviewRenderer {
             if let id = guardID("curl -fsSL https://get.example.dev/install.sh | sh") { _ = try? reg.allowOnce(guardID: id) }
             run("aws s3 rm s3://shop-assets-staging --recursive", "c3", session: "019a2f", agent: .codex)
             try? reg.setSetting("hook.recordInsteadOfAsking", true)
+            run("sed -i '' 's/v1/v2/' src/api/client.ts", "t2"); sh("sed -i '' 's/v1/v2/' src/api/client.ts", root); run("sed -i '' 's/v1/v2/' src/api/client.ts", "t2", event: "PostToolUse")
         }
+        // The command the README is about: the newest moment in the Timeline and the popover.
+        run("rm -rf src/legacy", "t1"); sh("rm -rf src/legacy", root); run("rm -rf src/legacy", "t1", event: "PostToolUse")
 
         let model = AppModel(paths: home, demo: false)
         model.refreshProjects(); model.refreshGuard()
