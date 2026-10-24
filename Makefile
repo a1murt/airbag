@@ -30,7 +30,8 @@ demo: app
 	build/demo/encode-video build/demo/frames docs/images/airbag-demo.mp4 30
 	cp build/demo/demo.gif docs/images/demo.gif
 	build/Airbag.app/Contents/MacOS/Airbag --render-previews build/previews-en -AppleLanguages "(en)"
-	for f in popover main-timeline main-radar main-guard restore welcome; do cp build/previews-en/$$f-light.png build/previews-en/$$f-dark.png docs/images/; done
+	for f in popover main-timeline main-radar main-guard restore; do cp build/previews-en/$$f-light.png build/previews-en/$$f-dark.png docs/images/; done
+	for m in light dark; do cp build/previews-en/welcome-3-$$m.png docs/images/welcome-$$m.png; done
 
 e2e:
 	python3 -I Scripts/e2e-hooks.py

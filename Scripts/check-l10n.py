@@ -5,7 +5,8 @@
 2. Every other language has exactly the reference keys, the same format specifiers (reordered only with positional
    specifiers such as %1$@), and every plural form its language needs (CLDR categories).
 
-usage: check-l10n.py [--lang CODE]      (default: all languages)
+usage: check-l10n.py [--lang CODE] [--source]   (default: all languages, compared with ru;
+       --source compares with the keys the code uses, plural keys excluded)
 """
 import glob, json, os, plistlib, re, subprocess, sys
 
@@ -81,6 +82,9 @@ def main():
     problems = []
     ref = load_strings(f'{RES}/{REFERENCE}.lproj/Localizable.strings')
     ref_plural = plistlib.load(open(f'{RES}/en.lproj/Localizable.stringsdict', 'rb'))
+    if '--source' in sys.argv:
+        # Compare with the keys the source uses (while the reference translation is being updated itself).
+        ref = {k: k for k in source_keys() if k not in ref_plural}
     if only in (None, REFERENCE):
         ru_plural = plistlib.load(open(f'{RES}/{REFERENCE}.lproj/Localizable.stringsdict', 'rb'))
         for k, f in sorted(source_keys().items()):

@@ -2,6 +2,38 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<key>%lld commands checked today</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@n@</string>
+		<key>n</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>%lld command checked today</string>
+			<key>other</key>
+			<string>%lld commands checked today</string>
+		</dict>
+	</dict>
+	<key>%lld commands ran without snapshots</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@n@</string>
+		<key>n</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>%lld command ran without a snapshot</string>
+			<key>other</key>
+			<string>%lld commands ran without snapshots</string>
+		</dict>
+	</dict>
 	<key>%lld days</key>
 	<dict>
 		<key>NSStringLocalizedFormatKey</key>
@@ -34,7 +66,7 @@
 			<string>%lld files</string>
 		</dict>
 	</dict>
-	<key>%lld files created later will be moved into Airbag's store (not deleted)</key>
+	<key>%lld newer files set aside, not deleted</key>
 	<dict>
 		<key>NSStringLocalizedFormatKey</key>
 		<string>%#@n@</string>
@@ -45,73 +77,9 @@
 			<key>NSStringFormatValueTypeKey</key>
 			<string>lld</string>
 			<key>one</key>
-			<string>%lld file created later will be moved into Airbag's store (not deleted)</string>
+			<string>%lld newer file set aside, not deleted</string>
 			<key>other</key>
-			<string>%lld files created later will be moved into Airbag's store (not deleted)</string>
-		</dict>
-	</dict>
-	<key>%lld files will be restored</key>
-	<dict>
-		<key>NSStringLocalizedFormatKey</key>
-		<string>%#@n@</string>
-		<key>n</key>
-		<dict>
-			<key>NSStringFormatSpecTypeKey</key>
-			<string>NSStringPluralRuleType</string>
-			<key>NSStringFormatValueTypeKey</key>
-			<string>lld</string>
-			<key>one</key>
-			<string>%lld file will be restored</string>
-			<key>other</key>
-			<string>%lld files will be restored</string>
-		</dict>
-	</dict>
-	<key>%lld live</key>
-	<dict>
-		<key>NSStringLocalizedFormatKey</key>
-		<string>%#@n@</string>
-		<key>n</key>
-		<dict>
-			<key>NSStringFormatSpecTypeKey</key>
-			<string>NSStringPluralRuleType</string>
-			<key>NSStringFormatValueTypeKey</key>
-			<string>lld</string>
-			<key>one</key>
-			<string>%lld live</string>
-			<key>other</key>
-			<string>%lld live</string>
-		</dict>
-	</dict>
-	<key>%lld orphans</key>
-	<dict>
-		<key>NSStringLocalizedFormatKey</key>
-		<string>%#@n@</string>
-		<key>n</key>
-		<dict>
-			<key>NSStringFormatSpecTypeKey</key>
-			<string>NSStringPluralRuleType</string>
-			<key>NSStringFormatValueTypeKey</key>
-			<string>lld</string>
-			<key>one</key>
-			<string>%lld orphan</string>
-			<key>other</key>
-			<string>%lld orphans</string>
-		</dict>
-	</dict>
-	<key>%lld projects protected</key>
-	<dict>
-		<key>NSStringLocalizedFormatKey</key>
-		<string>%#@project@</string>
-		<key>project</key>
-		<dict>
-			<key>NSStringFormatSpecTypeKey</key>
-			<string>NSStringPluralRuleType</string>
-			<key>NSStringFormatValueTypeKey</key>
-			<string>lld</string>
-			<key>one</key>
-			<string>%lld project protected</string>
-			<key>other</key>
-			<string>%lld projects protected</string>
+			<string>%lld newer files set aside, not deleted</string>
 		</dict>
 	</dict>
 	<key>%lld servers</key>
@@ -130,6 +98,22 @@
 			<string>%lld servers</string>
 		</dict>
 	</dict>
+	<key>%lld skipped because they changed during the restore.</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@n@</string>
+		<key>n</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>%lld skipped because it changed during the restore.</string>
+			<key>other</key>
+			<string>%lld skipped because they changed during the restore.</string>
+		</dict>
+	</dict>
 	<key>%lld snapshots</key>
 	<dict>
 		<key>NSStringLocalizedFormatKey</key>
@@ -146,7 +130,7 @@
 			<string>%lld snapshots</string>
 		</dict>
 	</dict>
-	<key>Restore %lld items to %@?</key>
+	<key>It left %lld servers running: %@</key>
 	<dict>
 		<key>NSStringLocalizedFormatKey</key>
 		<string>%1$#@n@</string>
@@ -157,9 +141,73 @@
 			<key>NSStringFormatValueTypeKey</key>
 			<string>lld</string>
 			<key>one</key>
-			<string>Restore %1$lld item to %2$@?</string>
+			<string>It left %1$lld server running: %2$@</string>
 			<key>other</key>
-			<string>Restore %1$lld items to %2$@?</string>
+			<string>It left %1$lld servers running: %2$@</string>
+		</dict>
+	</dict>
+	<key>Protecting %lld projects</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@n@</string>
+		<key>n</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>Protecting %lld project</string>
+			<key>other</key>
+			<string>Protecting %lld projects</string>
+		</dict>
+	</dict>
+	<key>Removed %lld old snapshots · %@ freed</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%1$#@n@</string>
+		<key>n</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>Removed %1$lld old snapshot · %2$@ freed</string>
+			<key>other</key>
+			<string>Removed %1$lld old snapshots · %2$@ freed</string>
+		</dict>
+	</dict>
+	<key>Restore %lld files to %@?</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%1$#@n@</string>
+		<key>n</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>Restore %1$lld file to %2$@?</string>
+			<key>other</key>
+			<string>Restore %1$lld files to %2$@?</string>
+		</dict>
+	</dict>
+	<key>Restored %lld files in %@</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%1$#@n@</string>
+		<key>n</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>Restored %1$lld file in %2$@</string>
+			<key>other</key>
+			<string>Restored %1$lld files in %2$@</string>
 		</dict>
 	</dict>
 	<key>Session ended — stop its %lld servers?</key>
@@ -176,6 +224,22 @@
 			<string>Session ended — stop its server?</string>
 			<key>other</key>
 			<string>Session ended — stop its %lld servers?</string>
+		</dict>
+	</dict>
+	<key>Snapshot taken of %lld projects</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@n@</string>
+		<key>n</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>Snapshot taken of %lld project</string>
+			<key>other</key>
+			<string>Snapshot taken of %lld projects</string>
 		</dict>
 	</dict>
 </dict>

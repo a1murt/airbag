@@ -105,6 +105,8 @@ enum PreviewRenderer {
         let snaps = (try? SnapshotStore.open(root: root, paths: home).list(limit: 50)) ?? []
         let beforeRm = snaps.first(where: { $0.label?.hasPrefix("Before `rm -rf src/legacy") == true }) ?? snaps.last
         let allRecent = model.recentChanges
+        var previewReport = RestoreReport()
+        previewReport.restored = ["src/legacy/cart.ts", "src/legacy/checkout.ts"]
         let allGuards = model.guardEntries
 
         if demo {
@@ -113,7 +115,13 @@ enum PreviewRenderer {
             model.guardEntries = []
             model.recentChanges = allRecent.filter { $0.command == "rm -rf src/legacy" }
             renderPopover(model, to: dir + "/popover.png")
-            model.show(String(localized: "Restored \(2) files in \("shop-app")"), style: .success, action: (String(localized: "Undo"), {}))
+            // A real Undo on the throwaway project: the popover then shows its result and the row's check.
+            if let change = model.recentChanges.first {
+                Task { await model.undo(change) }
+                let until = Date().addingTimeInterval(8)
+                while model.toast == nil && Date() < until { RunLoop.main.run(until: Date().addingTimeInterval(0.05)) }
+                model.recentChanges = [change]
+            }
             renderPopover(model, to: dir + "/popover-undone.png")
             model.dismissToast()
             model.selectedTab = .timeline
@@ -132,7 +140,7 @@ enum PreviewRenderer {
         // Popover: a message with Undo, a server left running, a block since the last look, the rm -rf with Undo.
         model.recentChanges = allRecent.filter { $0.command == "rm -rf src/legacy" }
         model.guardEntries = allGuards.filter { $0.decision == "deny" }
-        model.show(String(localized: "Restored \(2) files in \("shop-app")"), style: .success, action: (String(localized: "Undo"), {}))
+        model.show(RestoreWindow.headline(previewReport, root: root), style: .success, action: (String(localized: "Undo"), {}))
         renderPopover(model, to: dir + "/popover.png")
         model.dismissToast()
         model.recentChanges = allRecent

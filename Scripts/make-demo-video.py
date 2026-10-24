@@ -147,8 +147,8 @@ popover = popover_layer('popover-light.png')
 popover_undone = popover_layer('popover-undone-light.png')
 POP_X, POP_Y = ICON_X - POP_W // 2, 40
 pp = lambda x, y: (POP_X + x * POP_W / POP_PX, POP_Y + y * POP_W / POP_PX)
-UNDO_PX = tuple(float(v) for v in os.environ.get('UNDO_PX', '690,330').split(','))            # Undo in "Recent changes"
-RECENT_PX = tuple(float(v) for v in os.environ.get('RECENT_PX', '14,262,746,372').split(','))  # that row
+UNDO_PX = tuple(float(v) for v in os.environ.get('UNDO_PX', '690,222').split(','))            # Undo in "Recent changes"
+RECENT_PX = tuple(float(v) for v in os.environ.get('RECENT_PX', '14,184,746,262').split(','))  # that row
 UNDO = pp(*UNDO_PX)
 RECENT_ROW = (*pp(RECENT_PX[0], RECENT_PX[1]), *pp(RECENT_PX[2], RECENT_PX[3]))
 
