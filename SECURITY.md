@@ -43,9 +43,10 @@ security boundary against a hostile agent, a malicious plugin, or malware runnin
   depend on this setting. Except while Airbag is paused (then nothing waits; blocks still apply), two kinds always
   wait for approval: switching Airbag off (above), and a command that needs a snapshot (`rm` or `mv` in the
   project, `git reset --hard`, `git clean`, …) when Airbag could not take a usable one. A command for which a
-  snapshot is only recommended (`sed -i`, a script, `cp` onto a project file) still runs if its snapshot fails. A
-  folder with no files, or one you stopped protecting (Stop Protecting…), needs no snapshot, as long as it is the
-  only folder protected for that command.
+  snapshot is only recommended (`sed -i`, a script, `cp` onto a project file) still runs if its snapshot fails. Each
+  protected folder such a command deletes or resets in needs its own snapshot: the folder the agent was started in,
+  or a worktree's main checkout, is snapshotted when a command targets it. A folder with no files, or one you stopped
+  protecting (Stop Protecting…), needs none.
 - **Data at rest.** Snapshots are copies of project files, including `.env` and other secrets. They live in
   `~/Library/Application Support/Airbag` with 0700/0600 permissions and are excluded from Time Machine and
   Spotlight. Anyone who can read your home folder can read them.
