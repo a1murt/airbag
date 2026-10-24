@@ -365,6 +365,45 @@ func decode(_ s: String?) -> [String: Any] {
         #expect(out.finalDecision == "deny_fallback")
     }
 
+    /// An agent worktree (`.claude/worktrees/<name>`) is a snapshot root of its own, which the project's snapshots skip.
+    /// Deleting it from the main checkout used to be allowed as "restorable" with nothing of it in any snapshot.
+    @Test func agentWorktreeIsSnapshottedBeforeItIsDeleted() throws {
+        let h = HookSandbox(); defer { h.cleanup() }
+        _ = sh("git worktree add -q .claude/worktrees/wt -b wt", cwd: h.root)
+        h.sb.write(".claude/worktrees/wt/draft.md", "not committed\n")
+        let worktree = try #require(FileSystem.canonicalPath(h.root + "/.claude/worktrees/wt"))
+        let out = h.run(.claudeCode, h.claudePre("rm -rf .claude/worktrees/wt"))
+        #expect(out.finalDecision == "allow")
+        #expect(out.verdict?.primary?.ruleId == "fs.rm.project-root")
+        // The worktree's own snapshot holds the uncommitted file and the .git link back to the main checkout.
+        let store = try SnapshotStore.open(root: worktree, paths: h.paths, create: false)
+        let snap = try #require(try store.latest())
+        let exported = h.sb.tmp.sub("exported")
+        _ = try store.export(snap.id, to: exported)
+        #expect((try? String(contentsOfFile: exported + "/draft.md", encoding: .utf8)) == "not committed\n")
+        #expect(FileManager.default.fileExists(atPath: exported + "/.git"))
+        // Every worktree at once: the user decides.
+        let all = h.run(.claudeCode, h.claudePre("rm -rf .claude/worktrees"))
+        #expect(all.finalDecision == "ask")
+        #expect(all.verdict?.primary?.ruleId == "fs.rm.worktree")
+    }
+
+    @Test func agentWorktreeThatCannotBeSnapshottedWaitsForTheUser() throws {
+        let h = HookSandbox(); defer { h.cleanup() }
+        _ = sh("git worktree add -q .claude/worktrees/wt -b wt", cwd: h.root)
+        let store = try SnapshotStore.open(root: h.root + "/.claude/worktrees/wt", paths: h.paths)
+        _ = store.snapshot(SnapshotRequest(trigger: .initial))
+        #expect(store.lock.acquire(waitMs: 0))
+        defer { store.lock.release() }
+        var cfg = HookBridgeConfig(paths: h.paths, environment: [:])
+        cfg.spawnBackground = false; cfg.home = h.userHome; cfg.lockWaitMs = 50
+        let data = try JSONSerialization.data(withJSONObject: h.claudePre("rm -rf .claude/worktrees/wt/src", mode: "bypassPermissions"))
+        let out = HookBridge(config: cfg).handle(payload: data, declared: .claudeCode, eventHint: nil)
+        #expect(out.snapshotSkipped == "busy")
+        #expect(out.finalDecision == "deny_fallback")
+        #expect(out.verdict?.findings.contains { $0.ruleId == "snapshot.unavailable" } == true)
+    }
+
     @Test func postCommandSnapshotRecordsWhatChanged() throws {
         let h = HookSandbox(); defer { h.cleanup() }
         let pre = h.run(.claudeCode, h.claudePre("sed -i '' s/42/43/ src/index.ts", id: "toolu_x"))

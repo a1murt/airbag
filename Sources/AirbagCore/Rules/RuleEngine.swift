@@ -85,6 +85,8 @@ enum PathClass: Equatable {
     case projectRoot(String)    // a protected root itself
     case insideProject(String)  // inside a protected root
     case regenerable            // inside an excluded directory (node_modules, dist, …) of a protected root
+    case agentWorktree(String)  // in an agent worktree (.claude/worktrees/<name>) of a protected root, not protected itself
+    case holdsWorktrees         // a folder of a protected root that holds agent worktrees (.claude/worktrees, .claude)
     case temporary
     case device
     case outside
@@ -127,6 +129,14 @@ public struct RuleEngine: Sendable {
         return analyzer.visited.filter { seen.insert($0).inserted }
     }
 
+    /// Agent worktrees inside a protected root (`.claude/worktrees/<name>`) that the command's paths point into. The
+    /// root's snapshots skip them, so a hook adds them to the protected roots and snapshots each as a root of its own.
+    public func worktreeRoots(_ command: String, context: GuardContext) -> [String] {
+        var analyzer = Analyzer(context: context)
+        analyzer.analyze(command, depth: 0)
+        return analyzer.worktrees
+    }
+
     /// The parts of the command that may change files, which is why it gets a snapshot (empty for a read-only command).
     public func writers(_ command: String, context: GuardContext) -> [String] {
         var analyzer = Analyzer(context: context)
@@ -147,6 +157,8 @@ struct Analyzer {
     var current = ""
     var cwd: String?
     var visited: [String] = []
+    /// Agent worktrees the command's paths point into (recorded by `classify`).
+    var worktrees: [String] = []
 
     init(context: GuardContext) {
         self.context = context
@@ -281,7 +293,8 @@ struct Analyzer {
             || hookConfigFiles.contains { $0.hasPrefix(path + "/") }
     }
 
-    func classify(_ resolved: Resolved?) -> PathClass {
+    /// Records the agent worktrees it meets (`worktrees`), which a hook then protects and snapshots.
+    mutating func classify(_ resolved: Resolved?) -> PathClass {
         guard let r = resolved else { return .unknown }
         let p = r.path
         if p.hasPrefix("/dev/") {
@@ -298,7 +311,10 @@ struct Analyzer {
             if p.hasPrefix(root + "/") {
                 let comps = p.dropFirst(root.count + 1).split(separator: "/").map(String.init)
                 if comps.first == ".git" { return .gitInternals(root) }
-                if comps.contains(where: { Analyzer.excludedNames.contains($0) }) { return .regenerable }
+                if let worktree = worktreeClass(comps, root: root) { return worktree }
+                let rel = comps.joined(separator: "/")
+                if comps.contains(where: { Analyzer.excludedNames.contains($0) })
+                    || Exclusions.defaultRelativePaths.contains(where: { rel == $0 || rel.hasPrefix($0 + "/") }) { return .regenerable }
                 return .insideProject(root)
             }
         }
@@ -311,6 +327,47 @@ struct Analyzer {
             if p.hasPrefix(tt + "/") { return .temporary }
         }
         return .outside
+    }
+
+    /// Agent worktrees (`.claude/worktrees/<name>`) are snapshot roots of their own, which the snapshots of the project
+    /// they sit in skip. A path in one names that worktree; a folder holding them stands for all of them. `comps` is the
+    /// path below the protected `root`.
+    mutating func worktreeClass(_ comps: [String], root: String) -> PathClass? {
+        for folder in Exclusions.worktreeFolders.sorted() {
+            let parts = folder.split(separator: "/").map(String.init)
+            let base = root + "/" + folder
+            guard comps.count > parts.count, comps.starts(with: parts) else {
+                if parts.starts(with: comps), holdsEntries(base) { return .holdsWorktrees }
+                continue
+            }
+            let below = Array(comps.dropFirst(parts.count))
+            // The worktree is the outermost folder with a `.git` (Codex nests `<id>/<repo>`), else the first one.
+            var depth = 1
+            if context.useFileSystem, let d = (1...below.count).first(where: { hasGitEntry(base + "/" + below.prefix($0).joined(separator: "/")) }) {
+                depth = d
+            }
+            if below.dropFirst(depth).contains(where: { Analyzer.excludedNames.contains($0) }) { return .regenerable }
+            let worktree = base + "/" + below.prefix(depth).joined(separator: "/")
+            var st = stat()
+            if context.useFileSystem && lstat(worktree, &st) != 0 { return nil } // nothing there to lose
+            if !worktrees.contains(worktree) { worktrees.append(worktree) }
+            return .agentWorktree(worktree)
+        }
+        return nil
+    }
+
+    /// Whether the folder has anything in it (without the real file system, assume it does).
+    func holdsEntries(_ dir: String) -> Bool {
+        guard context.useFileSystem else { return true }
+        return (try? FileManager.default.contentsOfDirectory(atPath: dir))?.contains { $0 != ".DS_Store" } ?? false
+    }
+
+    /// The end of the reason for a path in an agent worktree, or a folder holding them, that is not protected itself.
+    func worktreeRisk(_ cls: PathClass, _ resolved: Resolved?) -> String {
+        let what: String
+        if case .agentWorktree(let w) = cls { what = resolved == Resolved(path: w, contents: false) ? "an agent worktree" : "which is in an agent worktree" }
+        else { what = "which holds agent worktrees" }
+        return what + ": this project's snapshots skip agent worktrees (each is a snapshot root of its own), so the snapshot taken first does not cover uncommitted work there."
     }
 
     // MARK: per-command analysis
@@ -615,6 +672,8 @@ struct Analyzer {
             case .unknown where truncates: add("fs.truncate.opaque", .ask, .recommended, "it overwrites a file whose path depends on an unresolved variable.", r.target.text)
             case .gitInternals where truncates: add("git.internals.write", .ask, .recommended, "it overwrites a file inside .git, which snapshots do not cover.", r.target.text)
             case .insideProject, .projectRoot: if truncates { add("fs.truncate.project", .allow, .required, "it overwrites a project file (a snapshot is taken first).", r.target.text, roots: cls.roots) }
+            case .agentWorktree where truncates && replacesOrUnknown(resolve(r.target)?.path):
+                add("fs.write.worktree", .ask, .recommended, "it overwrites \(r.target.text), \(worktreeRisk(cls, resolve(r.target)))", r.target.text)
             default: break
             }
         }
@@ -914,10 +973,13 @@ struct Analyzer {
             case .projectRoot(let r):
                 if hasGitDirectory(r) {
                     add("fs.rm.project-root", .ask, .required, "it would \(verb) the whole project including its git history, which snapshots do not cover.", t.text, roots: [r])
+                } else if hasGitEntry(r) {
+                    add("fs.rm.project-root", .allow, .required, "it deletes the whole worktree folder (restorable from the snapshot taken first; the git history its .git file points to is not touched).", t.text, roots: [r])
                 } else {
                     add("fs.rm.project-root", .allow, .required, "it deletes the whole project folder (restorable from the snapshot taken first).", t.text, roots: [r])
                 }
             case .insideProject(let r): add("fs.rm.project", .allow, .required, "it deletes project files (restorable from the snapshot taken first).", t.text, roots: [r])
+            case .agentWorktree, .holdsWorktrees: add("fs.rm.worktree", .ask, .recommended, "it would \(verb) \(t.text), \(worktreeRisk(cls, resolve(t)))", t.text)
             case .regenerable: break
             case .temporary: break
             case .device: add("fs.device.write", .block, .none, "it targets a device.", t.text)
@@ -938,10 +1000,16 @@ struct Analyzer {
         return nil
     }
 
+    /// A `.git` directory holds the repository's history; the `.git` file of a linked worktree or submodule only points to it.
     func hasGitDirectory(_ root: String) -> Bool {
         guard context.useFileSystem else { return true }
         var st = stat()
-        return lstat(root + "/.git", &st) == 0
+        return lstat(root + "/.git", &st) == 0 && (st.st_mode & S_IFMT) == S_IFDIR
+    }
+
+    func hasGitEntry(_ dir: String) -> Bool {
+        var st = stat()
+        return lstat(dir + "/.git", &st) == 0
     }
 
     func describe(_ p: String) -> String {
@@ -1104,6 +1172,7 @@ struct Analyzer {
             case .unknown: add("fs.mv.opaque", .ask, .recommended, "it moves a path built from an unresolved variable.", s.text)
             case .gitInternals: add("git.internals.delete", .ask, .recommended, "it moves git internals (.git), which snapshots do not cover.", s.text)
             case .projectRoot, .insideProject: add("fs.mv.project", .allow, .required, "it moves project files (restorable from the snapshot taken first).", s.text, roots: cls.roots)
+            case .agentWorktree, .holdsWorktrees: add("fs.mv.worktree", .ask, .recommended, "it moves \(s.text), \(worktreeRisk(cls, resolve(s)))", s.text)
             default: break
             }
         }
@@ -1121,7 +1190,9 @@ struct Analyzer {
         var critical: String?
         if case .catastrophic(let p) = cls { critical = p }
         let existingDirectory = context.useFileSystem && isDirectory(resolvedDest.path)
-        guard intoDirectory || relative || critical != nil || (existingDirectory && cls == .outside) else {
+        // Outside the snapshots (another folder, an agent worktree, a folder holding them) only the names written matter.
+        let uncovered: Bool = { if case .agentWorktree = cls { return true }; return cls == .outside || cls == .holdsWorktrees }()
+        guard intoDirectory || relative || critical != nil || (existingDirectory && uncovered) else {
             writeCheck(dest, truncates: truncates || replacesExistingFile(resolvedDest.path), whole: whole)
             return
         }
@@ -1226,7 +1297,8 @@ struct Analyzer {
             add("self.hooks", .ask, .none, "it edits an agent's hook configuration, which can switch Airbag's protection off.", target.text)
             return
         }
-        switch classify(resolved) {
+        let cls = classify(resolved)
+        switch cls {
         case .catastrophic(let p): add("fs.overwrite.catastrophic", .block, .none, "it would overwrite \(describe(p)).", target.text)
         case .airbag: add("self.airbag", .block, .none, "it modifies Airbag's own data, which protects this project.", target.text)
         case .device: add("fs.device.write", .block, .none, "it writes to a device.", target.text)
@@ -1234,6 +1306,8 @@ struct Analyzer {
             add("fs.write.outside", .ask, .recommended, "it overwrites \(target.text) outside the protected project, where no snapshot can restore it.", target.text)
         case .gitInternals: add("git.internals.write", .ask, .recommended, "it overwrites a file inside .git, which snapshots do not cover.", target.text)
         case .insideProject, .projectRoot: add("fs.write.project", .allow, .recommended, "it edits project files (a snapshot is taken first).", target.text)
+        case .agentWorktree where truncates && replacesOrUnknown(resolved?.path):
+            add("fs.write.worktree", .ask, .recommended, "it overwrites \(target.text), \(worktreeRisk(cls, resolved))", target.text)
         default: break
         }
     }
@@ -1251,6 +1325,8 @@ struct Analyzer {
             case .outside where replacesOrUnknown(resolve(t)?.path): add("fs.truncate.outside", .ask, .recommended, "it empties \(t.text) outside the protected project.", t.text)
             case .unknown: add("fs.truncate.opaque", .ask, .recommended, "it empties a file whose path depends on an unresolved variable.", t.text)
             case .insideProject, .projectRoot: add("fs.truncate.project", .allow, .required, "it empties a project file (a snapshot is taken first).", t.text, roots: cls.roots)
+            case .agentWorktree where replacesOrUnknown(resolve(t)?.path):
+                add("fs.write.worktree", .ask, .recommended, "it empties \(t.text), \(worktreeRisk(cls, resolve(t)))", t.text)
             case .device: add("fs.device.write", .block, .none, "it writes to a device.", t.text)
             default: break
             }
