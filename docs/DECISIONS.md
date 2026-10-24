@@ -184,6 +184,9 @@ needed approval, or was denied under bypass permissions. When the walk saw the w
 files, skipped none for size and hit no errors, the snapshot requirement now counts as met (the command is allowed
 unless another rule asks) and the event records `snapshot_skipped = "empty"`. A folder the user stopped protecting
 (`snapshot_skipped = "not_protected"`) is treated the same: it gets no snapshot and needs none; blocks still apply.
-Both hold only when that folder is the only one the rules protect for the command: when the agent was started in
-another folder or works in a worktree whose main checkout is also protected, the command still waits for the user.
-A walk cut short proves nothing and still counts as incomplete.
+A walk cut short proves nothing and still counts as incomplete. Amended after 0.1.1: both, like a usable snapshot,
+count per root. Each root a destructive finding targets needs its own, so the hook also snapshots the agent's launch
+folder or the main checkout of its worktree when a finding targets it (and only then), and the command waits for the
+user when that snapshot fails. 0.1.1 shipped a narrower guard: an empty session folder did not cover another
+protected root, but a snapshotted one did, so `rm ../notes.txt` from a nested repository in the launch folder ran
+without a snapshot of the launch folder and the file could not be restored.

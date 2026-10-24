@@ -164,9 +164,19 @@ walk finished (no deadline, nothing unreadable) without finding a file, skipping
 errors, there is nothing the command could lose: the hook records `snapshot_skipped = "empty"`, so the first file an
 agent writes into a new empty folder needs no approval. A folder the user stopped protecting (Stop Protecting… in
 Settings or the popover) gets no snapshot and needs none (`snapshot_skipped = "not_protected"`); Guard's blocks still
-apply there. Both count only when that folder is the only root the rules protect for the command: when the agent's
-launch folder or the main checkout of its worktree is protected too, the command is escalated as before. A walk cut
-short still counts as `incomplete`.
+apply there. A walk cut short still counts as `incomplete`.
+
+Snapshots count per root. A `required` finding names the protected roots its targets lie in (`GuardFinding.roots`),
+and each of them needs a usable snapshot of its own (or one of the two skip reasons above): the session folder's
+snapshot does not cover `rm ../notes.txt` run from a nested repository inside the agent's launch folder, nor
+`git -C <main checkout> reset --hard` run from a worktree next to it (one inside its main checkout makes the checkout
+the parent of a protected root, which the rules ask about anyway). After the session folder and the folders the
+command `cd`s into, the hook snapshots each such root (the launch folder, the main checkout), each with its own
+deadline, and only when a finding targets it, so a command that stays in the session folder takes no extra snapshot.
+When one of them gets no usable snapshot, the command is escalated with that root's skip reason. A finding whose
+targets lie in no root (a dependency folder, a temporary file) is judged on the snapshots taken. The post-command
+snapshot covers the same roots; the event links to the session folder's snapshot, and to another root's only when
+the session folder has none (an empty folder).
 
 Whole-root restore to an incomplete snapshot never removes files (§6).
 

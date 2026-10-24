@@ -265,7 +265,7 @@ func decode(_ s: String?) -> [String: Any] {
 
     @Test func anEmptyFolderDoesNotCoverTheLaunchFolder() throws {
         // The agent was started in the project and works in an empty nested repository: deleting a project file from
-        // there is not covered by the empty folder's "snapshot".
+        // there is not covered by the empty folder's "snapshot", so the project gets one of its own.
         let h = HookSandbox(); defer { h.cleanup() }
         let sub = h.root + "/sub"
         try FileManager.default.createDirectory(atPath: sub, withIntermediateDirectories: true)
@@ -273,8 +273,79 @@ func decode(_ s: String?) -> [String: Any] {
         var payload = h.claudePre("rm ../src/index.ts")
         payload["cwd"] = sub
         let out = h.run(.claudeCode, payload, env: ["CLAUDE_PROJECT_DIR": h.root])
-        #expect(out.finalDecision == "ask")
-        #expect(out.snapshotSkipped == "empty")
+        #expect(out.finalDecision == "allow")
+        #expect(out.snapshotSkipped == nil)
+        let snap = try #require(out.snapshot)
+        #expect(try h.registry().db.scalarText("SELECT snapshot_id FROM events WHERE kind = 'pre_shell'") == snap.id)
+        sh("rm src/index.ts", cwd: h.root)
+        _ = try SnapshotStore.open(root: h.root, paths: h.paths).restore(to: snap.id, scope: .paths(["src/index.ts"]))
+        #expect(h.sb.exists("src/index.ts"))
+    }
+
+    @Test func aSnapshotOfTheSessionFolderDoesNotCoverTheLaunchFolder() throws {
+        // A nested repository with files of its own: its snapshot succeeds, but the file the command deletes is in the
+        // launch folder, which needs its own snapshot before the command runs.
+        let h = HookSandbox(); defer { h.cleanup() }
+        h.sb.write("important.txt", "keep me\n")
+        h.sb.write("sub/notes.md", "nested\n")
+        let sub = h.root + "/sub"
+        _ = sh("git init -q", cwd: sub)
+        var payload = h.claudePre("rm ../important.txt")
+        payload["cwd"] = sub
+        let out = h.run(.claudeCode, payload, env: ["CLAUDE_PROJECT_DIR": h.root])
+        #expect(out.finalDecision == "allow")
+        #expect(out.snapshotSkipped == nil)
+        #expect(out.verdict?.findings.first { $0.ruleId == "fs.rm.project" }?.roots == [h.root])
+        #expect(SnapshotStore.storeExists(root: sub, paths: h.paths))
+        // The agent deletes the file; the launch folder's snapshot brings it back.
+        sh("rm important.txt", cwd: h.root)
+        let store = try SnapshotStore.open(root: h.root, paths: h.paths)
+        let before = try #require(try store.latest())
+        _ = try store.restore(to: before.id, scope: .paths(["important.txt"]))
+        #expect(h.sb.read("important.txt") == "keep me\n")
+    }
+
+    @Test func theLaunchFolderIsSnapshottedOnlyForACommandThatTargetsIt() throws {
+        let h = HookSandbox(); defer { h.cleanup() }
+        h.sb.write("sub/notes.md", "nested\n")
+        let sub = h.root + "/sub"
+        _ = sh("git init -q", cwd: sub)
+        var payload = h.claudePre("rm notes.md")
+        payload["cwd"] = sub
+        let out = h.run(.claudeCode, payload, env: ["CLAUDE_PROJECT_DIR": h.root])
+        #expect(out.finalDecision == "allow")
+        #expect(out.snapshot != nil)
+        #expect(!SnapshotStore.storeExists(root: h.root, paths: h.paths))
+        // An empty nested folder: writing its first file needs no snapshot of the launch folder either.
+        let empty = h.root + "/fresh"
+        try FileManager.default.createDirectory(atPath: empty, withIntermediateDirectories: true)
+        _ = sh("git init -q", cwd: empty)
+        payload = h.claudePre("echo hi > first.md")
+        payload["cwd"] = empty
+        let first = h.run(.claudeCode, payload, env: ["CLAUDE_PROJECT_DIR": h.root])
+        #expect(first.finalDecision == "allow")
+        #expect(first.snapshotSkipped == "empty")
+        #expect(!SnapshotStore.storeExists(root: h.root, paths: h.paths))
+    }
+
+    @Test func aBusyLaunchFolderEscalatesEvenWhenTheSessionFolderWasSnapshotted() throws {
+        let h = HookSandbox(); defer { h.cleanup() }
+        h.sb.write("important.txt", "keep me\n")
+        h.sb.write("sub/notes.md", "nested\n")
+        let sub = h.root + "/sub"
+        _ = sh("git init -q", cwd: sub)
+        let store = try SnapshotStore.open(root: h.root, paths: h.paths)
+        _ = store.snapshot(SnapshotRequest(trigger: .initial))
+        #expect(store.lock.acquire(waitMs: 0))
+        defer { store.lock.release() }
+        var cfg = HookBridgeConfig(paths: h.paths, environment: ["CLAUDE_PROJECT_DIR": h.root])
+        cfg.spawnBackground = false; cfg.home = h.userHome; cfg.lockWaitMs = 50
+        var payload = h.claudePre("rm ../important.txt", mode: "bypassPermissions")
+        payload["cwd"] = sub
+        let out = HookBridge(config: cfg).handle(payload: try JSONSerialization.data(withJSONObject: payload), declared: .claudeCode, eventHint: nil)
+        #expect(out.snapshot != nil) // the nested repository's
+        #expect(out.snapshotSkipped == "busy")
+        #expect(out.finalDecision == "deny_fallback")
         #expect(out.verdict?.findings.contains { $0.ruleId == "snapshot.unavailable" } == true)
     }
 

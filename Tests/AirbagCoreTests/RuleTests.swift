@@ -71,6 +71,20 @@ struct RuleFixture: Decodable {
         #expect(engine.evaluate("git push --force origin main", context: context).decision == .allow)
     }
 
+    @Test func findingsThatNeedASnapshotNameTheRootTheyTarget() {
+        let context = GuardContext(cwd: "/p/sub", home: "/Users/u", roots: ["/p/sub", "/p"], useFileSystem: false)
+        let engine = RuleEngine()
+        let rm = engine.evaluate("rm notes.md ../important.txt", context: context).findings.filter { $0.ruleId == "fs.rm.project" }
+        #expect(rm.map(\.roots) == [["/p/sub"], ["/p"]])
+        // The same text in two projects is one finding that needs both snapshots.
+        let siblings = GuardContext(cwd: "/p/a", home: "/Users/u", roots: ["/p/a", "/p/b"], useFileSystem: false)
+        let clean = engine.evaluate("git clean -fd && cd ../b && git clean -fd", context: siblings).findings.filter { $0.ruleId == "git.clean" }
+        #expect(clean.map(\.roots) == [["/p/a", "/p/b"]])
+        // A dependency folder is in no root's snapshots.
+        let deps = engine.evaluate("python3 -c \"import shutil; shutil.rmtree('node_modules')\"", context: context)
+        #expect(deps.findings.map(\.ruleId) == ["interp.delete.project"] && deps.findings[0].roots.isEmpty)
+    }
+
     @Test func agentMessageNamesTheRiskAndTheWayOut() {
         let ctx = RuleFixture.shared.context
         let context = GuardContext(cwd: ctx.cwd, home: ctx.home, roots: ctx.roots, airbagHome: ctx.airbagHome, useFileSystem: false)

@@ -26,6 +26,9 @@ public struct GuardFinding: Sendable, Codable, Equatable {
     public let reason: String
     /// The part of the command the rule matched.
     public let matched: String
+    /// For a finding that needs a snapshot (`snapshot: required`), the protected roots its targets lie in: each needs a
+    /// usable snapshot of its own before the command runs. Empty when no target lies in a protected root.
+    public var roots: [String] = []
 }
 
 public struct GuardVerdict: Sendable, Codable, Equatable {
@@ -86,6 +89,15 @@ enum PathClass: Equatable {
     case device
     case outside
     case unknown                // opaque: unresolved variable or substitution
+
+    /// The protected root whose snapshots hold this path, as `GuardFinding.roots` lists it (none outside a project, in
+    /// .git or in an excluded folder).
+    var roots: [String] {
+        switch self {
+        case .projectRoot(let r), .insideProject(let r): return [r]
+        default: return []
+        }
+    }
 }
 
 public struct RuleEngine: Sendable {
@@ -146,9 +158,12 @@ struct Analyzer {
         if !writers.contains(w) { writers.append(w) }
     }
 
-    mutating func add(_ id: String, _ decision: GuardDecision, _ snapshot: SnapshotNeed = .recommended, _ reason: String, _ matched: String) {
-        if findings.contains(where: { $0.ruleId == id && $0.matched == matched }) { return }
-        findings.append(GuardFinding(ruleId: id, decision: decision, snapshot: snapshot, reason: reason, matched: matched))
+    mutating func add(_ id: String, _ decision: GuardDecision, _ snapshot: SnapshotNeed = .recommended, _ reason: String, _ matched: String,
+                      roots: [String] = []) {
+        let i = findings.firstIndex { $0.ruleId == id && $0.matched == matched } ?? findings.endIndex
+        if i == findings.endIndex { findings.append(GuardFinding(ruleId: id, decision: decision, snapshot: snapshot, reason: reason, matched: matched)) }
+        // The same text can target another root (`git clean -fd && cd ../other && git clean -fd`): it needs a snapshot too.
+        for r in roots where !findings[i].roots.contains(r) { findings[i].roots.append(r) }
     }
 
     mutating func analyze(_ line: String, depth: Int) {
@@ -599,7 +614,7 @@ struct Analyzer {
                 add("fs.truncate.outside", .ask, .recommended, "it overwrites \(r.target.text) outside the protected project, where no snapshot can restore it.", r.target.text)
             case .unknown where truncates: add("fs.truncate.opaque", .ask, .recommended, "it overwrites a file whose path depends on an unresolved variable.", r.target.text)
             case .gitInternals where truncates: add("git.internals.write", .ask, .recommended, "it overwrites a file inside .git, which snapshots do not cover.", r.target.text)
-            case .insideProject, .projectRoot: if truncates { add("fs.truncate.project", .allow, .required, "it overwrites a project file (a snapshot is taken first).", r.target.text) }
+            case .insideProject, .projectRoot: if truncates { add("fs.truncate.project", .allow, .required, "it overwrites a project file (a snapshot is taken first).", r.target.text, roots: cls.roots) }
             default: break
             }
         }
@@ -898,11 +913,11 @@ struct Analyzer {
             case .gitInternals: add("git.internals.delete", .ask, .recommended, "it would \(verb) git internals (.git), and git history is not part of Airbag snapshots.", t.text)
             case .projectRoot(let r):
                 if hasGitDirectory(r) {
-                    add("fs.rm.project-root", .ask, .required, "it would \(verb) the whole project including its git history, which snapshots do not cover.", t.text)
+                    add("fs.rm.project-root", .ask, .required, "it would \(verb) the whole project including its git history, which snapshots do not cover.", t.text, roots: [r])
                 } else {
-                    add("fs.rm.project-root", .allow, .required, "it deletes the whole project folder (restorable from the snapshot taken first).", t.text)
+                    add("fs.rm.project-root", .allow, .required, "it deletes the whole project folder (restorable from the snapshot taken first).", t.text, roots: [r])
                 }
-            case .insideProject: add("fs.rm.project", .allow, .required, "it deletes project files (restorable from the snapshot taken first).", t.text)
+            case .insideProject(let r): add("fs.rm.project", .allow, .required, "it deletes project files (restorable from the snapshot taken first).", t.text, roots: [r])
             case .regenerable: break
             case .temporary: break
             case .device: add("fs.device.write", .block, .none, "it targets a device.", t.text)
@@ -1034,7 +1049,7 @@ struct Analyzer {
                 if filtered { add("fs.find.delete.broad", .ask, .none, "it deletes matching files anywhere under \(describe(p)), outside what snapshots cover.", b.text) }
                 else { add("fs.rm.catastrophic", .block, .none, "it would delete everything under \(describe(p)).", b.text) }
             case .projectRoot:
-                if filtered { add("fs.find.delete.project", .allow, .required, "it deletes matching project files (restorable from the snapshot taken first).", b.text) }
+                if filtered { add("fs.find.delete.project", .allow, .required, "it deletes matching project files (restorable from the snapshot taken first).", b.text, roots: cls.roots) }
                 else { classifyDeletion([b], recursive: true, verb: "delete everything in", whole: whole) }
             default:
                 classifyDeletion([b], recursive: true, verb: "delete files under", whole: whole)
@@ -1081,13 +1096,14 @@ struct Analyzer {
             if let r = resolve(s), holdsHookConfig(r.path) {
                 add("self.hooks", .ask, .none, "it moves a folder with an agent's hook configuration away, which switches Airbag's protection off.", s.text)
             }
-            switch classify(resolve(s)) {
+            let cls = classify(resolve(s))
+            switch cls {
             case .catastrophic(let p): add("fs.mv.catastrophic", .block, .none, "it would move \(describe(p)) away, breaking the system or your files.", s.text)
             case .airbag: add("self.airbag", .block, .none, "it would move Airbag's own data.", s.text)
             case .outside: add("fs.mv.outside", .ask, .none, "it moves \(s.text), which is outside the protected project.", s.text)
             case .unknown: add("fs.mv.opaque", .ask, .recommended, "it moves a path built from an unresolved variable.", s.text)
             case .gitInternals: add("git.internals.delete", .ask, .recommended, "it moves git internals (.git), which snapshots do not cover.", s.text)
-            case .projectRoot, .insideProject: add("fs.mv.project", .allow, .required, "it moves project files (restorable from the snapshot taken first).", s.text)
+            case .projectRoot, .insideProject: add("fs.mv.project", .allow, .required, "it moves project files (restorable from the snapshot taken first).", s.text, roots: cls.roots)
             default: break
             }
         }
@@ -1228,12 +1244,13 @@ struct Analyzer {
                 add("self.hooks", .ask, .none, "it empties an agent's hook configuration, which switches Airbag's protection off.", t.text)
                 continue
             }
-            switch classify(resolve(t)) {
+            let cls = classify(resolve(t))
+            switch cls {
             case .catastrophic(let p): add("fs.redirect.catastrophic", .block, .none, "it empties \(describe(p)).", t.text)
             case .airbag: add("self.airbag", .block, .none, "it empties Airbag's own data.", t.text)
             case .outside where replacesOrUnknown(resolve(t)?.path): add("fs.truncate.outside", .ask, .recommended, "it empties \(t.text) outside the protected project.", t.text)
             case .unknown: add("fs.truncate.opaque", .ask, .recommended, "it empties a file whose path depends on an unresolved variable.", t.text)
-            case .insideProject, .projectRoot: add("fs.truncate.project", .allow, .required, "it empties a project file (a snapshot is taken first).", t.text)
+            case .insideProject, .projectRoot: add("fs.truncate.project", .allow, .required, "it empties a project file (a snapshot is taken first).", t.text, roots: cls.roots)
             case .device: add("fs.device.write", .block, .none, "it writes to a device.", t.text)
             default: break
             }
@@ -1288,12 +1305,13 @@ struct Analyzer {
             cwd = saved
         }
         let treeClass = classify(effectiveTree.map { Resolved(path: $0, contents: false) })
-        var treeProtected: Bool = { if case .insideProject = treeClass { return true }; if case .projectRoot = treeClass { return true }; return false }()
+        /// The protected root holding the working tree (nil when the tree is not protected).
+        var treeRoot = treeClass.roots.first
         // A folder without its own .git inside a larger repository (a dotfiles repository in the home folder): git acts on
         // the whole repository, most of which lies outside the protected root.
-        if treeProtected, workTree == nil, context.useFileSystem, let tree = effectiveTree, let top = gitTopLevel(tree),
+        if treeRoot != nil, workTree == nil, context.useFileSystem, let tree = effectiveTree, let top = gitTopLevel(tree),
            !context.roots.contains(where: { top == $0 || top.hasPrefix($0 + "/") }) {
-            treeProtected = false
+            treeRoot = nil
         }
         guard let sub = a.first else { return }
         let rest = Array(a.dropFirst())
@@ -1309,27 +1327,27 @@ struct Analyzer {
         switch sub {
         case "reset":
             if !has("--hard") && !has("--merge") && !has("--keep") { mutatesWorktree = false }
-            if has("--hard") || has("--merge") || has("--keep") { mayWrite("git \(sub)"); addGit(treeProtected, effectiveTree, "git.reset.hard", .allow, .required, "it discards uncommitted changes (restorable from the snapshot taken first).", whole) }
+            if has("--hard") || has("--merge") || has("--keep") { mayWrite("git \(sub)"); addGit(treeRoot, effectiveTree, "git.reset.hard", .allow, .required, "it discards uncommitted changes (restorable from the snapshot taken first).", whole) }
         case "clean":
             if rest.contains(where: { $0 == "-n" || $0 == "--dry-run" || ($0.hasPrefix("-") && !$0.hasPrefix("--") && $0.contains("n")) }) { mutatesWorktree = false; return }
-            addGit(treeProtected, effectiveTree, "git.clean", .allow, .required, "it deletes untracked\(rest.contains { $0.contains("x") } ? " and ignored" : "") files (restorable from the snapshot taken first, except dependency and build folders).", whole)
+            addGit(treeRoot, effectiveTree, "git.clean", .allow, .required, "it deletes untracked\(rest.contains { $0.contains("x") } ? " and ignored" : "") files (restorable from the snapshot taken first, except dependency and build folders).", whole)
         case "checkout":
             if has("--") || has(".") || has("-f") || has("--force") || has("-p") || has("--theirs") || has("--ours") {
-                addGit(treeProtected, effectiveTree, "git.checkout.discard", .allow, .required, "it overwrites working-tree files (restorable from the snapshot taken first).", whole)
+                addGit(treeRoot, effectiveTree, "git.checkout.discard", .allow, .required, "it overwrites working-tree files (restorable from the snapshot taken first).", whole)
             } else { add("git.checkout", .allow, .recommended, "it switches files in the working tree.", whole) }
         case "restore":
             if (has("--staged") || has("-S")) && !has("--worktree") && !has("-W") { mutatesWorktree = false; return }
             do {
-                addGit(treeProtected, effectiveTree, "git.checkout.discard", .allow, .required, "it overwrites working-tree files (restorable from the snapshot taken first).", whole)
+                addGit(treeRoot, effectiveTree, "git.checkout.discard", .allow, .required, "it overwrites working-tree files (restorable from the snapshot taken first).", whole)
             }
         case "switch":
-            if has("-f") || has("--force") || has("--discard-changes") { addGit(treeProtected, effectiveTree, "git.checkout.discard", .allow, .required, "it discards local changes (restorable from the snapshot taken first).", whole) }
+            if has("-f") || has("--force") || has("--discard-changes") { addGit(treeRoot, effectiveTree, "git.checkout.discard", .allow, .required, "it discards local changes (restorable from the snapshot taken first).", whole) }
         case "stash":
             if rest.first.map({ ["list", "show"].contains($0) }) == true { return }
             mayWrite("git \(sub)")
             if has("drop") || has("clear") { add("git.stash.drop", .ask, .recommended, "it permanently drops stashed changes, which are not in the working tree and not in snapshots.", whole) }
             else if rest.isEmpty || has("push") || has("save") || has("-u") || has("--include-untracked") || has("--all") {
-                addGit(treeProtected, effectiveTree, "git.stash", .allow, .required, "it removes local changes from the working tree into a stash (also covered by the snapshot taken first).", whole)
+                addGit(treeRoot, effectiveTree, "git.stash", .allow, .required, "it removes local changes from the working tree into a stash (also covered by the snapshot taken first).", whole)
             }
         case "branch":
             if has("-D") || (has("-d") && has("--force")) || has("--delete") && has("--force") { mayWrite("git \(sub)"); add("git.branch.force-delete", .ask, .recommended, "it force-deletes a branch that may hold unmerged commits.", whole) }
@@ -1355,7 +1373,7 @@ struct Analyzer {
             else if has("remove") || has("prune") { mayWrite("git \(sub)") }
         case "rm":
             if has("--cached") { mutatesWorktree = false; return }
-            addGit(treeProtected, effectiveTree, "git.rm", .allow, .required, "it deletes tracked files (restorable from the snapshot taken first).", whole)
+            addGit(treeRoot, effectiveTree, "git.rm", .allow, .required, "it deletes tracked files (restorable from the snapshot taken first).", whole)
         case "submodule":
             if has("deinit") && (has("-f") || has("--force")) { add("git.submodule.deinit", .ask, .recommended, "it force-removes submodule working trees.", whole) }
         default: break
@@ -1363,8 +1381,8 @@ struct Analyzer {
     }
 
     /// Destructive git subcommands are recoverable only when the working tree is a protected root.
-    mutating func addGit(_ treeProtected: Bool, _ tree: String?, _ id: String, _ decision: GuardDecision, _ snapshot: SnapshotNeed, _ reason: String, _ matched: String) {
-        if treeProtected { add(id, decision, snapshot, reason, matched); return }
+    mutating func addGit(_ treeRoot: String?, _ tree: String?, _ id: String, _ decision: GuardDecision, _ snapshot: SnapshotNeed, _ reason: String, _ matched: String) {
+        if let treeRoot { add(id, decision, snapshot, reason, matched, roots: [treeRoot]); return }
         let whereText = tree.map { describe($0) } ?? "a directory Airbag cannot resolve"
         add("git.outside-root", .ask, .recommended, "it runs a destructive git command (\(id.replacingOccurrences(of: "git.", with: ""))) in \(whereText), outside the protected project, so no snapshot covers it.", matched)
     }
@@ -1417,7 +1435,8 @@ struct Analyzer {
             return
         }
         if !classes.isEmpty, classes.allSatisfy({ if case .insideProject = $0 { return true }; if case .regenerable = $0 { return true }; if case .temporary = $0 { return true }; return false }) {
-            add("interp.delete.project", .allow, .required, "it deletes files from inline \(name) code inside the project (snapshot taken first).", whole)
+            add("interp.delete.project", .allow, .required, "it deletes files from inline \(name) code inside the project (snapshot taken first).", whole,
+                roots: classes.flatMap(\.roots))
         } else {
             add("interp.delete", .ask, .recommended, "it deletes files from inline \(name) code that Airbag cannot fully analyze.", whole)
         }
@@ -1476,9 +1495,10 @@ struct Analyzer {
         guard destructive.contains(where: { text.contains($0) }) else { return }
         if name == "sqlite3" || name == "duckdb" || name == "litecli" {
             if let dbFile = args.first(where: { !$0.text.hasPrefix("-") }) {
-                switch classify(resolve(dbFile)) {
+                let cls = classify(resolve(dbFile))
+                switch cls {
                 case .insideProject, .projectRoot, .regenerable:
-                    add("db.local.destructive", .allow, .required, "it deletes data in a local database file inside the project (snapshot taken first).", whole); return
+                    add("db.local.destructive", .allow, .required, "it deletes data in a local database file inside the project (snapshot taken first).", whole, roots: cls.roots); return
                 case .temporary: return
                 default: break
                 }
@@ -1561,9 +1581,10 @@ struct Analyzer {
             guard parts.count >= 2, parts[0].hasPrefix("/") || parts[0].hasPrefix("~") || parts[0].hasPrefix(".") else { continue } // named volume
             if parts.count >= 3, parts[2].split(separator: ",").contains("ro") { continue }
             let host = parts[0].hasPrefix("~") ? context.home + parts[0].dropFirst() : parts[0]
-            switch classify(resolve(ShellWord(host))) {
+            let cls = classify(resolve(ShellWord(host)))
+            switch cls {
             case .insideProject, .regenerable, .temporary:
-                add("docker.mount.delete.project", .allow, .required, "it deletes files in a project folder mounted into a container (snapshot taken first).", whole)
+                add("docker.mount.delete.project", .allow, .required, "it deletes files in a project folder mounted into a container (snapshot taken first).", whole, roots: cls.roots)
             default:
                 add("docker.mount.delete", .ask, .recommended, "it mounts \(parts[0]) into a container and deletes files there, bypassing host-side checks.", whole)
             }

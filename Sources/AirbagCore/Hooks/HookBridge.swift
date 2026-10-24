@@ -84,11 +84,19 @@ public final class OutputSlot: @unchecked Sendable {
 }
 
 public struct HookBridge {
-    /// Projects other than the session's that the command `cd`s into (validated; never the home folder).
     /// Snapshot skip reasons that mean no snapshot is needed: nothing in the folder to capture, or the user stopped
     /// protecting it.
     static let nothingToCapture: Set<String> = ["empty", "not_protected"]
 
+    /// Protected roots besides the session folder and the visited ones (`taken`) that a finding needing a snapshot
+    /// targets: the agent's launch folder or the main checkout of its worktree, as in `rm ../notes.txt` from a nested
+    /// repository. Only such a command snapshots them.
+    static func targetedRoots(_ verdict: GuardVerdict, in roots: [String], besides taken: [String]) -> [String] {
+        let targeted = Set(verdict.findings.filter { $0.snapshot == .required }.flatMap(\.roots))
+        return roots.filter { targeted.contains($0) && !taken.contains($0) }
+    }
+
+    /// Projects other than the session's that the command `cd`s into (validated; never the home folder).
     public static func visitedRoots(_ command: String, context: GuardContext, paths: AirbagPaths) -> [String] {
         var out: [String] = []
         for dir in RuleEngine().visitedDirectories(command, context: context) {
@@ -185,7 +193,7 @@ public struct HookBridge {
 
         func takeSnapshot(_ trigger: SnapshotTrigger, label: String?, root: String? = nil) -> (SnapshotInfo?, String?) {
             guard let r = root ?? snapshotRoot else { return (nil, "no_root") }
-            // The event links to the session's own snapshot; a visited project's snapshot only when there is none.
+            // The event links to the session's own snapshot; another root's snapshot only when there is none.
             let links = root == nil || record.snapshot == nil
             if duplicate { return (nil, "duplicate_route") }
             if IgnoredRoots.contains(r, paths: config.paths) { return (nil, "not_protected") }
@@ -309,14 +317,25 @@ public struct HookBridge {
             // Snapshot before anything that may run (allow, or ask that the user may approve).
             var snap: SnapshotInfo?
             var skipped: String?
+            let needsNone = { (k: String?) in k.map { HookBridge.nothingToCapture.contains($0) } == true }
+            /// Roots the command may now change: each got a usable snapshot or has nothing to capture. The others, why not.
+            var covered: Set<String> = []
+            var missed: [String: String] = [:]
+            func note(_ r: String?, _ k: String?) {
+                guard let r else { return }
+                if k == nil || needsNone(k) { covered.insert(r) } else { missed[r] = k }
+            }
+            let otherRoots = visitedRoots + HookBridge.targetedRoots(verdict, in: roots, besides: [snapshotRoot].compactMap { $0 } + visitedRoots)
             if verdict.snapshot != .none || verdict.decision == .ask {
                 let label = "Before `\(String(Redactor.redact(command).prefix(80)))`"
                 (snap, skipped) = takeSnapshot(.preCommand, label: label)
-                if !visitedRoots.isEmpty && skipped == "no_root" { skipped = nil } // the session folder itself is not a project
-                for r in visitedRoots {
+                note(snapshotRoot, skipped)
+                if !otherRoots.isEmpty && skipped == "no_root" { skipped = nil } // the session folder itself is not a project
+                for r in otherRoots {
                     let (s, k) = takeSnapshot(.preCommand, label: label, root: r)
                     if snap == nil { snap = s }
-                    if skipped == nil || HookBridge.nothingToCapture.contains(skipped!) { skipped = k ?? skipped }
+                    note(r, k)
+                    if skipped == nil || needsNone(skipped) { skipped = k ?? skipped }
                 }
                 if snap != nil && skipped == "empty" { skipped = nil }
                 outcome.snapshot = snap
@@ -324,13 +343,17 @@ public struct HookBridge {
                 record.snapshotSkipped = skipped
                 timing["snapshot"] = Clock.elapsedMs(since: t0)
             }
-            // A command that needs a snapshot and didn't get a usable one waits for the user, whatever else it is. An
-            // empty folder, or one the user stopped protecting, needs none, as long as it is the only folder the rules
-            // protect here (a target in the launch folder or the main checkout is not covered by it).
-            let onlyRoot = roots.allSatisfy { $0 == snapshotRoot || visitedRoots.contains($0) }
-            let needsNone = skipped.map { HookBridge.nothingToCapture.contains($0) } == true && onlyRoot
-            if verdict.snapshot == .required && !needsNone && (skipped != nil || snap == nil) {
-                verdict = unavailable(skipped ?? "unknown")
+            // A command that needs a snapshot and didn't get a usable one waits for the user, whatever else it is. Each
+            // root a finding targets needs its own (the session folder's does not cover a file in the launch folder); a
+            // finding whose targets lie in no root is judged on the snapshots taken. An empty folder, or one the user
+            // stopped protecting, needs none.
+            if verdict.snapshot == .required {
+                let required = verdict.findings.filter { $0.snapshot == .required }
+                if let r = required.flatMap(\.roots).first(where: { !covered.contains($0) }) {
+                    verdict = unavailable(missed[r] ?? "no_root")
+                } else if required.contains(where: { $0.roots.isEmpty }) && !needsNone(skipped) && (skipped != nil || snap == nil) {
+                    verdict = unavailable(skipped ?? "unknown")
+                }
             }
             if verdict.decision == .ask {
                 if let reg = registry, let sid = env.sessionID, let hash = record.commandHash,
@@ -365,10 +388,12 @@ public struct HookBridge {
                 var context = GuardContext(cwd: cwd, home: config.home, roots: roots, airbagHome: config.paths.home.path)
                 let visitedRoots = HookBridge.visitedRoots(command, context: context, paths: config.paths)
                 context.roots += visitedRoots
-                if RuleEngine().evaluate(command, context: context).snapshot != .none {
+                let verdict = RuleEngine().evaluate(command, context: context)
+                if verdict.snapshot != .none {
                     let label = "After `\(String(Redactor.redact(command).prefix(80)))`"
                     let (snap, skipped) = takeSnapshot(.postCommand, label: label)
-                    for r in visitedRoots { _ = takeSnapshot(.postCommand, label: label, root: r) }
+                    let targeted = HookBridge.targetedRoots(verdict, in: roots, besides: [snapshotRoot].compactMap { $0 } + visitedRoots)
+                    for r in visitedRoots + targeted { _ = takeSnapshot(.postCommand, label: label, root: r) }
                     outcome.snapshot = snap; outcome.snapshotSkipped = skipped; record.snapshotSkipped = skipped
                 }
             }
