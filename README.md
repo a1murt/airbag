@@ -21,7 +21,7 @@
 </p>
 
 <p align="center">
-  <img src="docs/images/demo.gif" width="800" alt="2:07 a.m.: an agent runs rm -rf src/legacy, the folder is gone; Airbag's timeline, Undo these changes, Restore, and the files are back">
+  <img src="docs/images/demo.gif" width="800" alt="2:07 a.m.: an agent runs rm -rf src/legacy and the folder is gone; one click on Undo in Airbag's menu bar and the files are back">
   <br><sub><a href="docs/images/airbag-demo.mp4">▶ Watch in HD</a></sub>
 </p>
 
@@ -29,9 +29,9 @@
   <a href="https://github.com/a1murt/airbag/releases/latest"><img src="https://img.shields.io/badge/Download_for_macOS-0A84FF?style=for-the-badge&logo=apple&logoColor=white" height="44" alt="Download Airbag for macOS"></a>
 </p>
 
-| 1. Your agent runs a command | 2. Airbag snapshots first | 3. You click Restore |
+| 1. Your agent runs a command | 2. Airbag snapshots first | 3. You click Undo |
 |---|---|---|
-| `rm -rf src`, `git clean -fdx`, a "cleanup" script | In milliseconds, almost no disk, `.env` included | A file, a folder or the whole project is back |
+| `rm -rf src`, `git clean -fdx`, a "cleanup" script | In milliseconds, almost no disk, `.env` included | Right in the menu bar: what that command changed is back |
 
 <p align="center">
   Free &amp; MIT · No account · No telemetry · No network · Interface in 19 languages<br>
@@ -51,8 +51,9 @@ $ git clean -fdx && git reset --hard
 Three hours of uncommitted work, gone. Your `.env` too, because git never tracked it. The agent's checkpoints cover
 its own file edits, not what it runs in the shell, and Time Machine's last local snapshot is up to an hour old.
 
-**With Airbag, that's one click.** A snapshot landed right before the command ran. Open the timeline, pick
-*Before `git clean -fdx && git reset --hard`*, press **Restore**. Everything is back, `.env` included.
+**With Airbag, that's one click.** A snapshot landed right before the command ran. Click the shield in the menu bar:
+`git clean -fdx && git reset --hard` is at the top of *Recent changes*. Press **Undo**. Everything is back, `.env`
+included, and the undo itself can be undone.
 
 ## Snapshot first, block last
 
@@ -89,31 +90,33 @@ capture the files its agent modified. Time Machine keeps a
 ## What you get
 
 - **Keep full-auto on.** Airbag works in every permission mode, including bypass permissions and `--yolo`.
-- **Get back** a file, a folder or a whole deleted project in one click, `.env` included.
-- **See** what every command changed. Each snapshot is named after it: *Before `rm -rf src/legacy`*.
+- **Undo** what the agent just did in one click from the menu bar, `.env` included. A file, a folder or a whole
+  deleted project comes back too.
+- **See** what every command changed: the timeline lists each command with what it deleted, changed and added.
 - **Stop** the few commands no snapshot can undo, like `rm -rf ~` or wiping a disk, before they run.
 - **Find** the dev server an agent left on `:3000`, and the session that started it.
 - **Set it up in under a minute.** One timeline for Claude Code, Codex, Cursor, Gemini CLI and Copilot CLI.
 
-### Timeline: the moment before every command
+### Timeline: every command, and what it changed
 
-Every snapshot is labelled with the command it preceded, like *Before `rm -rf src/legacy`*, and the agent session
-that ran it. Open one to see the changed files and their diffs.
+One row per agent command: `rm -rf src/legacy` · 2 deleted · Claude Code, grouped by day. **Undo** puts back exactly
+what that command changed. Open a row for its files and diffs, or search a file name to find when it disappeared.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/main-timeline-dark.png">
-  <img src="docs/images/main-timeline-light.png" width="820" alt="Airbag timeline: snapshots labelled by agent command, a diff and restore buttons">
+  <img src="docs/images/main-timeline-light.png" width="820" alt="Airbag timeline: agent commands with what each changed, an Undo button and a diff">
 </picture>
 
-### Restore: one click, and it's undoable
+### Undo and Restore: nothing is ever lost
 
-Bring back one file, one folder or the whole project. A restore never deletes: files in the way are moved aside, and
-the restore itself can be undone. Even a deleted project folder comes back.
+**Undo** is instant, because it is reversible: Airbag snapshots before it too, and the message offers Undo again.
+**Restore** takes a whole project (or one file) back to a chosen moment; it asks first and shows what comes back,
+what gets reverted and what is set aside. A restore never deletes, and even a deleted project folder comes back.
 
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/images/restore-dark.png">
-    <img src="docs/images/restore-light.png" width="460" alt="Restore dialog listing the files that will come back">
+    <img src="docs/images/restore-light.png" width="460" alt="Undo changes from rm -rf src/legacy: two files to bring back">
   </picture>
 </p>
 
@@ -124,7 +127,8 @@ the agent is told to ask you instead of retrying. Agents can't approve their own
 
 Risky commands (force push, writes outside the project, databases, cloud resources, `curl | sh`, `sudo`) don't
 interrupt the agent. They land in Guard with a dot on the menu bar icon, or go to the agent's own approval prompt
-where it has one. Prefer to approve them first? One switch in Settings makes them wait for you.
+where it has one. Prefer to approve them first? One setting makes them wait for you, and a notification with
+**Allow Once** tells you an agent is waiting.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/main-guard-dark.png">
@@ -133,23 +137,23 @@ where it has one. Prefer to approve them first? One switch in Settings makes the
 
 ### Radar: "Port 3000 is already in use", solved
 
-Every listening dev server with its project, agent and session, even after the agent has exited. Orphans (session
-ended, server still running) are flagged. **Stop** sends SIGTERM; force-stop is a separate click. Ports, RAM and
-uptime at a glance.
+Every listening dev server with its project, agent and session, even after the agent has exited. Servers left
+running by an ended session come first, with **Stop** and **Keep Running** (also right in the notification). Stop
+sends SIGTERM; force-stop is a separate click. Click a port to open it.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/main-radar-dark.png">
-  <img src="docs/images/main-radar-light.png" width="820" alt="Radar listing dev servers with port, agent session, RAM, uptime and an orphan">
+  <img src="docs/images/main-radar-light.png" width="820" alt="Radar: servers left running by an ended session, and every dev server with its port, agent session, RAM and uptime">
 </picture>
 
 ### Menu bar: everything at a glance
 
-Protection status, anything that needs you, and Timeline, Radar and Guard, one click away.
+What just happened, with **Undo**. Anything that needs you. And proof it's working: "212 commands checked today".
 
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/images/popover-dark.png">
-    <img src="docs/images/popover-light.png" width="300" alt="Airbag menu bar popover">
+    <img src="docs/images/popover-light.png" width="300" alt="Airbag menu bar: Recent changes with Undo, a server left running, a blocked command">
   </picture>
 </p>
 
@@ -222,7 +226,7 @@ or right-click Airbag → **Open** (macOS 14).
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/images/welcome-dark.png">
-    <img src="docs/images/welcome-light.png" width="460" alt="Airbag welcome window">
+    <img src="docs/images/welcome-light.png" width="460" alt="Airbag setup: agents connected, the first command seen, the project protected">
   </picture>
 </p>
 
@@ -235,10 +239,9 @@ mkdir -p ~/airbag-test/src && cd ~/airbag-test
 echo "console.log('hi')" > src/app.js && echo "API_KEY=test" > .env
 ```
 
-1. Menu bar → Airbag → **Add project…** → `~/airbag-test`.
+1. Menu bar → Airbag → ⋯ → **Add Project…** → `~/airbag-test`.
 2. In that folder, ask your agent to run `rm -rf src .env`.
-3. Open **Timeline**, pick *Before `rm -rf src .env`* → **Restore project to this moment…** → **Restore**.
-   Both are back, `.env` included.
+3. Menu bar → Airbag → **Undo** next to `rm -rf src .env`. Both are back, `.env` included.
 
 ### Build from source
 
@@ -337,8 +340,8 @@ snapshot can cover. A sandbox limits what an agent can do; Airbag makes what it 
 <summary><b>What about databases, cloud resources and force pushes?</b></summary>
 
 They live outside your project's files, so Airbag guards them at the command instead. Force pushes, database and
-cloud-resource commands are flagged as risky and recorded in Guard, or go to the agent's own approval prompt. Flip
-one switch in Settings and they wait for you.
+cloud-resource commands are flagged as risky and recorded in Guard, or go to the agent's own approval prompt. Change
+one setting and they wait for you.
 </details>
 
 <details>
@@ -359,7 +362,7 @@ after file changes, plus the timeline, Guard and Radar.
 <summary><b>How do I uninstall?</b></summary>
 
 With Homebrew, `brew uninstall --cask airbag` removes Airbag's hooks from every agent too (`--zap` also deletes the
-snapshots). Otherwise click **Remove** next to each agent in Airbag's Settings, or run:
+snapshots). Otherwise click **Disconnect** next to each agent in Airbag's Settings (⌘,), or run:
 
 ```bash
 /Applications/Airbag.app/Contents/Helpers/airbag hooks uninstall --all
