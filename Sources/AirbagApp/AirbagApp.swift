@@ -106,7 +106,7 @@ struct AirbagCommands: Commands {
 
     var body: some Commands {
         CommandGroup(after: .newItem) {
-            Button("Add Project…") { model.windowRequest = .main(.timeline); NotificationCenter.default.post(name: .airbagAddProject, object: nil) }
+            Button("Add Project…") { model.addProjectRequested = true; model.windowRequest = .main(model.selectedTab) }
                 .keyboardShortcut("o")
             Button("Take Snapshot") { if let root = model.selectedRoot { model.snapshotNow(root) } }
                 .keyboardShortcut("s")

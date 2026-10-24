@@ -98,7 +98,12 @@ extension Registry {
                       ORDER BY created_at LIMIT 1
                       """, [sid, commandHash, now]) else { return false }
                 try db.run("UPDATE allow_tokens SET used_at = ? WHERE id = ?", [now, token])
-                try db.run("UPDATE guard_log SET resolved_at = coalesce(resolved_at, ?), resolution = coalesce(resolution, 'token_used') WHERE token_id = ?", [now, token])
+                // An approval granted in the app ('user_allowed') becomes 'token_used' once the agent runs the command.
+                try db.run("""
+                UPDATE guard_log SET resolved_at = coalesce(resolved_at, ?),
+                  resolution = CASE WHEN resolution IS NULL OR resolution = 'user_allowed' THEN 'token_used' ELSE resolution END
+                WHERE token_id = ?
+                """, [now, token])
                 return true
             }
         } catch { return false }

@@ -1,4 +1,4 @@
-import AirbagCore
+@preconcurrency import AirbagCore
 import AppKit
 import Combine
 import Foundation
@@ -25,7 +25,8 @@ enum MainTab: String, CaseIterable, Identifiable {
     }
 }
 
-/// Menu bar glyph states, one meaning each (precedence: needsYou > degraded > paused > protected > idle). Something
+/// Menu bar glyph states, one meaning each (precedence: needsYou > paused > degraded > protected > idle; while paused
+/// nothing is snapshotted anyway, so the pause is the state that matters). Something
 /// new to look at (a blocked command, a server left running) adds a dot instead of another glyph.
 enum IconState: Equatable {
     case idle, protected, paused, needsYou, degraded
@@ -224,6 +225,8 @@ final class AppModel: ObservableObject {
     @Published private(set) var hookTick = 0
     /// A window the app wants opened; `MenuBarLabel` (always alive) performs it with SwiftUI's window actions.
     @Published var windowRequest: WindowRequest?
+    /// "Add Project…" was chosen (menu ⌘O, an empty state): the main window shows the folder panel once it is open.
+    @Published var addProjectRequested = false
     /// The row a window should scroll to and highlight; the screen clears it once shown.
     @Published var focus: FocusTarget?
     @Published var popoverVisible = false { didSet { if popoverVisible { badge = false; markSeen() }; scheduleRadar() } }
@@ -272,7 +275,7 @@ final class AppModel: ObservableObject {
         if let free = lowDiskFree { out.append(.lowDisk(free: free)) }
         let broken = hookStatuses.filter { $0.installed && $0.brokenCommand }.map(\.agent)
         if !broken.isEmpty { out.append(.brokenHooks(broken)) }
-        if hookStatuses.contains(where: { $0.detected }) && !hookStatuses.contains(where: { $0.installed }) && !projects.isEmpty {
+        if hookStatuses.contains(where: { $0.detected }) && !hookStatuses.contains(where: { $0.installed }) {
             out.append(.noAgentConnected)
         }
         return out
@@ -280,8 +283,8 @@ final class AppModel: ObservableObject {
 
     var iconState: IconState {
         if !needsApproval.isEmpty { return .needsYou }
-        if !protectionIssues.isEmpty { return .degraded }
         if pausedUntil != nil { return .paused }
+        if !protectionIssues.isEmpty { return .degraded }
         if projects.isEmpty { return .idle }
         return .protected
     }
@@ -661,7 +664,8 @@ final class AppModel: ObservableObject {
     /// "Undo" on a moment: puts back the files that snapshot recorded as changed (or the given ones), as they were in the
     /// snapshot before it. Runs without a confirmation because it is reversible: the restore snapshots first and the
     /// message offers Undo. The target is always found in the store, never from what a filtered list shows.
-    func undoChanges(root: String, snapshot: String, paths only: [String]? = nil) async {
+    @discardableResult
+    func undoChanges(root: String, snapshot: String, paths only: [String]? = nil) async -> Bool {
         let paths = self.paths
         let result: Result<(RestoreReport, [String]), Error> = await withCheckedContinuation { cont in
             snapshotQueue.async {
@@ -676,13 +680,16 @@ final class AppModel: ObservableObject {
                 } catch { cont.resume(returning: .failure(error)) }
             }
         }
+        refreshProjects()
         switch result {
         case .success(let (report, changed)):
             if let undo = report.undoSnapshotId { lastRestore = (root, undo, .paths(changed)) }
             announceRestore(report, root: root, scope: .paths(changed))
-        case .failure(let e): show(describe(e), style: .failure)
+            return true
+        case .failure(let e):
+            show(describe(e), style: .failure)
+            return false
         }
-        refreshProjects()
     }
 
     /// ⌥⌘Z: undoes the newest change in the selected project (or anywhere when none is selected).
@@ -868,7 +875,7 @@ final class AppModel: ObservableObject {
         switch why {
         case .goneOrReused: return ""
         case .notPermitted: return String(localized: "macOS didn't let Airbag stop this process.")
-        case .protected(let r), .protectedDescendant(let r): return String(localized: "Airbag won't stop this: \(r)")
+        case .protected(let r), .protectedDescendant(let r): return RadarScreen.refusal(r)
         }
     }
 
@@ -964,6 +971,7 @@ final class AppModel: ObservableObject {
 
     /// Marks every Guard entry so far as looked at ("Got it" in the popover, or opening the Guard view).
     func markGuardsReviewed() {
+        if pausedUntil == nil { pausedSince = nil; unprotectedDuringPause = 0 }
         guard let newest = guardEntries.map(\.ts).max(), newest > guardReviewedThrough else { return }
         guardReviewedThrough = newest
         try? registry?.setSetting("guard.reviewedThroughTs", newest)
@@ -981,6 +989,7 @@ final class AppModel: ObservableObject {
     // MARK: hooks
 
     func refreshHooks() {
+        guard !frozen else { return }
         let inst = installer
         let reg = workRegistry
         work.async {
@@ -1051,7 +1060,7 @@ final class AppModel: ObservableObject {
     func fix(_ issue: ProtectionIssue) {
         switch issue {
         case .brokenHooks(let agents): agents.forEach(installHooks)
-        case .noAgentConnected: windowRequest = .settings
+        case .noAgentConnected: openSettings(tab: "agents")
         case .lowDisk: revealInFinder(paths.stores.path)
         case .databaseUnavailable: revealInFinder(paths.logs.path)
         }
@@ -1197,6 +1206,19 @@ final class AppModel: ObservableObject {
         }
     }
 
+    /// Turns the login item on or off; returns why it failed, or nil (the Settings row shows it in place).
+    func setLaunchAtLogin(_ on: Bool) -> String? {
+        defer { refreshLoginItem() }
+        do { if on { try SMAppService.mainApp.register() } else { try SMAppService.mainApp.unregister() }; return nil }
+        catch { return String(localized: "Could not change the login item: \(error.localizedDescription)") }
+    }
+
+    /// Opens Settings on a tab ("general", "agents", "projects", "snapshots", "about").
+    func openSettings(tab: String) {
+        UserDefaults.standard.set(tab, forKey: "settings.tab")
+        windowRequest = .settings
+    }
+
     func refreshLoginItem() {
         let state: LoginItemState
         switch SMAppService.mainApp.status {
@@ -1218,7 +1240,7 @@ final class AppModel: ObservableObject {
         case SnapshotError.rootMissing(let p): return String(localized: "The folder \(p) does not exist.")
         case let e as StopRefusal: return Self.describeStop(e)
         case HookInstallError.hasComments(let f):
-            return String(localized: "\((f as NSString).abbreviatingWithTildeInPath) has comments Airbag would remove. Add the line by hand; see Show Changes.")
+            return String(localized: "\((f as NSString).abbreviatingWithTildeInPath) has comments Airbag would remove. Add Airbag's line by hand.")
         case HookInstallError.readOnly(let f):
             return String(localized: "\((f as NSString).abbreviatingWithTildeInPath) is read-only. Add the line in your dotfiles instead.")
         case HookInstallError.unreadable(let f, _): return String(localized: "Airbag can't read \((f as NSString).abbreviatingWithTildeInPath).")
@@ -1294,8 +1316,8 @@ final class AppModel: ObservableObject {
 
     /// The popover's first line: the state that matters most right now.
     var headline: String {
-        if let until = pausedUntil { return String(localized: "Paused until \(RelativeTime.moment(until))") }
         if let g = needsApproval.first { return String(localized: "\(g.agent?.displayName ?? String(localized: "An agent")) is waiting for you") }
+        if let until = pausedUntil { return String(localized: "Paused until \(RelativeTime.moment(until))") }
         if let issue = protectionIssues.first { return issue.text }
         let n = projects.filter(\.rootExists).count
         return n == 0 ? String(localized: "Nothing protected yet") : String(localized: "Protecting \(n) projects")
@@ -1312,7 +1334,6 @@ final class AppModel: ObservableObject {
         if commandsToday > 0 { parts.append(String(localized: "\(commandsToday) commands checked today")) }
         if snapshotting { parts.append(String(localized: "snapshot in progress…")) }
         else if let last = projects.compactMap(\.lastSnapshotAt).max() { parts.append(String(localized: "snapshot \(RelativeTime.short(ms: last))")) }
-        if !leftRunning.isEmpty { parts.append(String(localized: "\(leftRunning.count) left running")) }
         return parts.joined(separator: " · ")
     }
 
