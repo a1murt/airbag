@@ -71,7 +71,6 @@
 "Asked in agent" = "Đã hỏi trong agent";
 "Assigned by you." = "Do bạn gán.";
 "Back" = "Quay lại";
-"before" = "trước";
 "before %@" = "trước %@";
 "Before %@" = "Trước %@";
 "Before a command" = "Trước khi chạy lệnh";
@@ -286,7 +285,7 @@
 "snapshot in progress…" = "đang chụp nhanh…";
 "Snapshot taken" = "Đã chụp nhanh";
 "Snapshots" = "Ảnh chụp nhanh";
-"Snapshots before every agent command" = "Chụp nhanh trước mỗi lệnh của agent";
+"Snapshots before agent commands that change files" = "Chụp nhanh trước các lệnh của agent làm thay đổi tệp";
 "Snapshots paused: only %@ free" = "Đã tạm dừng chụp nhanh: chỉ còn trống %@";
 "Some files couldn't be put back." = "Không thể đưa một số tệp trở lại.";
 "Some files were not captured in time." = "Một số tệp chưa kịp được chụp lại.";

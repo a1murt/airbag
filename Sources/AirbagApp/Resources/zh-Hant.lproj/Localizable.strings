@@ -71,7 +71,6 @@
 "Asked in agent" = "已在代理程式中詢問";
 "Assigned by you." = "由你指定。";
 "Back" = "返回";
-"before" = "執行前";
 "before %@" = "執行 %@ 前";
 "Before %@" = "執行 %@ 前";
 "Before a command" = "指令執行前";
@@ -286,7 +285,7 @@
 "snapshot in progress…" = "正在建立快照…";
 "Snapshot taken" = "已建立快照";
 "Snapshots" = "快照";
-"Snapshots before every agent command" = "在代理程式執行每個指令前建立快照";
+"Snapshots before agent commands that change files" = "在代理程式執行會變更檔案的指令前建立快照";
 "Snapshots paused: only %@ free" = "快照已暫停：可用空間僅剩 %@";
 "Some files couldn't be put back." = "部分檔案無法放回原處。";
 "Some files were not captured in time." = "部分檔案未能及時擷取。";

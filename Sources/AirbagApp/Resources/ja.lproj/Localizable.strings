@@ -71,7 +71,6 @@
 "Asked in agent" = "エージェントで確認";
 "Assigned by you." = "手動で割り当てられました。";
 "Back" = "戻る";
-"before" = "実行前";
 "before %@" = "%@の実行前";
 "Before %@" = "%@の実行前";
 "Before a command" = "コマンドの実行前";
@@ -286,7 +285,7 @@
 "snapshot in progress…" = "スナップショット作成中…";
 "Snapshot taken" = "スナップショットを作成しました";
 "Snapshots" = "スナップショット";
-"Snapshots before every agent command" = "エージェントのコマンドごとにスナップショット";
+"Snapshots before agent commands that change files" = "ファイルを変更するエージェントのコマンドの前にスナップショット";
 "Snapshots paused: only %@ free" = "スナップショットを一時停止中：空き容量が%@しかありません";
 "Some files couldn't be put back." = "一部のファイルを戻せませんでした。";
 "Some files were not captured in time." = "一部のファイルは時間内に保存できませんでした。";

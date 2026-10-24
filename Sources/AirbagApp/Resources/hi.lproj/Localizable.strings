@@ -71,7 +71,6 @@
 "Asked in agent" = "एजेंट में पूछा गया";
 "Assigned by you." = "आपने असाइन किया।";
 "Back" = "वापस";
-"before" = "पहले";
 "before %@" = "%@ से पहले";
 "Before %@" = "%@ से पहले";
 "Before a command" = "कमांड से पहले";
@@ -286,7 +285,7 @@
 "snapshot in progress…" = "स्नैपशॉट लिया जा रहा है…";
 "Snapshot taken" = "स्नैपशॉट लिया गया";
 "Snapshots" = "स्नैपशॉट";
-"Snapshots before every agent command" = "हर एजेंट कमांड से पहले स्नैपशॉट";
+"Snapshots before agent commands that change files" = "फ़ाइलें बदलने वाले एजेंट कमांड से पहले स्नैपशॉट";
 "Snapshots paused: only %@ free" = "स्नैपशॉट रुके हुए हैं: सिर्फ़ %@ जगह खाली है";
 "Some files couldn't be put back." = "कुछ फ़ाइलें वापस नहीं लाई जा सकीं।";
 "Some files were not captured in time." = "कुछ फ़ाइलें समय पर कैप्चर नहीं हो सकीं।";

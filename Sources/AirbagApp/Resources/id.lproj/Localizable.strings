@@ -71,7 +71,6 @@
 "Asked in agent" = "Ditanyakan di agen";
 "Assigned by you." = "Ditetapkan oleh Anda.";
 "Back" = "Kembali";
-"before" = "sebelum";
 "before %@" = "sebelum %@";
 "Before %@" = "Sebelum %@";
 "Before a command" = "Sebelum perintah";
@@ -286,7 +285,7 @@
 "snapshot in progress…" = "mengambil snapshot…";
 "Snapshot taken" = "Snapshot diambil";
 "Snapshots" = "Snapshot";
-"Snapshots before every agent command" = "Snapshot sebelum setiap perintah agen";
+"Snapshots before agent commands that change files" = "Snapshot sebelum perintah agen yang mengubah file";
 "Snapshots paused: only %@ free" = "Snapshot dijeda: ruang kosong tinggal %@";
 "Some files couldn't be put back." = "Beberapa file tidak dapat dikembalikan.";
 "Some files were not captured in time." = "Beberapa file tidak sempat terekam.";

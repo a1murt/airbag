@@ -71,7 +71,6 @@
 "Asked in agent" = "Zapytano w agencie";
 "Assigned by you." = "Przypisano ręcznie.";
 "Back" = "Wróć";
-"before" = "przed";
 "before %@" = "przed %@";
 "Before %@" = "Przed %@";
 "Before a command" = "Przed poleceniem";
@@ -286,7 +285,7 @@
 "snapshot in progress…" = "tworzenie migawki…";
 "Snapshot taken" = "Zrobiono migawkę";
 "Snapshots" = "Migawki";
-"Snapshots before every agent command" = "Migawki przed każdym poleceniem agenta";
+"Snapshots before agent commands that change files" = "Migawki przed poleceniami agenta, które zmieniają pliki";
 "Snapshots paused: only %@ free" = "Migawki wstrzymane: tylko %@ wolnego miejsca";
 "Some files couldn't be put back." = "Części plików nie udało się cofnąć.";
 "Some files were not captured in time." = "Niektóre pliki nie zostały zapisane na czas.";

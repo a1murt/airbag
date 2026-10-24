@@ -71,7 +71,6 @@
 "Asked in agent" = "에이전트에서 확인함";
 "Assigned by you." = "사용자가 지정했습니다.";
 "Back" = "뒤로";
-"before" = "실행 전";
 "before %@" = "%@ 실행 전";
 "Before %@" = "%@ 실행 전";
 "Before a command" = "명령 실행 전";
@@ -286,7 +285,7 @@
 "snapshot in progress…" = "스냅샷 생성 중…";
 "Snapshot taken" = "스냅샷 생성됨";
 "Snapshots" = "스냅샷";
-"Snapshots before every agent command" = "모든 에이전트 명령 전에 스냅샷 생성";
+"Snapshots before agent commands that change files" = "파일을 바꾸는 에이전트 명령 전에 스냅샷 생성";
 "Snapshots paused: only %@ free" = "스냅샷 일시 정지됨: 여유 공간이 %@밖에 없음";
 "Some files couldn't be put back." = "일부 파일을 되돌리지 못했습니다.";
 "Some files were not captured in time." = "일부 파일은 제때 저장되지 않았습니다.";

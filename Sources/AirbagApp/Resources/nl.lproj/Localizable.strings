@@ -71,7 +71,6 @@
 "Asked in agent" = "Gevraagd in agent";
 "Assigned by you." = "Door jou toegewezen.";
 "Back" = "Terug";
-"before" = "vóór";
 "before %@" = "vóór %@";
 "Before %@" = "Vóór %@";
 "Before a command" = "Vóór een commando";
@@ -286,7 +285,7 @@
 "snapshot in progress…" = "snapshot wordt gemaakt…";
 "Snapshot taken" = "Snapshot gemaakt";
 "Snapshots" = "Snapshots";
-"Snapshots before every agent command" = "Snapshots vóór elk agentcommando";
+"Snapshots before agent commands that change files" = "Snapshots vóór agentcommando's die bestanden wijzigen";
 "Snapshots paused: only %@ free" = "Snapshots gepauzeerd: nog maar %@ vrij";
 "Some files couldn't be put back." = "Sommige bestanden konden niet worden teruggebracht.";
 "Some files were not captured in time." = "Sommige bestanden zijn niet op tijd vastgelegd.";

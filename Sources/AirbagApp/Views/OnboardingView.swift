@@ -162,7 +162,7 @@ struct OnboardingView: View {
             Text("Welcome to Airbag").font(.largeTitle.weight(.semibold))
             Text("A safety net for AI coding agents").font(.title3).foregroundStyle(.secondary).padding(.top, 2)
             VStack(alignment: .leading, spacing: 18) {
-                feature("camera", Text("Snapshots before every agent command"),
+                feature("camera", Text("Snapshots before agent commands that change files"),
                         Text.withCommand(String(localized: "Undo an agent's changes in one click, even after \(Text.commandMarker)."), "rm -rf"))
                 feature("hand.raised", Text("Stops what a snapshot cannot undo"),
                         Text("Wiping your home folder is blocked; force pushes are flagged in Guard."))

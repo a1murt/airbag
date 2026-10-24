@@ -71,7 +71,6 @@
 "Asked in agent" = "已在智能体中询问";
 "Assigned by you." = "由你手动指定。";
 "Back" = "返回";
-"before" = "执行前";
 "before %@" = "执行 %@ 前";
 "Before %@" = "执行 %@ 前";
 "Before a command" = "命令执行前";
@@ -286,7 +285,7 @@
 "snapshot in progress…" = "正在创建快照…";
 "Snapshot taken" = "已创建快照";
 "Snapshots" = "快照";
-"Snapshots before every agent command" = "智能体每次执行命令前创建快照";
+"Snapshots before agent commands that change files" = "智能体执行会改动文件的命令前创建快照";
 "Snapshots paused: only %@ free" = "快照已暂停：仅剩 %@ 可用空间";
 "Some files couldn't be put back." = "部分文件无法放回原处。";
 "Some files were not captured in time." = "部分文件未能及时捕获。";

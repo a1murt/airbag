@@ -71,7 +71,6 @@
 "Asked in agent" = "Підтвердження в агенті";
 "Assigned by you." = "Призначено вами.";
 "Back" = "Назад";
-"before" = "перед";
 "Before %@" = "Перед %@";
 "before %@" = "перед %@";
 "Before a command" = "Перед командою";
@@ -286,7 +285,7 @@
 "snapshot in progress…" = "створюється знімок…";
 "Snapshot taken" = "Знімок створено";
 "Snapshots" = "Знімки";
-"Snapshots before every agent command" = "Знімки перед кожною командою агента";
+"Snapshots before agent commands that change files" = "Знімки перед командами агента, які змінюють файли";
 "Snapshots paused: only %@ free" = "Знімки призупинено: вільно лише %@";
 "Some files couldn't be put back." = "Деякі файли не вдалося повернути.";
 "Some files were not captured in time." = "Деякі файли не встигли потрапити до знімка.";

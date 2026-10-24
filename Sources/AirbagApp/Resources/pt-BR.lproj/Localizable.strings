@@ -71,7 +71,6 @@
 "Asked in agent" = "Perguntado no agente";
 "Assigned by you." = "Atribuído por você.";
 "Back" = "Voltar";
-"before" = "antes";
 "before %@" = "antes de %@";
 "Before %@" = "Antes de %@";
 "Before a command" = "Antes de um comando";
@@ -286,7 +285,7 @@
 "snapshot in progress…" = "criando snapshot…";
 "Snapshot taken" = "Snapshot criado";
 "Snapshots" = "Snapshots";
-"Snapshots before every agent command" = "Snapshots antes de cada comando do agente";
+"Snapshots before agent commands that change files" = "Snapshots antes dos comandos do agente que alteram arquivos";
 "Snapshots paused: only %@ free" = "Snapshots pausados: só %@ livres";
 "Some files couldn't be put back." = "Não foi possível devolver alguns arquivos ao estado anterior.";
 "Some files were not captured in time." = "Alguns arquivos não foram capturados a tempo.";

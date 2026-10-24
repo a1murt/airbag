@@ -71,7 +71,6 @@
 "Asked in agent" = "Ajan içinde soruldu";
 "Assigned by you." = "Siz atadınız.";
 "Back" = "Geri";
-"before" = "önce";
 "before %@" = "%@ öncesi";
 "Before %@" = "%@ öncesi";
 "Before a command" = "Komuttan önce";
@@ -286,7 +285,7 @@
 "snapshot in progress…" = "anlık görüntü alınıyor…";
 "Snapshot taken" = "Anlık görüntü alındı";
 "Snapshots" = "Anlık görüntüler";
-"Snapshots before every agent command" = "Her ajan komutundan önce anlık görüntü";
+"Snapshots before agent commands that change files" = "Dosyaları değiştiren ajan komutlarından önce anlık görüntü";
 "Snapshots paused: only %@ free" = "Anlık görüntüler duraklatıldı: yalnızca %@ boş alan kaldı";
 "Some files couldn't be put back." = "Bazı dosyalar geri döndürülemedi.";
 "Some files were not captured in time." = "Bazı dosyalar zamanında yakalanamadı.";

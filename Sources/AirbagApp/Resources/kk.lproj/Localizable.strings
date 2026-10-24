@@ -71,7 +71,6 @@
 "Asked in agent" = "Агентте сұралды";
 "Assigned by you." = "Сіз тағайындадыңыз.";
 "Back" = "Артқа";
-"before" = "алдында";
 "before %@" = "%@ алдында";
 "Before %@" = "%@ алдында";
 "Before a command" = "Команда алдында";
@@ -286,7 +285,7 @@
 "snapshot in progress…" = "снапшот жасалуда…";
 "Snapshot taken" = "Снапшот жасалды";
 "Snapshots" = "Снапшоттар";
-"Snapshots before every agent command" = "Агенттің әр командасы алдында снапшот";
+"Snapshots before agent commands that change files" = "Файлдарды өзгертетін агент командалары алдында снапшот";
 "Snapshots paused: only %@ free" = "Снапшоттар кідіртілді: небәрі %@ бос орын қалды";
 "Some files couldn't be put back." = "Кейбір файлдарды қайтару мүмкін болмады.";
 "Some files were not captured in time." = "Кейбір файлдар уақытында сақталып үлгермеді.";

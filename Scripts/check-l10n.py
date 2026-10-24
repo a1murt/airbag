@@ -67,13 +67,21 @@ def source_keys():
     pat = re.compile(r'(?:bullet\("[^"]*",\s*|\bTextField|\bText|\bButton|\bLabel|\bToggle|\bPicker|\bSection|\bMenu|\bLink|\bTableColumn|\bContentUnavailableView|\bLocalizedStringKey|\bLocalizedStringResource|\.navigationTitle|\.navigationSubtitle|\.confirmationDialog|\.alert|\.help|prompt:|String\(localized:|Pill\(text:|StatusDot\(text:|Callout\(\.\w+,|SectionHeader\(title:|EmptyState\(symbol: "[^"]*", title:|, message:|case \.\w+: return|resolutionText.*return|title = )\s*\(?\s*"((?:[^"\\]|\\.)*)"')
     symbols = re.compile(r'^[a-z]+(\.[a-z.]+)*$')
     sf = {'airplane', 'camera', 'diamond', 'gearshape', 'shield', 'sparkle', 'terminal', 'folder', 'pin', 'lock'}
+    # Both branches of `Text(flag ? "a" : "b")`, and table column titles however short ("RAM").
+    ternary = re.compile(r'\b(?:Text|Button|Label)\(\s*[\w.!]+\s*\?\s*"((?:[^"\\]|\\.)*)"\s*:\s*"((?:[^"\\]|\\.)*)"')
+    column = re.compile(r'\bTableColumn\(\s*"((?:[^"\\]|\\.)*)"')
     out = {}
     for f in glob.glob('Sources/AirbagApp/**/*.swift', recursive=True):
-        for m in pat.finditer(open(f, encoding='utf-8').read()):
+        text = open(f, encoding='utf-8').read()
+        for m in pat.finditer(text):
             k = key(m.group(1))
             if not k or k == 'Airbag' or k.startswith('http') or re.fullmatch(r'[\W\d_%@lA-Z]{0,3}', k) or symbols.match(k) and ('.' in k or k in sf):
                 continue
             out.setdefault(k, os.path.basename(f))
+        for m in list(ternary.finditer(text)) + list(column.finditer(text)):
+            for k in map(key, m.groups()):
+                if k:
+                    out.setdefault(k, os.path.basename(f))
     return out
 
 
