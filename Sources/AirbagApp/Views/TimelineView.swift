@@ -21,15 +21,33 @@ struct TimelineRow: Identifiable, Equatable {
     let trigger: SnapshotTrigger
     /// A command that finished on the snapshot it started on: it changed no files.
     var unchanged = false
+    /// For a command: the snapshot it started on. Its changes and its Undo are measured from here to `effect`, so files
+    /// snapshotted on their own while it ran (a pause in its writing) still count as its changes.
+    var base: SnapshotInfo? = nil
+    /// The snapshots this row stands for (the effect and any taken while the command ran): search and "Show" find it by them.
+    var spanIDs: [String] = []
+    /// What those snapshots recorded as changed, together.
+    var spanChanged = 0
+    /// The oldest snapshot left after cleanup: nothing before it, so what it changed is unknown and it cannot be undone.
+    var baseline = false
 
     /// Undo means "put back what this changed": not for the first snapshot (nothing before it) or the snapshot taken
     /// before a restore (its changes are edits made before the restore, not the restore).
-    var canUndo: Bool { (effect?.changedCount ?? 0) > 0 && trigger != .preRestore && trigger != .initial }
+    var canUndo: Bool {
+        guard !baseline, trigger != .preRestore, trigger != .initial else { return false }
+        return (base != nil ? spanChanged : effect?.changedCount ?? 0) > 0
+    }
     var expandable: Bool {
         (effect != nil && !(kind == .moment && trigger == .initial)) || (kind == .command && command.map { Self.isLong($0.command) } == true)
     }
-    /// A command that changed nothing: shown quietly.
-    var quiet: Bool { kind == .command && effect == nil }
+    /// A command that changed nothing and that Guard did not flag: shown quietly.
+    var quiet: Bool { kind == .command && effect == nil && decision == nil && !baseline }
+    /// A command row whose moment is the state after it (its start is gone): Restore names it so.
+    var momentIsAfter: Bool { kind == .command && effect == nil && command?.kind != "pre_shell" }
+    /// Shows how many files the project held instead of what changed (nothing before it to compare with).
+    var showsFileCount: Bool { baseline || (kind == .moment && trigger == .initial) }
+    /// Where its loaded change list is kept.
+    var changesKey: String { effect.map { e in base.map { $0.id + ">" + e.id } ?? e.id } ?? "" }
 
     var title: String {
         switch kind {
@@ -54,12 +72,14 @@ struct TimelineRow: Identifiable, Equatable {
     /// Decisions the Timeline names next to a command (plain allows say nothing).
     static let notable: Set<String> = ["deny", "deny_fallback", "ask", "allow_once", "allow_fallback"]
 
-    /// Rows from the store's snapshots (newest first, each with the commands that point at it), newest first.
+    /// Rows from the store's snapshots (newest first, each with the commands that point at it), newest first. Without
+    /// `hasOlder`, the oldest entry has no snapshot before it (cleanup removed it): it becomes a moment without Undo.
     ///
     /// A command's start points at the snapshot taken before it (or the latest one when nothing changed) and its finish
     /// at the after-command snapshot it created (or again the latest one). Start and finish are paired per session and
-    /// command text; the after-command snapshot belongs to the first finish pointing at it.
-    static func build(_ entries: [TimelineEntry]) -> [TimelineRow] {
+    /// command text, a finish going to the most recent open start; blocked starts (deny, deny_fallback) never run and are
+    /// never paired. File-change snapshots taken while a command ran are folded into its row.
+    static func build(_ entries: [TimelineEntry], hasOlder: Bool) -> [TimelineRow] {
         var events: [(command: TimelineCommand, snapshot: SnapshotInfo)] = []
         for e in entries { for c in e.commands { events.append((c, e.snapshot)) } }
         events.sort { $0.command.ts < $1.command.ts }
@@ -72,11 +92,12 @@ struct TimelineRow: Identifiable, Equatable {
             switch ev.command.kind {
             case "pre_shell":
                 runs.append(Run(start: ev))
-                open[key, default: []].append(runs.count - 1)
+                // A blocked command never runs, so no finish belongs to it (the retry after an approval is a start of its own).
+                if ev.command.decision != "deny" && ev.command.decision != "deny_fallback" { open[key, default: []].append(runs.count - 1) }
             case "post_shell", "shell_failed":
                 if ev.snapshot.trigger == .postCommand, creator[ev.snapshot.id] == nil { creator[ev.snapshot.id] = ev.command.id }
-                if var waiting = open[key], !waiting.isEmpty {
-                    runs[waiting.removeFirst()].finish = ev
+                if var waiting = open[key], let i = waiting.popLast() {
+                    runs[i].finish = ev
                     open[key] = waiting
                 } else {
                     runs.append(Run(finish: ev))
@@ -85,26 +106,55 @@ struct TimelineRow: Identifiable, Equatable {
             }
         }
         let index = Dictionary(entries.enumerated().map { ($1.id, $0) }, uniquingKeysWith: { a, _ in a })
+        let oldestID = hasOlder ? nil : entries.last?.snapshot.id
         var owned = Set<String>()
         var rows: [TimelineRow] = []
         for run in runs {
             guard let c = run.start?.command ?? run.finish?.command else { continue }
             var effect: SnapshotInfo?
-            if let f = run.finish, creator[f.snapshot.id] == f.command.id, f.snapshot.id != run.start?.snapshot.id {
-                effect = f.snapshot
-                owned.insert(f.snapshot.id)
+            var base: SnapshotInfo?
+            var span: [SnapshotInfo] = []
+            var baseline = false
+            // An agent's command in the foreground ends within minutes; past that, edits in between are not taken for its own.
+            if let f = run.finish, let s = run.start, f.snapshot.seq > s.snapshot.seq, f.command.ts - s.command.ts < 15 * 60_000,
+               let fi = index[f.snapshot.id], let si = index[s.snapshot.id], fi < si {
+                // Everything between its start and its finish is the command's, unless another command's snapshot (or a
+                // manual one, or a restore) lies in between: then only its own after-command snapshot is.
+                let between = entries[fi..<si].map(\.snapshot)
+                if between.allSatisfy({ $0.trigger == .fsevents || ($0.trigger == .postCommand && creator[$0.id] == f.command.id) }) {
+                    span = between
+                    base = s.snapshot
+                    effect = f.snapshot
+                }
             }
+            if effect == nil, let f = run.finish, creator[f.snapshot.id] == f.command.id, f.snapshot.id != run.start?.snapshot.id {
+                if f.snapshot.id == oldestID {
+                    baseline = true
+                    owned.insert(f.snapshot.id)
+                } else {
+                    effect = f.snapshot
+                    span = [f.snapshot]
+                }
+            }
+            for s in span { owned.insert(s.id) }
             var moment = run.start?.snapshot
             if moment == nil, let e = effect, let i = index[e.id], i + 1 < entries.count { moment = entries[i + 1].snapshot }
             if moment == nil, effect == nil { moment = run.finish?.snapshot }
             let unchanged = run.finish != nil && run.finish?.snapshot.id == run.start?.snapshot.id
             rows.append(TimelineRow(id: "c" + c.id, kind: .command, time: run.finish?.command.ts ?? c.ts, command: c,
                                     decision: run.start?.command.decision.flatMap { notable.contains($0) ? $0 : nil },
-                                    effect: effect, moment: moment, trigger: .postCommand, unchanged: unchanged))
+                                    effect: effect, moment: moment, trigger: .postCommand, unchanged: unchanged,
+                                    base: base, spanIDs: span.map(\.id), spanChanged: span.reduce(0) { $0 + $1.changedCount }, baseline: baseline))
         }
         for e in entries where !owned.contains(e.id) {
             let s = e.snapshot
             let before = e.commands.first { $0.kind == "pre_shell" }
+            if s.id == oldestID, s.trigger != .initial, !(s.trigger == .preCommand && s.changedCount == 0) {
+                // Its "before" was removed by cleanup: a moment to restore to, not a list of changes.
+                rows.append(TimelineRow(id: "s" + s.id, kind: .moment, time: s.createdAt, command: nil, decision: nil,
+                                        effect: nil, moment: s, trigger: s.trigger, baseline: true))
+                continue
+            }
             switch s.trigger {
             case .preCommand where s.changedCount == 0:
                 continue // nothing of its own: the command row already restores to it
@@ -155,20 +205,47 @@ struct TimelineRow: Identifiable, Equatable {
     }
 }
 
+/// A row's change list with what the row derives from it, worked out once when it loads (not on every redraw).
+struct LoadedChanges: Sendable {
+    let key: String
+    let list: [FileChange]
+    /// The folder every change is in, if one.
+    let folder: String?
+    /// Long lists by folder.
+    let groups: (folders: [(String, [FileChange])], loose: [FileChange])?
+
+    init(key: String, list: [FileChange]) {
+        self.key = key
+        self.list = list
+        folder = TimelineRow.commonFolder(list)
+        groups = list.count > 20 ? TimelineRow.groups(list) : nil
+    }
+
+    func folder(of change: FileChange) -> String? { groups?.folders.first { $0.1.contains(change) }?.0 }
+}
+
 /// File lists already loaded, so rows that scroll back in or reappear after a search show their counts at once.
 final class ChangeCache {
-    var map: [String: [FileChange]] = [:]
+    var map: [String: LoadedChanges] = [:]
+}
+
+/// One load of a project's Timeline.
+struct TimelineData {
+    var entries: [TimelineEntry] = []
+    /// The store holds snapshots older than the oldest entry (otherwise that entry has nothing before it).
+    var hasOlder = false
+    func rows() -> [TimelineRow] { TimelineRow.build(entries, hasOlder: hasOlder) }
 }
 
 struct TimelineScreen: View {
     @EnvironmentObject var model: AppModel
     /// Preview rendering: command rows that changed files start expanded, edits with their diff.
     var preview = false
-    @State private var entries: [TimelineEntry] = []
+    @State private var data = TimelineData()
     @State private var rows: [TimelineRow] = []
     @State private var loaded = false
     /// Newer entries waiting behind the "new" capsule while the user reads (a row open or the list scrolled down).
-    @State private var held: [TimelineEntry]?
+    @State private var held: TimelineData?
     @State private var heldCount = 0
     @State private var expanded: Set<String> = []
     @State private var selection: String?
@@ -193,7 +270,7 @@ struct TimelineScreen: View {
         let q = activeQuery.lowercased()
         return rows.filter { r in
             if r.kind == .command, let c = r.command, c.command.lowercased().contains(q) { return true }
-            if let e = r.effect, pathHits.contains(e.id) { return true }
+            if let e = r.effect, pathHits.contains(e.id) || r.spanIDs.contains(where: pathHits.contains) { return true }
             if r.kind == .moment, let m = r.moment, pathHits.contains(m.id) { return true }
             return false
         }
@@ -299,7 +376,7 @@ struct TimelineScreen: View {
     }
 
     func missingBanner(_ p: ProjectRow) -> some View {
-        let newest = (held ?? entries).first { $0.snapshot.complete }?.snapshot
+        let newest = (held ?? data).entries.first { $0.snapshot.complete }?.snapshot
         return HStack(spacing: 12) {
             Image(systemName: "folder.badge.questionmark").font(.title2).foregroundStyle(Theme.danger)
             VStack(alignment: .leading, spacing: 2) {
@@ -437,10 +514,11 @@ struct TimelineScreen: View {
 
     func load() async {
         guard let root = model.selectedRoot else { return }
-        let new = await model.timeline(root: root).entries
+        let t = await model.timeline(root: root)
         // A newer load is on its way (another command ran meanwhile): only the latest result is shown.
         guard !Task.isCancelled, root == model.selectedRoot else { return }
-        let newRows = TimelineRow.build(new)
+        let new = TimelineData(entries: t.entries, hasOlder: t.hasOlder)
+        let newRows = new.rows()
         guard loaded else {
             apply(new, newRows, animated: false)
             loaded = true
@@ -457,9 +535,9 @@ struct TimelineScreen: View {
         }
     }
 
-    func apply(_ new: [TimelineEntry], _ newRows: [TimelineRow], animated: Bool) {
+    func apply(_ new: TimelineData, _ newRows: [TimelineRow], animated: Bool) {
         let change = {
-            entries = new
+            data = new
             rows = newRows
             held = nil
             heldCount = 0
@@ -470,7 +548,7 @@ struct TimelineScreen: View {
 
     func showHeld(_ proxy: ScrollViewProxy) {
         guard let held else { return }
-        let built = TimelineRow.build(held)
+        let built = held.rows()
         apply(held, built, animated: true)
         if let first = built.first?.id { withAnimation(.snappy) { proxy.scrollTo(first, anchor: .top) } }
     }
@@ -499,10 +577,11 @@ struct TimelineScreen: View {
     /// "Show" in the popover or a notification: scroll to the moment, open it and highlight it once.
     func applyFocus(_ proxy: ScrollViewProxy) {
         guard loaded, case .snapshot(let focusRoot, let id)? = model.focus, focusRoot == model.selectedRoot else { return }
-        let source = held ?? entries
-        let all = TimelineRow.build(source)
+        let source = held ?? data
+        let all = source.rows()
         if held != nil { apply(source, all, animated: false) }
-        let target = all.first { $0.effect?.id == id } ?? all.first { $0.id == "s" + id } ?? all.first { $0.kind == .command && $0.moment?.id == id }
+        let target = all.first { $0.effect?.id == id } ?? all.first { $0.id == "s" + id } ?? all.first { $0.spanIDs.contains(id) }
+            ?? all.first { $0.kind == .command && $0.moment?.id == id }
         model.focus = nil
         guard let target else { return }
         query = ""
@@ -579,9 +658,19 @@ struct TimelineRowView: View {
     let onToggle: () -> Void
     let onPin: (Bool) -> Void
 
-    enum UndoState: Equatable { case idle, running, done, failed(String) }
+    enum UndoState: Equatable { case idle, running, done, failed(String), partial(String) }
 
-    @State private var changes: [FileChange]?
+    /// The Guard decision as it stands now: the hook logged the first one, and an approval answered since is no longer
+    /// "Needs approval".
+    struct DecisionStatus {
+        let title: LocalizedStringKey
+        let symbol: String
+        let color: Color
+        /// The entry the agent is still waiting on: Allow Once is offered on the row.
+        var waiting: GuardEntry?
+    }
+
+    @State private var loadedState: LoadedChanges?
     @State private var selectedFile: String?
     @State private var diffVisible = false
     @State private var openFolders: Set<String> = []
@@ -589,14 +678,24 @@ struct TimelineRowView: View {
     @State private var hover = false
 
     /// Nil while loading (a placeholder shows, never a flash of "no changes").
-    var loadedChanges: [FileChange]? { changes ?? row.effect.flatMap { cache.map[$0.id] } }
+    var loaded: LoadedChanges? {
+        if let l = loadedState, l.key == row.changesKey { return l }
+        return row.effect == nil ? nil : cache.map[row.changesKey]
+    }
+    var loadedChanges: [FileChange]? { loaded?.list }
+
+    /// Undone as a whole this session; the model forgets it once a restore or Undo Restore brings the files back.
+    var isUndone: Bool { row.effect.map { model.undoneMoments[$0.id] != nil } ?? false }
+    /// Undo while there is something to put back.
+    var offersUndo: Bool { row.canUndo && !isUndone && loadedChanges?.isEmpty != true }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             header
-            if case .failed(let message) = undo {
-                Callout(.danger, verbatim: message).font(.callout)
-                    .padding(.leading, 42).padding(.trailing, 12).padding(.bottom, 10)
+            switch undo {
+            case .failed(let message): undoCallout(.danger, message)
+            case .partial(let message): undoCallout(.warning, message)
+            default: EmptyView()
             }
             if expanded {
                 Divider().padding(.horizontal, 12)
@@ -611,29 +710,35 @@ struct TimelineRowView: View {
                 RoundedRectangle(cornerRadius: 10).strokeBorder(Theme.accent.opacity(listFocused ? 0.9 : 0.35), lineWidth: listFocused ? 2 : 1)
             }
         }
-        .task(id: row.effect?.id) { await loadChanges() }
+        .task(id: row.changesKey) { await loadChanges() }
         .onChange(of: autoSelectFile, initial: true) { autoSelect() }
         .onChange(of: highlight) { autoSelect() }
         .onChange(of: spaceTick) { if isSpaceTarget { toggleDiff() } }
     }
 
+    func undoCallout(_ kind: Callout.Kind, _ message: String) -> some View {
+        Callout(kind, verbatim: message).font(.callout)
+            .padding(.leading, 42).padding(.trailing, 12).padding(.bottom, 10)
+    }
+
     // MARK: header
 
     var header: some View {
-        HStack(spacing: 10) {
-            symbol
+        let status = decisionStatus
+        return HStack(spacing: 10) {
+            symbol(status)
             VStack(alignment: .leading, spacing: 3) {
                 titleLine
-                if hasEffectLine { effectLine }
+                if hasEffectLine { effectLine(status) }
             }
             .layoutPriority(1) // the text gets the room first; the spacer only what is left
             Spacer(minLength: 8)
-            if row.canUndo { undoButton }
+            accessory(status)
             // Right-aligned in a column of its own, so times line up whether or not a row offers Undo.
             Text(verbatim: RelativeTime.age(ms: row.time))
                 .font(.caption).foregroundStyle(.secondary).fixedSize()
                 .help(Text(verbatim: RelativeTime.precise(ms: row.time)))
-            Menu { menuItems(includeUndo: false) } label: { Image(systemName: "ellipsis.circle") }
+            Menu { menuItems(includeUndo: false, status) } label: { Image(systemName: "ellipsis.circle") }
                 .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
                 .help(Text("More actions")).accessibilityLabel(Text("More actions"))
             Image(systemName: "chevron.right")
@@ -642,36 +747,54 @@ struct TimelineRowView: View {
                 .frame(width: 12)
                 .opacity(row.expandable ? 1 : 0)
         }
+        .animation(.snappy, value: isUndone)
         .padding(.horizontal, 12).padding(.vertical, 10)
         .background(hover ? Color.primary.opacity(0.03) : .clear)
         .contentShape(Rectangle())
         .onTapGesture { onSelect(); onToggle() }
         .onHover { hover = $0 }
-        .contextMenu { menuItems(includeUndo: true) }
+        .contextMenu { menuItems(includeUndo: true, status) }
         .accessibilityElement(children: .contain)
         .accessibilityAddTraits(.isButton)
         .accessibilityAction { onSelect(); onToggle() }
     }
 
-    var symbol: some View {
-        let (name, color) = symbolInfo
+    /// Undo, or its result in place (a check until the files come back), or Allow Once while the agent waits.
+    @ViewBuilder func accessory(_ status: DecisionStatus?) -> some View {
+        if isUndone {
+            Image(systemName: "checkmark.circle.fill").font(.body).foregroundStyle(Theme.ok)
+                .transition(.scale.combined(with: .opacity))
+                .accessibilityLabel(Text("Done"))
+        } else if offersUndo {
+            undoButton.transition(.opacity)
+        } else if let g = status?.waiting {
+            Button("Allow Once") { withAnimation(.snappy) { model.allowOnce(g) } }
+                .buttonStyle(.borderedProminent).controlSize(.small).fixedSize()
+                .disabled(!g.canAllowOnce)
+                .help(g.canAllowOnce ? Text(verbatim: "") : Text("Airbag doesn't know which session asked. Run the command yourself if you want it."))
+        }
+    }
+
+    func symbol(_ status: DecisionStatus?) -> some View {
+        let (name, color) = symbolInfo(status)
         return Image(systemName: name).foregroundStyle(color).font(.body).frame(width: 20).accessibilityHidden(true)
     }
 
-    var symbolInfo: (String, Color) {
+    func symbolInfo(_ status: DecisionStatus?) -> (String, Color) {
         if row.kind == .moment {
             switch row.trigger {
             case .initial: return ("shield", .secondary)
             case .manual: return ("camera", .secondary)
             case .preRestore, .postRestore: return ("arrow.uturn.backward.circle", .secondary)
-            default: break
+            default: if row.baseline { return ("shield", .secondary) }
             }
         }
+        if row.baseline { return ("terminal", .secondary) }
         if row.effect != nil {
             if let c = loadedChanges { return ChangeCounts.symbol(c) }
             return (row.kind == .command ? "terminal" : "doc", .secondary)
         }
-        if let d = row.decision { let g = GuardStyle(d); return (g.symbol, g.color) }
+        if let status { return (status.symbol, status.color) }
         return ChangeCounts.symbol([])
     }
 
@@ -703,29 +826,31 @@ struct TimelineRowView: View {
     }
 
     var hasEffectLine: Bool {
-        (row.kind == .moment && row.trigger == .initial) || row.effect != nil || row.decision != nil || row.unchanged || row.kind == .command
+        row.showsFileCount || row.effect != nil || row.decision != nil || row.unchanged || row.kind == .command
     }
 
     /// What the row did, then who did it. In a narrow window the session, then the agent, then the folder give way.
-    var effectLine: some View {
-        ViewThatFits(in: .horizontal) {
-            effectItems(folder: true, agent: true, session: true)
-            effectItems(folder: true, agent: true, session: false)
-            effectItems(folder: true, agent: false, session: false)
-            effectItems(folder: false, agent: false, session: false)
+    func effectLine(_ status: DecisionStatus?) -> some View {
+        let folder = loaded?.folder
+        return ViewThatFits(in: .horizontal) {
+            effectItems(status, folder: folder, agent: true, session: true)
+            effectItems(status, folder: folder, agent: true, session: false)
+            effectItems(status, folder: folder, agent: false, session: false)
+            effectItems(status, folder: nil, agent: false, session: false)
         }
         .font(.caption)
         .lineLimit(1)
     }
 
-    func effectItems(folder showFolder: Bool, agent showAgent: Bool, session showSession: Bool) -> some View {
+    func effectItems(_ status: DecisionStatus?, folder: String?, agent showAgent: Bool, session showSession: Bool) -> some View {
         HStack(spacing: 12) {
-            if row.kind == .moment && row.trigger == .initial, let s = row.moment {
+            if row.showsFileCount, let s = row.moment {
                 Text("\(s.fileCount) files").foregroundStyle(.secondary)
+                    .help(row.baseline ? Text("Older snapshots were removed by cleanup.") : Text(verbatim: ""))
             } else if let e = row.effect {
                 if let c = loadedChanges {
                     ChangeCounts(changes: c).fixedSize()
-                    if showFolder, let folder = TimelineRow.commonFolder(c) {
+                    if let folder {
                         Label { Text(verbatim: folder).font(.caption.monospaced()).truncationMode(.middle) } icon: { Image(systemName: "folder") }
                             .labelStyle(TightLabelStyle())
                             .foregroundStyle(.secondary)
@@ -733,11 +858,17 @@ struct TimelineRowView: View {
                             .help(Text(verbatim: folder))
                     }
                 } else {
-                    Text(verbatim: "\(e.changedCount) changed · src").redacted(reason: .placeholder)
+                    Text(verbatim: "\(row.base != nil ? row.spanChanged : e.changedCount) changed · src").redacted(reason: .placeholder)
                 }
             }
-            if let d = row.decision {
-                GuardStyle(d).label.labelStyle(TightLabelStyle()).foregroundStyle(.secondary).fixedSize()
+            if let status {
+                if row.effect == nil {
+                    // The leading symbol already shows the decision.
+                    Text(status.title).foregroundStyle(.secondary).fixedSize()
+                } else {
+                    Label { Text(status.title) } icon: { Image(systemName: status.symbol).foregroundStyle(status.color) }
+                        .labelStyle(TightLabelStyle()).foregroundStyle(.secondary).fixedSize()
+                }
             } else if row.unchanged {
                 Text("No files changed").foregroundStyle(.secondary).fixedSize()
             }
@@ -767,9 +898,12 @@ struct TimelineRowView: View {
         .help(Text("Put the changed files back as they were before"))
     }
 
-    @ViewBuilder func menuItems(includeUndo: Bool) -> some View {
-        if includeUndo && row.canUndo {
+    @ViewBuilder func menuItems(includeUndo: Bool, _ status: DecisionStatus?) -> some View {
+        if includeUndo && offersUndo {
             Button("Undo") { runUndo() }
+            Divider()
+        } else if includeUndo, let g = status?.waiting, g.canAllowOnce {
+            Button("Allow Once") { withAnimation(.snappy) { model.allowOnce(g) } }
             Divider()
         }
         Button("Restore Project to This Moment…") { restoreMoment() }.disabled(row.moment == nil)
@@ -787,10 +921,29 @@ struct TimelineRowView: View {
         }
     }
 
-    /// The Guard entry of the row's command, when Guard recorded it.
+    /// The Guard entry of the row's command, when Guard recorded it (the same decision, so the allowed retry of a
+    /// command that needed approval is not taken for it).
     var guardEntry: GuardEntry? {
-        guard row.decision != nil, let c = row.command else { return nil }
-        return model.guardEntries.first { $0.command == c.command && abs($0.ts - c.ts) < 10_000 }
+        guard let d = row.decision, let c = row.command else { return nil }
+        return model.guardEntries.first { $0.decision == d && $0.command == c.command && abs($0.ts - c.ts) < 10_000 }
+    }
+
+    var decisionStatus: DecisionStatus? {
+        guard let d = row.decision else { return nil }
+        let g = GuardStyle(d)
+        guard d == "deny_fallback" else { return DecisionStatus(title: g.title, symbol: g.symbol, color: g.color) }
+        let entry = guardEntry
+        switch entry?.resolution {
+        case "user_allowed"?, "token_used"?:
+            let a = GuardStyle("allow_once")
+            return DecisionStatus(title: a.title, symbol: a.symbol, color: a.color)
+        case "user_denied"?:
+            return DecisionStatus(title: "Dismissed", symbol: "xmark.circle", color: .secondary)
+        default:
+            // Still waiting, or no longer (expired, older than 6 hours, or out of Guard's list): then it is history.
+            let waiting = entry.flatMap { e in model.needsApproval.contains { $0.id == e.id } ? e : nil }
+            return DecisionStatus(title: g.title, symbol: g.symbol, color: waiting != nil ? g.color : .secondary, waiting: waiting)
+        }
     }
 
     // MARK: details
@@ -807,14 +960,13 @@ struct TimelineRowView: View {
     }
 
     @ViewBuilder var files: some View {
-        if let changes = loadedChanges {
-            if changes.isEmpty {
+        if let loaded {
+            if loaded.list.isEmpty {
                 Text("No file changes recorded in this snapshot.").font(.caption).foregroundStyle(.secondary)
-            } else if changes.count > 20 {
-                let groups = TimelineRow.groups(changes)
+            } else if let groups = loaded.groups {
                 VStack(alignment: .leading, spacing: 1) {
                     ForEach(groups.folders, id: \.0) { folder, items in
-                        FolderHeader(folder: folder, changes: items, expanded: openFolders.contains(folder), canUndo: row.canUndo,
+                        FolderHeader(folder: folder, changes: items, expanded: openFolders.contains(folder), canUndo: offersUndo,
                                      toggle: { withAnimation(.snappy) { if openFolders.contains(folder) { openFolders.remove(folder) } else { openFolders.insert(folder) } } },
                                      undo: { runUndo(items.map(\.path)) })
                         if openFolders.contains(folder) { fileRows(items).padding(.leading, 18) }
@@ -822,11 +974,11 @@ struct TimelineRowView: View {
                     fileRows(groups.loose)
                 }
             } else {
-                VStack(alignment: .leading, spacing: 1) { fileRows(changes) }
+                VStack(alignment: .leading, spacing: 1) { fileRows(loaded.list) }
             }
         } else {
             VStack(alignment: .leading, spacing: 4) {
-                ForEach(0..<min(max(row.effect?.changedCount ?? 2, 1), 3), id: \.self) { _ in
+                ForEach(0..<min(max(row.base != nil ? row.spanChanged : row.effect?.changedCount ?? 2, 1), 3), id: \.self) { _ in
                     HStack(spacing: 8) {
                         Text(verbatim: "M").font(Theme.monoSmall.weight(.bold))
                         Text(verbatim: "src/components/placeholder.tsx").font(Theme.monoSmall)
@@ -841,11 +993,11 @@ struct TimelineRowView: View {
     @ViewBuilder func fileRows(_ items: [FileChange]) -> some View {
         VStack(alignment: .leading, spacing: 1) {
             ForEach(items.prefix(300), id: \.path) { c in
-                FileRow(change: c, selected: selectedFile == c.path && diffVisible, matched: matches(c), canUndo: row.canUndo,
+                FileRow(change: c, selected: selectedFile == c.path && diffVisible, matched: matches(c), canUndo: offersUndo,
                         onSelect: { select(c.path) }, onUndo: { runUndo([c.path]) })
                     .contextMenu { fileMenu(c) }
                 if selectedFile == c.path && diffVisible, let e = row.effect {
-                    DiffBlock(root: root, snapshot: e.id, path: c.path).padding(.vertical, 4)
+                    DiffBlock(root: root, snapshot: e.id, base: row.base?.id, path: c.path).padding(.vertical, 4)
                 }
             }
             if items.count > 300 {
@@ -855,7 +1007,7 @@ struct TimelineRowView: View {
     }
 
     @ViewBuilder func fileMenu(_ c: FileChange) -> some View {
-        if row.canUndo { Button("Undo Change to This File") { runUndo([c.path]) } }
+        if offersUndo { Button("Undo Change to This File") { runUndo([c.path]) } }
         if c.status != .deleted, row.effect != nil { Button("Restore This Version…") { restoreFile(c.path) } }
         Divider()
         Button("Show in Finder") { model.revealFiles(root: root, paths: [c.path]) }
@@ -871,20 +1023,28 @@ struct TimelineRowView: View {
     // MARK: actions
 
     func loadChanges() async {
-        guard let e = row.effect, loadedChanges == nil else { autoSelect(); return }
-        let loaded = await model.changes(root: root, snapshot: e.id)
-        cache.map[e.id] = loaded
-        changes = loaded
+        guard let e = row.effect, loaded == nil else { autoSelect(); return }
+        let key = row.changesKey
+        let list: [FileChange]?
+        if let base = row.base { list = await model.changes(root: root, from: base.id, to: e.id) }
+        else { list = await model.changes(root: root, snapshot: e.id) }
+        // Skipped because the row scrolled away before its turn: nothing is kept, it loads again when the row reappears.
+        guard let list else { return }
+        // Folder and groups of a long list are worked out off the main thread, once.
+        let result = list.count > 200 ? await Task.detached(priority: .userInitiated) { LoadedChanges(key: key, list: list) }.value
+                                      : LoadedChanges(key: key, list: list)
+        cache.map[key] = result
+        loadedState = result
         autoSelect()
     }
 
     func autoSelect() {
-        guard let list = loadedChanges, !list.isEmpty else { return }
+        guard let loaded, !loaded.list.isEmpty else { return }
         var pick: FileChange?
-        if autoSelectFile, let q = highlight { pick = list.first { $0.path.localizedCaseInsensitiveContains(q) } }
-        if pick == nil, previewDiff, selectedFile == nil { pick = list.first { $0.status == .modified } }
+        if autoSelectFile, let q = highlight { pick = loaded.list.first { $0.path.localizedCaseInsensitiveContains(q) } }
+        if pick == nil, previewDiff, selectedFile == nil { pick = loaded.list.first { $0.status == .modified } }
         guard let pick else { return }
-        if list.count > 20, let folder = TimelineRow.groups(list).folders.first(where: { $0.1.contains(pick) })?.0 { openFolders.insert(folder) }
+        if let folder = loaded.folder(of: pick) { openFolders.insert(folder) }
         selectedFile = pick.path
         diffVisible = true
     }
@@ -898,8 +1058,8 @@ struct TimelineRowView: View {
 
     func toggleDiff() {
         withAnimation(.snappy) {
-            if selectedFile == nil, let first = loadedChanges?.first {
-                if let list = loadedChanges, list.count > 20, let folder = TimelineRow.groups(list).folders.first?.0 { openFolders.insert(folder) }
+            if selectedFile == nil, let loaded, let first = loaded.list.first {
+                if let folder = loaded.folder(of: first) { openFolders.insert(folder) }
                 selectedFile = first.path
                 diffVisible = true
             } else {
@@ -908,15 +1068,27 @@ struct TimelineRowView: View {
         }
     }
 
-    /// Undo is immediate: it is reversible (Airbag snapshots first and the message offers Undo). The outcome shows on
-    /// the button (a check, or the reason under the row).
+    /// Undo is immediate: it is reversible (Airbag snapshots first and the message offers Undo). The outcome shows in
+    /// place: a check instead of Undo once the whole row is undone, or the reason under the row.
     func runUndo(_ paths: [String]? = nil) {
         guard let e = row.effect, undo != .running else { return }
+        let base = row.base
         withAnimation(.snappy) { undo = .running }
         Task {
-            await model.undoChanges(root: root, snapshot: e.id, paths: paths)
-            if let t = model.toast, t.style == .failure {
-                withAnimation(.snappy) { undo = .failed(t.text) }
+            let report: RestoreReport?
+            if let base { report = await model.undoChanges(root: root, from: base.id, to: e.id, paths: paths) }
+            else { report = await model.undoChanges(root: root, snapshot: e.id, paths: paths) }
+            guard let report else {
+                withAnimation(.snappy) { undo = .failed(model.toast?.text ?? String(localized: "Undo failed.")) }
+                return
+            }
+            var problems: [String] = []
+            if !report.conflicts.isEmpty { problems.append(String(localized: "\(report.conflicts.count) skipped because they changed during the restore.")) }
+            if !report.failed.isEmpty { problems.append(String(localized: "\(report.failed.count) failed.")) }
+            if !problems.isEmpty {
+                withAnimation(.snappy) { undo = .partial(problems.joined(separator: " ")) }
+            } else if paths == nil {
+                withAnimation(.snappy) { undo = .idle } // the row now shows its check
             } else {
                 withAnimation(.snappy) { undo = .done }
                 try? await Task.sleep(for: .seconds(1.5))
@@ -927,8 +1099,13 @@ struct TimelineRowView: View {
 
     func restoreMoment() {
         guard let m = row.moment else { return }
-        model.requestRestore(root: root, snapshot: m.id, time: m.createdAt, paths: [], intent: .restore,
-                             command: row.kind == .command ? row.command?.command : nil, title: row.kind == .command ? nil : row.title)
+        // A command's moment is the state right before it ran. When nothing had changed, that snapshot can be much older
+        // than the command, so the time named is when the command started (a finish-only row has no "before" time).
+        let start = row.kind == .command ? row.command.flatMap { $0.kind == "pre_shell" ? $0.ts : nil } : nil
+        let named = row.kind == .command && !row.momentIsAfter
+        model.requestRestore(root: root, snapshot: m.id, time: start ?? m.createdAt, paths: [], intent: .restore,
+                             command: named ? row.command?.command : nil,
+                             title: named ? nil : row.kind == .command ? String(localized: "After a command") : row.title)
     }
 
     func restoreFile(_ path: String) {
@@ -1016,11 +1193,13 @@ private struct FolderHeader: View {
     }
 }
 
-/// A file's diff against the snapshot before: long lines scroll sideways, long diffs scroll inside a 320 pt box.
+/// A file's diff against the snapshot before (or the command's start): long lines scroll sideways, long diffs scroll inside a 320 pt box.
 private struct DiffBlock: View {
     @EnvironmentObject var model: AppModel
     let root: String
     let snapshot: String
+    /// The snapshot to compare with, when the row's changes span several snapshots (else the one before `snapshot`).
+    let base: String?
     let path: String
     @State private var diff: TextDiff?
     @State private var loaded = false
@@ -1048,7 +1227,7 @@ private struct DiffBlock: View {
         .clipShape(RoundedRectangle(cornerRadius: 6))
         .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Theme.cardStroke))
         .task(id: path) {
-            diff = await model.fileDiff(root: root, snapshot: snapshot, path: path)
+            diff = await model.fileDiff(root: root, snapshot: snapshot, path: path, from: base)
             loaded = true
         }
     }

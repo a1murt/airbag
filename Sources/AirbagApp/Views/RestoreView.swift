@@ -12,7 +12,8 @@ struct RestoreWindow: View {
         case running
         case done(RestoreReport)
         case undoing(RestoreReport)
-        case undone
+        /// The restore is undone; skipped or failed files make it partial.
+        case undone(RestoreReport)
         case failed(String)
     }
 
@@ -47,7 +48,7 @@ struct RestoreWindow: View {
                 switch phase {
                 case .confirm, .running: confirmation(r)
                 case .done(let rep), .undoing(let rep): result(r, rep)
-                case .undone: undone
+                case .undone(let rep): undone(r, rep)
                 case .failed(let why): failure(r, why)
                 }
             } else {
@@ -125,7 +126,7 @@ struct RestoreWindow: View {
         if r.liveAgents > 0 || partial || git {
             VStack(alignment: .leading, spacing: 8) {
                 if r.liveAgents > 0 {
-                    Callout(.warning, "An agent is still working here and may overwrite these files. Pause it first.")
+                    Callout(.warning, "An agent is still working here and may overwrite these files. Let it finish or stop it first.")
                 }
                 if partial {
                     Callout(.warning, "This snapshot is partial: only the files it captured are restored.")
@@ -192,20 +193,7 @@ struct RestoreWindow: View {
                         }
                         .font(.callout)
                     }
-                    if !rep.conflicts.isEmpty {
-                        VStack(alignment: .leading, spacing: 6) {
-                            Callout(.warning, "\(rep.conflicts.count) skipped because they changed during the restore.")
-                            FileList(paths: rep.conflicts, root: r.root, maxHeight: 90).padding(.leading, 22)
-                        }
-                        .font(.callout)
-                    }
-                    if !rep.failed.isEmpty {
-                        VStack(alignment: .leading, spacing: 6) {
-                            Callout(.danger, "\(rep.failed.count) failed.")
-                            FileList(paths: rep.failed, root: r.root, maxHeight: 90).padding(.leading, 22)
-                        }
-                        .font(.callout)
-                    }
+                    problems(r, rep)
                     if let undoError { Callout(.danger, verbatim: undoError).font(.callout) }
                 }
             }
@@ -229,14 +217,42 @@ struct RestoreWindow: View {
         .background { EscapeKey { if !busy { finish() } } }
     }
 
-    private var undone: some View {
-        VStack(alignment: .leading, spacing: 18) {
+    /// Files a run could not write: changed while it ran (an agent still working) or failed, each with its list.
+    @ViewBuilder
+    private func problems(_ r: RestoreRequest, _ rep: RestoreReport) -> some View {
+        if !rep.conflicts.isEmpty {
+            VStack(alignment: .leading, spacing: 6) {
+                Callout(.warning, "\(rep.conflicts.count) skipped because they changed during the restore.")
+                FileList(paths: rep.conflicts, root: r.root, maxHeight: 90).padding(.leading, 22)
+            }
+            .font(.callout)
+        }
+        if !rep.failed.isEmpty {
+            VStack(alignment: .leading, spacing: 6) {
+                Callout(.danger, "\(rep.failed.count) failed.")
+                FileList(paths: rep.failed, root: r.root, maxHeight: 90).padding(.leading, 22)
+            }
+            .font(.callout)
+        }
+    }
+
+    /// Undo Restore's own result: only a clean one says the files are back.
+    private func undone(_ r: RestoreRequest, _ rep: RestoreReport) -> some View {
+        let clean = rep.conflicts.isEmpty && rep.failed.isEmpty
+        return VStack(alignment: .leading, spacing: 18) {
             HStack(alignment: .top, spacing: 14) {
-                ResultSymbol(name: "arrow.uturn.backward.circle.fill", color: Theme.ok)
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("Restore undone").font(.title3.weight(.semibold))
-                    Text("The files are back as they were before the restore.").font(.callout).foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
+                if clean { ResultSymbol(name: "arrow.uturn.backward.circle.fill", color: Theme.ok) }
+                else { ResultSymbol(name: "exclamationmark.triangle.fill", color: Theme.warning) }
+                VStack(alignment: .leading, spacing: 12) {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("Restore undone").font(.title3.weight(.semibold))
+                        Group {
+                            if clean { Text("The files are back as they were before the restore.") }
+                            else { Text("Some files couldn't be put back.") }
+                        }
+                        .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                    }
+                    problems(r, rep)
                 }
             }
             HStack {
@@ -291,6 +307,14 @@ struct RestoreWindow: View {
         return String(localized: "Nothing was restored")
     }
 
+    /// A one-line result followed by what was skipped or failed ("Restored 5 files in app · 2 failed.").
+    static func withProblems(_ text: String, _ rep: RestoreReport) -> String {
+        var text = text
+        if !rep.conflicts.isEmpty { text += " · " + String(localized: "\(rep.conflicts.count) skipped because they changed during the restore.") }
+        if !rep.failed.isEmpty { text += " · " + String(localized: "\(rep.failed.count) failed.") }
+        return text
+    }
+
     static func setAsideText(_ rep: RestoreReport) -> String {
         String(localized: "\(rep.movedAside.count) newer files set aside, not deleted")
     }
@@ -327,12 +351,18 @@ struct RestoreWindow: View {
             else if r.command != nil || r.title == nil { detail = Text(verbatim: Self.timeText(r.snapshotTime)) }
             else { detail = r.title.map(Self.momentText) }
         case .restore:
+            // Guard and Timeline command rows restore the snapshot taken right before the command: say so, or the bare
+            // command reads as the moment after it.
+            let before = r.command.map {
+                Text.withCommand(String(localized: "Before \(Text.commandMarker)", comment: "Restore window subtitle: the moment right before an agent command"), Self.short($0))
+            }
             if r.paths.count == 1 {
                 // The title names the file; the folder it is in tells which one.
-                detail = r.paths[0].contains("/") ? Text(verbatim: r.paths[0]).monospaced() : nil
+                let folder = r.paths[0].contains("/") ? Text(verbatim: r.paths[0]).monospaced() : nil
+                if let folder, let before { detail = folder + Text(verbatim: " · ") + before } else { detail = folder ?? before }
             }
-            else if let t = r.title { detail = Self.momentText(t) }
-            else { detail = r.command.map { Text(verbatim: Self.short($0)).monospaced() } }
+            else if let before { detail = before }
+            else { detail = r.title.map(Self.momentText) }
             if r.paths.isEmpty { return detail }
         }
         guard let detail else { return Text(verbatim: project) }
@@ -426,7 +456,7 @@ struct RestoreWindow: View {
             switch result {
             case .success(let rep):
                 withAnimation(.snappy) { phase = .done(rep) }
-                let summary = Self.headline(rep, root: r.root)
+                let summary = Self.withProblems(Self.headline(rep, root: r.root), rep)
                 if presence.visible { AccessibilityNotification.Announcement(summary).post() }
                 else { announce(summary, rep, r) }
             case .failure(let e):
@@ -436,9 +466,10 @@ struct RestoreWindow: View {
         }
     }
 
-    /// The window was closed while files were being written: the result goes to the usual message instead.
+    /// The window was closed while files were being written: the result goes to the usual message instead, counted and
+    /// styled like the window (and like a restore the model announces itself).
     private func announce(_ summary: String, _ rep: RestoreReport, _ r: RestoreRequest) {
-        let style: Toast.Style = rep.failed.isEmpty ? .success : .warning
+        let style: Toast.Style = rep.conflicts.isEmpty && rep.failed.isEmpty ? .success : .warning
         guard let undo = rep.undoSnapshotId else { model.show(summary, style: style); return }
         model.show(summary, style: style, action: (String(localized: "Undo"), { [model] in
             Task { await model.revertRestore(root: r.root, to: undo, scope: r.scope) }
@@ -450,11 +481,12 @@ struct RestoreWindow: View {
         undoError = nil
         withAnimation(.snappy) { phase = .undoing(rep) }
         Task {
-            if await model.revertRestore(root: r.root, to: undo, scope: r.scope) != nil {
-                withAnimation(.snappy) { phase = .undone }
-                AccessibilityNotification.Announcement(String(localized: "Restore undone")).post()
+            if let undoneRep = await model.revertRestore(root: r.root, to: undo, scope: r.scope) {
+                withAnimation(.snappy) { phase = .undone(undoneRep) }
+                AccessibilityNotification.Announcement(Self.withProblems(String(localized: "Restore undone"), undoneRep)).post()
             } else {
-                // revertRestore reports why in its message; the window repeats it where the user is looking.
+                // A failed revert returns no report; its message (shown just now) says why, and the window repeats it
+                // where the user is looking.
                 let why = model.toast?.style == .failure ? model.toast?.text : nil
                 withAnimation(.snappy) {
                     undoError = why ?? String(localized: "Couldn't undo the restore.")

@@ -2,13 +2,16 @@ import AirbagCore
 import AppKit
 import SwiftUI
 
-/// The main window: projects in the sidebar (each one opens its Timeline), then Radar and Guard.
+/// The main window: Radar and Guard at the top of the sidebar, then the projects (each one opens its Timeline).
 struct MainWindow: View {
     @EnvironmentObject var model: AppModel
     @State private var addError: String?
     @State private var dropTargeted = false
-    /// A folder just added: selected as soon as its store shows up in the project list.
-    @State private var pendingSelection: String?
+    /// Folders added here whose first snapshot is still running: if it fails, the reason is shown here (the row just goes).
+    @State private var firstSnapshots: Set<String> = []
+    /// The project "Stop Protecting…" asks about (kept after the dialog closes, so its title does not change on the way out).
+    @State private var stopping: ProjectRow?
+    @State private var confirmStop = false
 
     enum SidebarItem: Hashable { case project(String), radar, guardLog }
 
@@ -26,9 +29,10 @@ struct MainWindow: View {
             case .guardLog?: model.selectedTab = .guardLog
             case nil: return
             }
-            model.scheduleRadar()
         })
     }
+
+    var stoppingName: String { stopping?.name ?? "" }
 
     /// Folders being added whose first snapshot has not finished yet (they have no store row so far).
     var addingRoots: [String] {
@@ -38,9 +42,7 @@ struct MainWindow: View {
     var body: some View {
         NavigationSplitView {
             List(selection: selection) {
-                if !model.projects.isEmpty || !addingRoots.isEmpty {
-                    projectsSection
-                }
+                // The two places with attention badges stay at the top, however many projects (and worktrees) follow.
                 Section {
                     Label(String(localized: MainTab.radar.title), systemImage: MainTab.radar.symbol)
                         .badge(model.leftRunning.count)
@@ -48,6 +50,9 @@ struct MainWindow: View {
                     Label(String(localized: MainTab.guardLog.title), systemImage: MainTab.guardLog.symbol)
                         .badge(model.needsApproval.count + model.unseenGuards.count)
                         .tag(SidebarItem.guardLog)
+                }
+                if !model.projects.isEmpty || !addingRoots.isEmpty {
+                    projectsSection
                 }
             }
             .dropDestination(for: URL.self) { urls, _ in add(urls) } isTargeted: { dropTargeted = $0 }
@@ -87,14 +92,20 @@ struct MainWindow: View {
             model.addProjectRequested = false
             DispatchQueue.main.async { showAddPanel() }
         }
-        .onChange(of: model.projects) { _, projects in
-            if let root = pendingSelection, projects.contains(where: { $0.root == root }) {
-                model.selectedRoot = root
-                model.selectedTab = .timeline
-                pendingSelection = nil
+        .onChange(of: model.firstSnapshotResults) { _, results in
+            for root in firstSnapshots {
+                guard let result = results[root] else { continue }
+                firstSnapshots.remove(root)
+                if case .failed(let why) = result { addError = addError.map { $0 + "\n" + why } ?? why }
             }
         }
         .alert(Text(verbatim: addError ?? ""), isPresented: Binding(get: { addError != nil }, set: { if !$0 { addError = nil } })) {}
+        .confirmationDialog(Text("Stop protecting \(stoppingName)?"), isPresented: $confirmStop, presenting: stopping) { p in
+            Button("Stop Protecting", role: .destructive) { model.removeProject(root: p.root) }
+            Button("Cancel", role: .cancel) {}
+        } message: { _ in
+            Text("Its snapshots are deleted. Add the folder again to protect it.")
+        }
     }
 
     var projectsSection: some View {
@@ -106,6 +117,9 @@ struct MainWindow: View {
                     .contextMenu {
                         Button("Take Snapshot") { model.snapshotNow(p.root) }.disabled(!p.rootExists)
                         Button("Show in Finder") { model.revealInFinder(p.root) }.disabled(!p.rootExists)
+                        Divider()
+                        // Also for a folder that is gone: the only way to clear it from the list.
+                        Button("Stop Protecting…") { stopping = p; confirmStop = true }.disabled(model.snapshottingRoots.contains(p.root))
                     }
                     .tag(SidebarItem.project(p.root))
             }
@@ -155,11 +169,14 @@ struct MainWindow: View {
         var errors: [String] = []
         var first: String?
         for url in folders {
-            if let error = model.addProject(url, announce: false) { errors.append(error) }
-            else if first == nil { first = FileSystem.canonicalPath(url.path) ?? url.path }
+            let root = FileSystem.canonicalPath(url.path) ?? url.path
+            let isNew = !model.projects.contains { $0.root == root }
+            if let error = model.addProject(url, announce: false) { errors.append(error); continue }
+            if isNew { firstSnapshots.insert(root) }
+            if first == nil { first = root }
         }
+        // The model keeps this selection while the folder is still being added.
         if let first {
-            pendingSelection = first
             model.selectedRoot = first
             model.selectedTab = .timeline
         }

@@ -15,8 +15,6 @@ struct PopoverView: View {
     /// Sessions whose servers are being stopped, and why a stop failed (the row stays and says so).
     @State private var stopping: Set<String> = []
     @State private var stopErrors: [String: String] = [:]
-    /// How many unprotected pause commands "Got it" acknowledged (reset when the next pause starts).
-    @State private var reviewedPauseCount = 0
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -41,7 +39,6 @@ struct PopoverView: View {
             if new > shownAttention { bounce += 1 }
             shownAttention = new
         }
-        .onChange(of: model.pausedUntil == nil) { _, running in if !running { reviewedPauseCount = 0 } }
         .onAppear {
             model.popoverVisible = true
             model.refreshAll()
@@ -227,10 +224,11 @@ struct PopoverView: View {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 Image(systemName: "dot.radiowaves.left.and.right").foregroundStyle(Theme.warning).frame(width: 18)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Session ended — stop its \(procs.count) servers?").font(.callout.weight(.medium))
+                    // Forked workers share one listening socket: they count (and are listed) once, but all are stopped.
+                    Text("Session ended — stop its \(procs.distinctServers.count) servers?").font(.callout.weight(.medium))
                         .fixedSize(horizontal: false, vertical: true)
                     Text(verbatim: caption).font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
-                        .help(Text(verbatim: procs.map { "\($0.name) \($0.portsText)" }.joined(separator: ", ")))
+                        .help(Text(verbatim: procs.distinctServers.map { "\($0.name) \($0.portsText)" }.joined(separator: ", ")))
                 }
             }
             if let error = stopErrors[sid] {
@@ -286,17 +284,13 @@ struct PopoverView: View {
 
     // MARK: since you last looked
 
-    /// Agent commands ran without snapshots during a pause that has ended (and "Got it" has not acknowledged them).
-    private var unprotectedAfterPause: Bool { model.pausedUntil == nil && model.unprotectedDuringPause > reviewedPauseCount }
+    /// Agent commands ran without snapshots during a pause that has ended ("Got it" clears it in the model).
+    private var unprotectedAfterPause: Bool { model.pausedUntil == nil && model.unprotectedDuringPause > 0 }
 
     var sinceLastLook: some View {
         let unseen = model.unseenGuards
         return PopoverSection(Text("Since you last looked")) {
-            Button("Got it") {
-                model.markGuardsReviewed()
-                reviewedPauseCount = model.unprotectedDuringPause
-            }
-            .controlSize(.small)
+            Button("Got it") { model.markGuardsReviewed() }.controlSize(.small)
         } content: {
             let shown = Self.shownCount(unseen.count, limit: 4)
             ForEach(unseen.prefix(shown)) { unseenRow($0) }
@@ -311,29 +305,32 @@ struct PopoverView: View {
         }
     }
 
+    /// Two lines like a recent change: the command, then what Airbag did ("Blocked · shop-app · Claude Code · just now").
     func unseenRow(_ g: GuardEntry) -> some View {
         let style = GuardStyle(g.decision)
         let project = g.projectRoot.map { ($0 as NSString).lastPathComponent }
+        let meta = [project, g.agent?.displayName, RelativeTime.age(ms: g.ts)].compactMap { $0 }.joined(separator: " · ")
         return Button { model.reveal(.guardEntry(g.id)) } label: {
             HStack(spacing: 8) {
-                Image(systemName: style.symbol).foregroundStyle(style.color).frame(width: 18).accessibilityLabel(Text(style.title))
-                RowCommand(command: g.command).frame(minWidth: 110, alignment: .leading)
+                Image(systemName: style.symbol).foregroundStyle(style.color).frame(width: 18).accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 1) {
+                    RowCommand(command: g.command)
+                    (Text(style.title) + Text(verbatim: " · " + meta))
+                        .font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
+                }
                 Spacer(minLength: 8)
-                Text(verbatim: [project, RelativeTime.age(ms: g.ts)].compactMap { $0 }.joined(separator: " · "))
-                    .font(.subheadline).foregroundStyle(.secondary).lineLimit(1).layoutPriority(1)
             }
         }
         .buttonStyle(MenuRowButtonStyle())
-        .help(Text(style.title) + Text(verbatim: " · " + [g.agent?.displayName, RelativeTime.precise(ms: g.ts)].compactMap { $0 }.joined(separator: " · ")))
+        .help(Text(RelativeTime.precise(ms: g.ts)))
     }
 
     // MARK: recent changes
 
     var recentChanges: some View {
-        PopoverSection(Text("Recent changes")) {
-            ForEach(Array(model.recentChanges.prefix(3).enumerated()), id: \.element.id) { index, change in
-                RecentChangeRow(change: change, isNewest: index == 0)
-            }
+        let target = model.latestUndoable?.id
+        return PopoverSection(Text("Recent changes")) {
+            ForEach(model.recentChanges.prefix(3)) { RecentChangeRow(change: $0, takesShortcut: $0.id == target) }
         }
     }
 
@@ -484,13 +481,12 @@ private struct RowCommand: View {
 private struct RecentChangeRow: View {
     @EnvironmentObject var model: AppModel
     let change: RecentChange
-    /// The newest change takes ⌘Z.
-    let isNewest: Bool
+    /// The change ⌥⌘Z would undo (the newest one not undone yet) takes ⌘Z.
+    let takesShortcut: Bool
     @State private var files: [FileChange]?
     @State private var undoing = false
-    /// The snapshot the undo took first. While it is still the last restore, the row shows a check instead of Undo
-    /// (Undo on the message, or Undo Restore, brings the button back).
-    @State private var undoneBy: String?
+    /// What this row's undo could not put back, tied to the snapshot that undo took (it holds only while that undo does).
+    @State private var partial: (undoSnapshot: String, message: String)?
     @State private var accessoryWidth: CGFloat = 0
 
     var body: some View {
@@ -512,17 +508,34 @@ private struct RecentChangeRow: View {
             accessory
                 .padding(.trailing, 8)
                 .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { accessoryWidth = $0 }
+                .animation(.snappy, value: undoneBy)
         }
         .task(id: change.snapshotID) {
             guard files == nil else { return }
-            files = await model.changes(root: change.root, snapshot: change.snapshotID)
+            // Nil: skipped because the row went away first; it loads when the row comes back.
+            let loaded = if let base = change.base { await model.changes(root: change.root, from: base, to: change.snapshotID) }
+                else { await model.changes(root: change.root, snapshot: change.snapshotID) }
+            if let loaded { files = loaded }
         }
     }
 
-    private var isUndone: Bool { undoneBy != nil && model.lastRestore?.undoSnapshot == undoneBy }
+    /// The snapshot the undo of this whole moment took first. The model keeps it (from here, ⌥⌘Z or the Timeline) until
+    /// Undo Restore or a later restore brings the files back, so the check never outlives the undo.
+    private var undoneBy: String? { model.undoneMoments[change.snapshotID]?.undoSnapshot }
+
+    /// Why the undo put back only some files, while that undo still stands.
+    private var partialMessage: String? {
+        guard let partial, partial.undoSnapshot == undoneBy else { return nil }
+        return partial.message
+    }
 
     @ViewBuilder var accessory: some View {
-        if isUndone {
+        if let message = partialMessage {
+            Image(systemName: "exclamationmark.triangle.fill").font(.body).foregroundStyle(Theme.warning)
+                .transition(.scale.combined(with: .opacity))
+                .help(Text(verbatim: message))
+                .accessibilityLabel(Text(verbatim: message))
+        } else if undoneBy != nil {
             Image(systemName: "checkmark.circle.fill").font(.body).foregroundStyle(Theme.ok)
                 .transition(.scale.combined(with: .opacity))
                 .accessibilityLabel(Text("Done"))
@@ -535,12 +548,10 @@ private struct RecentChangeRow: View {
     var undoButton: some View {
         Button {
             undoing = true
-            let before = model.lastRestore?.undoSnapshot
             Task {
-                await model.undoChanges(root: change.root, snapshot: change.snapshotID)
-                let after = model.lastRestore?.undoSnapshot
+                let report = await model.undo(change)
                 withAnimation(.snappy) {
-                    if let after, after != before { undoneBy = after }
+                    if let report, let id = report.undoSnapshotId, let why = Self.shortfall(report) { partial = (id, why) } else { partial = nil }
                     undoing = false
                 }
             }
@@ -553,7 +564,15 @@ private struct RecentChangeRow: View {
         .buttonStyle(.bordered)
         .controlSize(.small)
         .disabled(undoing)
-        .keyboardShortcut(isNewest ? KeyboardShortcut("z", modifiers: .command) : nil)
+        .keyboardShortcut(takesShortcut ? KeyboardShortcut("z", modifiers: .command) : nil)
+    }
+
+    /// What a restore could not put back ("1 skipped because they changed during the restore."), or nil when clean.
+    static func shortfall(_ r: RestoreReport) -> String? {
+        var parts: [String] = []
+        if !r.conflicts.isEmpty { parts.append(String(localized: "\(r.conflicts.count) skipped because they changed during the restore.")) }
+        if !r.failed.isEmpty { parts.append(String(localized: "\(r.failed.count) failed.")) }
+        return parts.isEmpty ? nil : parts.joined(separator: " ")
     }
 
     var symbol: (String, Color) {
@@ -588,6 +607,7 @@ private struct PopoverProjectRow: View {
     @EnvironmentObject var model: AppModel
     let project: ProjectRow
     @State private var accessoryWidth: CGFloat = 0
+    @State private var confirmRemove = false
 
     var body: some View {
         let live = project.liveSessions > 0
@@ -616,7 +636,15 @@ private struct PopoverProjectRow: View {
         .help(help)
         .contextMenu {
             Button("Take Snapshot") { model.snapshotNow(project.root) }.disabled(!project.rootExists)
-            Button("Show in Finder") { model.revealInFinder(project.root) }
+            Button("Show in Finder") { model.revealInFinder(project.root) }.disabled(!project.rootExists)
+            Divider()
+            // Also the way to clear a project whose folder is gone.
+            Button("Stop Protecting…") { confirmRemove = true }
+        }
+        .confirmationDialog(Text("Stop protecting \(project.name)?"), isPresented: $confirmRemove) {
+            Button("Stop Protecting", role: .destructive) { model.removeProject(root: project.root) }
+        } message: {
+            Text("Its snapshots are deleted. Add the folder again to protect it.")
         }
     }
 

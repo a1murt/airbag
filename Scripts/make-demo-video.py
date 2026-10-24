@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Renders the README demo video: an agent deletes a folder at 2:07 a.m., Airbag brings it back in a few clicks.
+"""Renders the README demo video: an agent deletes a folder at 2:07 a.m., one click in Airbag's menu brings it back.
 
 usage: Scripts/make-demo-video.py DEMO_SCREENS_DIR OUT_DIR
 DEMO_SCREENS_DIR comes from `Airbag --render-demo DIR -AppleLanguages "(en)"` (the app's real screens).
@@ -131,29 +131,26 @@ def screen(name, crop, width):
 
 BASE = wallpaper()
 
-# The app's real screens.
-TL_CROP = (0, 0, 2080, 1120)
-TL_W = 1200
-timeline_img = screen('main-timeline-light.png', TL_CROP, TL_W)
-TL_SCALE = TL_W / 2080
-timeline = chrome(timeline_img, 'Airbag')
-TL_X, TL_Y = (W - TL_W) // 2, 140
-UNDO = (TL_X + 579 * TL_SCALE, TL_Y + 38 + 555 * TL_SCALE)       # "Undo these changes…"
-DELETED_ROWS = (TL_X + 410 * TL_SCALE, TL_Y + 38 + 222 * TL_SCALE, TL_X + 2040 * TL_SCALE, TL_Y + 38 + 314 * TL_SCALE)
-
-RS_W = 680
-restore_img = screen('restore-light.png', None, RS_W)
-RS_SCALE = RS_W / 1040
-restore = chrome(restore_img, 'Restore')
-RS_X, RS_Y = (W - RS_W) // 2, 230
-RESTORE_BTN = (RS_X + 936 * RS_SCALE, RS_Y + 38 + 758 * RS_SCALE)
-
+# The app's real screens: the popover before and after Undo (rendered by `Airbag --render-demo`).
+# Points of interest are given in the 2x PNG's pixels (380 pt wide = 760 px) and scaled with the popover.
 POP_W = 494                       # 1.3x the real 380 pt so it stays legible in the GIF
-pop_img = rounded(screen('popover-light.png', None, POP_W), 14)
-pop_sh, pop_pad = shadow_for(pop_img.size, 14, blur=20, alpha=90)
-popover = (pop_img, pop_sh, pop_pad)
+POP_PX = 760
+
+
+def popover_layer(name):
+    img = rounded(screen(name, None, POP_W), 14)
+    sh, pad = shadow_for(img.size, 14, blur=20, alpha=90)
+    return (img, sh, pad)
+
+
+popover = popover_layer('popover-light.png')
+popover_undone = popover_layer('popover-undone-light.png')
 POP_X, POP_Y = ICON_X - POP_W // 2, 40
-TIMELINE_BTN = (POP_X + 134 * POP_W / 760, POP_Y + 912 * POP_W / 760)
+pp = lambda x, y: (POP_X + x * POP_W / POP_PX, POP_Y + y * POP_W / POP_PX)
+UNDO_PX = tuple(float(v) for v in os.environ.get('UNDO_PX', '690,330').split(','))            # Undo in "Recent changes"
+RECENT_PX = tuple(float(v) for v in os.environ.get('RECENT_PX', '14,262,746,372').split(','))  # that row
+UNDO = pp(*UNDO_PX)
+RECENT_ROW = (*pp(RECENT_PX[0], RECENT_PX[1]), *pp(RECENT_PX[2], RECENT_PX[3]))
 
 icon = Image.open('Resources/AppIcon-1024.png').convert('RGBA')
 
@@ -222,19 +219,6 @@ def path(t, keys):
     return keys[-1][1]
 
 
-def banner(frame, a):
-    if a <= 0:
-        return
-    b = Image.new('RGBA', (430, 92), (0, 0, 0, 0))
-    d = ImageDraw.Draw(b)
-    d.rounded_rectangle([0, 0, 429, 91], radius=18, fill=(250, 250, 252, int(240 * a)))
-    ic = icon.resize((52, 52), Image.LANCZOS)
-    b.paste(ic, (18, 20), ic)
-    d.text((86, 18), 'Airbag', font=SANS(19), fill=INK + (int(255 * a),))
-    d.text((86, 48), 'Restored 2 files in shop-app', font=SANS(18), fill=DIM_INK + (int(255 * a),))
-    frame.paste(b, (W - 460, 48 + int((1 - a) * -20)), b)
-
-
 # ---------- the script ----------
 
 PROMPT = 'clean up the old checkout code'
@@ -245,11 +229,11 @@ L_OUT = [('  └  ', TERM_DIM), ('(no output)', TERM_DIM)]
 L_DONE = [('● ', TERM_INK), ('Done. Removed src/legacy.', TERM_INK)]
 LS = 'ls src/legacy'
 
-DURATION = 17.0
+DURATION = 14.6
 C_ICON = (ICON_X + 2, ICON_Y + 2)
-cur_keys = [(6.6, (960, 700)), (7.6, C_ICON), (8.3, C_ICON), (9.1, TIMELINE_BTN), (10.6, TIMELINE_BTN),
-            (11.5, UNDO), (12.4, UNDO), (13.2, RESTORE_BTN), (14.0, RESTORE_BTN)]
-clicks = [7.75, 9.25, 11.65, 13.35]
+cur_keys = [(6.6, (960, 700)), (7.6, C_ICON), (8.3, C_ICON), (10.1, UNDO), (11.4, UNDO)]
+clicks = [7.75, 10.55]
+T_UNDO = 10.6
 
 
 def frame_at(t):
@@ -264,57 +248,45 @@ def frame_at(t):
     if t >= 3.8: lines.append(L_OUT)
     if t >= 4.3: lines.append(L_DONE)
     agent_caret = 'end' if t < 2.4 else ('next' if t >= 4.3 else None)
-    shell_front = t >= 14.6
+    shell_front = t >= 12.0
     agent = terminal(lines, AGENT[2], AGENT[3], 'claude — shop-app', agent_caret)
     shell_lines = []
     if t >= 5.0:
         shell_lines.append([('$ ', TERM_DIM), (typed(LS, 5.1, 5.7, t), TERM_INK)])
     if t >= 5.9:
         shell_lines.append([('ls: src/legacy: No such file or directory', RED)])
-    if t >= 14.8:
-        shell_lines.append([('$ ', TERM_DIM), (typed(LS, 14.9, 15.4, t), TERM_INK)])
-    if t >= 15.6:
+    if t >= 12.2:
+        shell_lines.append([('$ ', TERM_DIM), (typed(LS, 12.3, 12.8, t), TERM_INK)])
+    if t >= 13.0:
         shell_lines.append([('cart.ts', GREEN), ('    ', TERM_INK), ('checkout.ts', GREEN)])
     shell = terminal(shell_lines, SHELL[2], SHELL[3], 'zsh — shop-app', 'next' if t >= 5.9 else 'end')
-    # windows: agent, shell, then Airbag on top while it is open
     place(f, agent, AGENT[0], AGENT[1])
     if t >= 4.8:
         a = ease((t - 4.8) / 0.4)
         place(f, shell, SHELL[0], SHELL[1] + (1 - a) * 30, alpha=a)
-    tl_a = ease((t - 9.35) / 0.4) * (1 - ease((t - 14.2) / 0.4))
-    if tl_a > 0:
-        place(f, timeline, TL_X, TL_Y, alpha=tl_a, scale=lerp(0.96, 1.0, ease((t - 9.35) / 0.4)))
-        if 10.0 <= t <= 11.4:
-            pulse = 0.5 + 0.5 * math.sin((t - 10.0) * 6)
-            d = ImageDraw.Draw(f)
-            d.rounded_rectangle(DELETED_ROWS, radius=10, outline=(BLUE[0], BLUE[1], BLUE[2]), width=int(3 + 2 * pulse))
-    rs_a = ease((t - 11.75) / 0.35) * (1 - ease((t - 13.6) / 0.3))
-    if rs_a > 0:
-        dim = Image.new('RGBA', (W, H), (0, 0, 0, int(70 * rs_a)))
-        f.paste(dim, (0, 0), dim)
-        place(f, restore, RS_X, RS_Y, alpha=rs_a, scale=lerp(0.94, 1.0, ease((t - 11.75) / 0.35)))
-        if 13.3 <= t <= 13.6:
-            d = ImageDraw.Draw(f)
-            bx, by = RESTORE_BTN
-            hw, hh = 130 * RS_SCALE / 2 + 2, 44 * RS_SCALE / 2 + 2   # covers the real button: pressed
-            d.rounded_rectangle([bx - hw, by - hh, bx + hw, by + hh], radius=7, fill=BLUE)
-            bf = SANS(int(26 * RS_SCALE))
-            tw = d.textlength('Restore', font=bf)
-            d.text((bx - tw / 2, by - 26 * RS_SCALE / 1.6), 'Restore', font=bf, fill=(255, 255, 255))
-    pop_a = ease((t - 7.8) / 0.25) * (1 - ease((t - 9.3) / 0.25))
+    # the popover: opens on the menu bar click, shows the agent's rm -rf with Undo, then the result
+    pop_a = ease((t - 7.8) / 0.25) * (1 - ease((t - 11.9) / 0.3))
     if pop_a > 0:
-        place(f, popover, POP_X, POP_Y + (1 - pop_a) * -10, alpha=pop_a)
+        layer = popover_undone if t >= T_UNDO else popover
+        place(f, layer, POP_X, POP_Y + (1 - pop_a) * -10, alpha=pop_a)
+        if 8.4 <= t <= 10.3:
+            pulse = 0.5 + 0.5 * math.sin((t - 8.4) * 6)
+            d = ImageDraw.Draw(f)
+            d.rounded_rectangle(RECENT_ROW, radius=10, outline=(BLUE[0], BLUE[1], BLUE[2]), width=int(2 + 2 * pulse))
+        if 10.45 <= t < T_UNDO:
+            d = ImageDraw.Draw(f, 'RGBA')
+            bx, by = UNDO
+            d.rounded_rectangle([bx - 30, by - 14, bx + 30, by + 14], radius=7, fill=(0, 0, 0, 40))
     if shell_front:
         place(f, shell, SHELL[0], SHELL[1])
-    banner(f, ease((t - 13.7) / 0.35) * (1 - ease((t - 16.2) / 0.4)))
     # captions
     caption(f, '2:07 a.m. Your agent is on autopilot.', t, 0.2, 4.2)
     caption(f, '…and deletes the wrong folder.', t, 4.3, 6.4)
-    caption(f, 'Airbag took a snapshot right before it.', t, 9.4, 11.5)
-    caption(f, 'One click.', t, 11.7, 13.6)
-    caption(f, "It's all back.", t, 14.6, DURATION)
+    caption(f, 'Airbag took a snapshot right before it.', t, 8.3, 10.3)
+    caption(f, 'One click.', t, 10.5, 11.9)
+    caption(f, "It's all back.", t, 12.1, DURATION)
     # cursor
-    if 6.6 <= t <= 14.3:
+    if 6.6 <= t <= 11.8:
         x, y = path(t, cur_keys)
         click = max([1 - abs(t - c) / 0.18 for c in clicks if abs(t - c) < 0.18] or [0])
         cursor(f, x, y, click)

@@ -73,12 +73,39 @@ struct RecentChange: Identifiable, Equatable {
     let snapshotID: String
     let at: Int64
     let trigger: SnapshotTrigger
-    let changedCount: Int
+    var changedCount: Int
     /// The shell command that made the changes (after-command snapshots only).
     let command: String?
     let agent: AgentKind?
     let sessionTitle: String?
+    /// For a command that ran long enough for a file-change snapshot to land in the middle: the snapshot taken before
+    /// it. Its Undo then reverts everything between that snapshot and this one (as the Timeline row does).
+    var base: String?
     var projectName: String { (root as NSString).lastPathComponent }
+
+    /// Recent changes of one project from its timeline (newest first). A command's after snapshot absorbs file-change
+    /// snapshots taken while it ran (back to the snapshot its before event points at), so Undo puts back all it did.
+    static func list(root: String, entries: [TimelineEntry]) -> [RecentChange] {
+        var out: [RecentChange] = []
+        var folded = Set<String>()
+        for (i, e) in entries.enumerated() where !folded.contains(e.id) {
+            guard var change = RecentChange(root: root, entry: e, hasPrevious: i + 1 < entries.count) else { continue }
+            if e.snapshot.trigger == .postCommand, let post = e.commands.last(where: { $0.kind == "post_shell" }),
+               let start = entries[(i + 1)...].firstIndex(where: { o in
+                   o.commands.contains { $0.kind == "pre_shell" && $0.command == post.command && $0.agentSessionID == post.agentSessionID }
+               }), start > i + 1 {
+                let between = entries[(i + 1)..<start]
+                if between.allSatisfy({ $0.snapshot.trigger == .fsevents && $0.commands.isEmpty }),
+                   e.snapshot.createdAt - entries[start].snapshot.createdAt < 15 * 60_000 {
+                    between.forEach { folded.insert($0.id) }
+                    change.base = entries[start].snapshot.id
+                    change.changedCount += between.map(\.snapshot.changedCount).reduce(0, +)
+                }
+            }
+            out.append(change)
+        }
+        return out
+    }
 
     /// Nil for moments that changed nothing, cannot be undone (no earlier snapshot) or are Airbag's own (restores).
     init?(root: String, entry: TimelineEntry, hasPrevious: Bool) {
@@ -435,10 +462,7 @@ final class AppModel: ObservableObject {
                                        rootExists: loc.rootExists, snapshotCount: usage?.snapshots ?? 0, lastSnapshotAt: latest?.createdAt,
                                        pinnedCount: pinned, liveSessions: 0, ports: [], bytes: usage?.objectBytes ?? 0))
                 if loc.rootExists, let workReg {
-                    let entries = workReg.timeline(store: store, limit: 12)
-                    recent += entries.enumerated().compactMap { i, e in
-                        RecentChange(root: loc.root, entry: e, hasPrevious: i + 1 < entries.count)
-                    }
+                    recent += RecentChange.list(root: loc.root, entries: workReg.timeline(store: store, limit: 12))
                 }
             }
             let today = Int64(Calendar.current.startOfDay(for: Date()).timeIntervalSince1970 * 1000)
@@ -861,7 +885,14 @@ final class AppModel: ObservableObject {
 
     func undoLatest() {
         guard let c = latestUndoable else { return }
-        Task { await undoChanges(root: c.root, snapshot: c.snapshotID) }
+        Task { await undo(c) }
+    }
+
+    /// Undo of a popover row: a command that spans several snapshots goes back to the snapshot before it.
+    @discardableResult
+    func undo(_ change: RecentChange) async -> RestoreReport? {
+        if let base = change.base { return await undoChanges(root: change.root, from: base, to: change.snapshotID) }
+        return await undoChanges(root: change.root, snapshot: change.snapshotID)
     }
 
     /// The result of a restore as a message with Undo (back to the snapshot the restore took first).

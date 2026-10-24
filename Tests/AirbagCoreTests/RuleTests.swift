@@ -59,6 +59,18 @@ struct RuleFixture: Decodable {
         #expect(perCommandUs < 1000, "\(perCommandUs) µs per command")
     }
 
+    @Test func turningARuleOffNeverLiftsABlock() {
+        let ctx = RuleFixture.shared.context
+        var context = GuardContext(cwd: ctx.cwd, home: ctx.home, roots: ctx.roots, airbagHome: ctx.airbagHome, useFileSystem: false)
+        let engine = RuleEngine()
+        let block = engine.evaluate("rm -rf ~", context: context)
+        let ask = engine.evaluate("git push --force origin main", context: context)
+        #expect(block.decision == .block && ask.decision == .ask)
+        context.disabledRules = Set(block.findings.map(\.ruleId) + ask.findings.map(\.ruleId))
+        #expect(engine.evaluate("rm -rf ~", context: context).decision == .block)
+        #expect(engine.evaluate("git push --force origin main", context: context).decision == .allow)
+    }
+
     @Test func agentMessageNamesTheRiskAndTheWayOut() {
         let ctx = RuleFixture.shared.context
         let context = GuardContext(cwd: ctx.cwd, home: ctx.home, roots: ctx.roots, airbagHome: ctx.airbagHome, useFileSystem: false)

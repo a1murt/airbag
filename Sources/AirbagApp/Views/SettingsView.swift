@@ -156,6 +156,8 @@ private struct AgentsPane: View {
     @State private var testing = false
     @State private var testResult: (ok: Bool, detail: String)?
     @State private var moveError: String?
+    /// Agents whose settings file could not be rewritten for the last choice of the strict picker.
+    @State private var strictErrors: [AgentKind: String] = [:]
 
     var body: some View {
         Form {
@@ -208,17 +210,79 @@ private struct AgentsPane: View {
                 Footer(Text("Like force pushes or edits outside the project. Wiping your home folder or a disk is always blocked."))
             }
             Section {
-                Picker("If Airbag's hook fails", selection: Binding(get: { model.strictMode }, set: { model.setStrict($0) })) {
+                Picker("If Airbag doesn't respond in time", selection: Binding(get: { model.strictMode }, set: { setStrict($0) })) {
                     Text("Let the Command Run").tag(false)
                     Text("Block the Command").tag(true)
+                }
+                // The choice is saved either way; choosing it again retries the agents listed here.
+                ForEach(AgentKind.allCases.filter { strictErrors[$0] != nil }, id: \.self) { agent in
+                    Callout(.danger, verbatim: "\(agent.displayName): \(strictErrors[agent] ?? "")").font(.callout)
                 }
             } footer: {
                 Footer(Text("Blocking works in Claude Code and Cursor."))
             }
+            if !model.disabledRules.isEmpty {
+                Section {
+                    ForEach(model.disabledRules.sorted(), id: \.self) { DisabledRuleRow(ruleID: $0) }
+                } header: {
+                    Text("Checks turned off")
+                } footer: {
+                    Footer(Text("Turned off in Guard. Commands these rules cover run without a check."))
+                }
+            }
         }
+        .animation(.snappy, value: strictErrors)
+        .animation(.snappy, value: model.disabledRules)
         .onAppear { model.refreshHooksUnlessFrozen() }
         // Back from the agent (e.g. after trusting the hook in Codex) or from editing its settings by hand.
-        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in model.refreshHooksUnlessFrozen() }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            model.refreshHooksUnlessFrozen()
+            dropFixedStrictErrors()
+        }
+    }
+
+    func setStrict(_ on: Bool) {
+        strictErrors = Dictionary(model.setStrict(on).map { ($0.agent, $0.error) }, uniquingKeysWith: { first, _ in first })
+    }
+
+    /// A file the user fixed by hand meanwhile no longer needs its message.
+    func dropFixedStrictErrors() {
+        guard !strictErrors.isEmpty, !model.frozen else { return }
+        strictErrors = strictErrors.filter { agent, _ in (try? model.installer.plan(agent, install: true, strict: model.strictMode))?.changed != false }
+    }
+}
+
+/// A Guard rule switched off with "Check commands like this", with the way back (its Guard entries may be gone).
+private struct DisabledRuleRow: View {
+    @EnvironmentObject var model: AppModel
+    let ruleID: String
+
+    var body: some View {
+        LabeledContent {
+            Button("Turn On") { model.setRule(ruleID, enabled: true) }
+        } label: {
+            if let category = ruleCategory(ruleID) {
+                Text(verbatim: category)
+                Text(verbatim: ruleID).font(Theme.monoSmall).textSelection(.enabled)
+            } else {
+                Text(verbatim: ruleID).font(Theme.mono).textSelection(.enabled)
+            }
+        }
+    }
+}
+
+/// What kind of harm a rule is about, from its id ("git.push.force" → Git history); the same words as the Guard view.
+private func ruleCategory(_ ruleID: String) -> String? {
+    switch ruleID.split(separator: ".").first.map(String.init) ?? "" {
+    case "fs": return String(localized: "Files outside the project")
+    case "git": return String(localized: "Git history")
+    case "cloud": return String(localized: "Cloud resources")
+    case "sys", "disk": return String(localized: "System")
+    case "net": return String(localized: "Downloaded script")
+    case "shell": return String(localized: "Unclear command")
+    case "self": return String(localized: "Airbag's protection")
+    case "db": return String(localized: "Databases")
+    default: return nil
     }
 }
 
@@ -227,11 +291,16 @@ private enum AgentHealth: Equatable {
     case connected(lastCall: Int64)
     case waiting
     case needsRepair(moved: Bool)
+    /// The settings file has comments or cannot be read: Airbag will not rewrite it, the entries go in by hand.
+    case cannotEdit
     case notConnected
     case notFound
 
-    init(_ s: HookInstaller.AgentStatus, lastCall: Int64?) {
-        if !s.installed { self = s.detected ? .notConnected : .notFound }
+    /// `editable`: Connect or Repair could rewrite the agent's settings file.
+    init(_ s: HookInstaller.AgentStatus, lastCall: Int64?, editable: Bool) {
+        let working = s.installed && s.current && !s.staleCommand && !s.brokenCommand
+        if !working && (!editable || (!s.installed && s.note != nil)) { self = .cannotEdit }
+        else if !s.installed { self = s.detected ? .notConnected : .notFound }
         else if s.staleCommand || s.brokenCommand { self = .needsRepair(moved: true) }
         else if !s.current { self = .needsRepair(moved: false) }
         else if let lastCall { self = .connected(lastCall: lastCall) }
@@ -242,7 +311,7 @@ private enum AgentHealth: Equatable {
         switch self {
         case .connected: "checkmark.circle.fill"
         case .waiting: "circle.dashed"
-        case .needsRepair: "exclamationmark.triangle.fill"
+        case .needsRepair, .cannotEdit: "exclamationmark.triangle.fill"
         case .notConnected: "circle"
         case .notFound: "minus.circle"
         }
@@ -251,7 +320,7 @@ private enum AgentHealth: Equatable {
     var color: Color {
         switch self {
         case .connected: return Theme.ok
-        case .needsRepair: return Theme.warning
+        case .needsRepair, .cannotEdit: return Theme.warning
         case .waiting, .notConnected, .notFound: return .secondary
         }
     }
@@ -263,6 +332,7 @@ private enum AgentHealth: Equatable {
             return Text("Connected · last command \(agoText)")
         case .waiting: return Text("Connected · no commands yet")
         case .needsRepair: return Text("Needs repair")
+        case .cannotEdit: return Text("Can't edit settings file")
         case .notConnected: return Text("Not connected")
         case .notFound: return Text("Not found on this Mac")
         }
@@ -275,8 +345,11 @@ private struct AgentRow: View {
     @State private var error: String?
     @State private var showChanges = false
     @State private var confirmDisconnect = false
+    /// Why Airbag would not rewrite the settings file; read when the row appears and when the status changes, not on
+    /// every model update.
+    @State private var planError: Error?
 
-    var health: AgentHealth { AgentHealth(status, lastCall: model.lastHookAt[status.agent]) }
+    var health: AgentHealth { AgentHealth(status, lastCall: model.lastHookAt[status.agent], editable: planError == nil) }
     var name: String { status.agent.displayName }
 
     var body: some View {
@@ -311,10 +384,20 @@ private struct AgentRow: View {
         .animation(.snappy, value: health)
         .animation(.snappy, value: error)
         .confirmationDialog(Text("Disconnect \(name)?"), isPresented: $confirmDisconnect) {
-            Button("Disconnect", role: .destructive) { error = model.disconnect(status.agent) }
+            Button("Disconnect", role: .destructive) { disconnect() }
         } message: {
             Text("\(name) will run commands without snapshots or safety checks.")
         }
+        .onAppear { checkFile(animated: false) }
+        .onChange(of: status) { checkFile() }
+        .onChange(of: model.strictMode) { checkFile() }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in checkFile() }
+    }
+
+    func checkFile(animated: Bool = true) {
+        var t = Transaction()
+        t.disablesAnimations = !animated
+        withTransaction(t) { planError = model.hookPlanError(status.agent) }
     }
 
     var helpText: Text {
@@ -326,6 +409,8 @@ private struct AgentRow: View {
         switch health {
         case .needsRepair(let moved):
             if moved { Text("Points to an Airbag copy that was moved") } else { Text("Set up by an older version of Airbag") }
+        case .cannotEdit:
+            if let planError { Text(verbatim: model.describe(planError)) }
         case .waiting where status.agent == .codex:
             Text("Codex asks you to trust new hooks once: open Codex, type /hooks and press t.")
         default: EmptyView()
@@ -336,6 +421,9 @@ private struct AgentRow: View {
         switch health {
         case .notFound:
             EmptyView()
+        case .cannotEdit:
+            // Connect, Repair and Disconnect would all fail on the same file; Show Changes gives the entries to add.
+            showChangesButton
         case .notConnected:
             HStack(spacing: 8) {
                 showChangesButton
@@ -360,39 +448,76 @@ private struct AgentRow: View {
     }
 
     func connect() { error = model.connect(status.agent) }
+
+    /// A commented file that has Airbag's entries (added by hand) cannot be edited either: they come out by hand too.
+    func disconnect() {
+        error = model.disconnect(status.agent)
+        if error != nil, let e = planError as? HookInstallError, case .hasComments(let file) = e {
+            let fileText = (file as NSString).abbreviatingWithTildeInPath
+            error = String(localized: "\(fileText) has comments Airbag would remove. Remove Airbag's entries by hand.")
+        }
+    }
 }
 
-/// An agent's name with its symbol in a fixed-width column, so the names of all rows line up.
-/// "Show Changes…": what Connect or Repair would write into the agent's settings file, as a diff.
+/// "Show Changes…": what Connect or Repair would write into the agent's settings file, as a diff. For a file Airbag
+/// will not rewrite (comments, unreadable), the entries to add by hand.
 struct AgentChangesView: View {
     @EnvironmentObject var model: AppModel
     let agent: AgentKind
     /// Preview rendering passes the result instead of reading the real file.
     var preset: Result<(path: String, diff: TextDiff), Error>? = nil
+    @State private var copied = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             switch preset ?? plan {
             case .success(let p):
-                Text(verbatim: (p.path as NSString).abbreviatingWithTildeInPath)
-                    .font(Theme.monoSmall).foregroundStyle(.secondary).textSelection(.enabled)
-                ScrollView(.vertical) {
-                    ScrollView(.horizontal) {
-                        DiffView(diff: p.diff).padding(8)
+                pathLine(p.path)
+                box { DiffView(diff: p.diff) }
+            case .failure:
+                let snippet = model.installer.snippet(agent, strict: model.strictMode)
+                let path = model.installer.configPath(agent)
+                pathLine(path)
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text("Add these entries to the file by hand.")
+                    Spacer(minLength: 12)
+                    Button("Show in Finder") {
+                        model.revealFiles(root: (path as NSString).deletingLastPathComponent, paths: [(path as NSString).lastPathComponent])
+                    }
+                    Button { copy(snippet) } label: {
+                        Label("Copy", systemImage: copied ? "checkmark" : "doc.on.doc").contentTransition(.symbolEffect(.replace))
                     }
                 }
-                .frame(width: 520, height: 300)
-                .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 6))
-                .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Theme.cardStroke))
-            case .failure(let e):
-                Callout(.danger, verbatim: model.describe(e)).frame(width: 360, alignment: .leading)
+                box { Text(verbatim: snippet).font(Theme.monoSmall).textSelection(.enabled).fixedSize() }
             }
         }
         .padding(14)
     }
 
+    func pathLine(_ path: String) -> some View {
+        Text(verbatim: (path as NSString).abbreviatingWithTildeInPath)
+            .font(Theme.monoSmall).foregroundStyle(.secondary).textSelection(.enabled)
+    }
+
+    func box<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
+        ScrollView(.vertical) {
+            ScrollView(.horizontal) { content().padding(8) }
+        }
+        .frame(width: 520, height: 300)
+        .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 6))
+        .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Theme.cardStroke))
+    }
+
+    func copy(_ text: String) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+        copied = true
+        Task { try? await Task.sleep(for: .seconds(1.5)); copied = false }
+    }
+
     var plan: Result<(path: String, diff: TextDiff), Error> {
-        Result {
+        if model.frozen, let e = AppModel.previewPlanErrors[agent] { return .failure(e) }
+        return Result {
             let change = try model.installer.plan(agent, install: true, strict: model.strictMode)
             return (change.path, TextDiff.compute(old: change.before.map { Data($0.utf8) }, new: change.after.map { Data($0.utf8) }))
         }
@@ -489,8 +614,20 @@ private struct ProjectSettingsRow: View {
     let project: ProjectRow
     @State private var result: ManualSnapshotResult?
     @State private var showsCheck = false
+    @State private var confirmStop = false
+    /// Stop Protecting is running (deleting a large store takes a moment); the row goes away when it is done.
+    @State private var stopping = false
+    @State private var stopError: String?
 
-    var busy: Bool { model.snapshottingRoots.contains(project.root) }
+    var busy: Bool { model.snapshottingRoots.contains(project.root) || stopping }
+
+    /// What went wrong last: Stop Protecting, a Take Snapshot click, else the first snapshot of a folder added this session.
+    var failure: String? {
+        if let stopError { return stopError }
+        if case .failed(let why) = result { return why }
+        if result == nil, case .failed(let why) = model.firstSnapshotResults[project.root] { return why }
+        return nil
+    }
 
     var body: some View {
         let sizeText = ByteCountFormatter.string(fromByteCount: project.bytes, countStyle: .file)
@@ -516,17 +653,45 @@ private struct ProjectSettingsRow: View {
                 }
                 .disabled(!project.rootExists || busy)
                 .help(checkHelp)
-                Button { model.revealInFinder(project.root) } label: { Image(systemName: "folder") }
-                    .help(Text("Show in Finder"))
-                    .accessibilityLabel(Text("Show in Finder"))
-                    .disabled(!project.rootExists)
+                Menu { menuItems(includeSnapshot: false) } label: { Image(systemName: "ellipsis.circle") }
+                    .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+                    .help(Text("More actions")).accessibilityLabel(Text("More actions"))
             }
-            if case .failed(let why) = result {
-                Callout(.danger, verbatim: why).font(.caption).labelStyle(InlineLabelStyle()).transition(.opacity)
+            if let failure {
+                Callout(.danger, verbatim: failure).font(.caption).labelStyle(InlineLabelStyle()).transition(.opacity)
             }
         }
         .padding(.vertical, 2)
-        .animation(.snappy, value: result)
+        .contentShape(Rectangle())
+        .contextMenu { menuItems(includeSnapshot: true) }
+        .animation(.snappy, value: failure)
+        .confirmationDialog(Text("Stop protecting \(project.name)?"), isPresented: $confirmStop) {
+            Button("Stop Protecting", role: .destructive) { stop() }
+        } message: {
+            Text("Its snapshots are deleted. Add the folder again to protect it.")
+        }
+        // The model reports a failed Stop Protecting as a message; it is shown here instead (on success the row goes away).
+        .onChange(of: model.toast?.id) {
+            guard stopping, let toast = model.toast, toast.style == .failure else { return }
+            stopping = false
+            stopError = toast.text
+        }
+    }
+
+    /// Also offered for a missing folder: it is the only way to remove that project.
+    @ViewBuilder func menuItems(includeSnapshot: Bool) -> some View {
+        if includeSnapshot {
+            Button("Take Snapshot") { take() }.disabled(!project.rootExists || busy)
+        }
+        Button("Show in Finder") { model.revealInFinder(project.root) }.disabled(!project.rootExists)
+        Divider()
+        Button("Stop Protecting…", role: .destructive) { confirmStop = true }.disabled(busy)
+    }
+
+    func stop() {
+        stopError = nil
+        stopping = true
+        model.removeProject(root: project.root)
     }
 
     /// What the last click did (the check alone does not say whether anything had changed).
@@ -539,6 +704,7 @@ private struct ProjectSettingsRow: View {
     }
 
     func take() {
+        stopError = nil
         Task {
             let r = await model.snapshotNow(project.root)
             result = r
@@ -656,6 +822,16 @@ extension AppModel {
     func refreshHooksUnlessFrozen() {
         if !frozen { refreshHooks() }
     }
+
+    /// Why Connect would not rewrite the agent's settings file (comments, unreadable, unexpected format), or nil.
+    /// Preview rendering reads no real file: it uses `previewPlanErrors`.
+    func hookPlanError(_ agent: AgentKind) -> Error? {
+        if frozen { return Self.previewPlanErrors[agent] }
+        do { _ = try installer.plan(agent, install: true, strict: strictMode); return nil } catch { return error }
+    }
+
+    /// Set by preview rendering to show the "Can't edit settings file" state.
+    static var previewPlanErrors: [AgentKind: Error] = [:]
 
     /// "Clean Up Now": the hourly cleanup, run now, reporting what it removed.
     func cleanUpNow() async -> PruneReport {

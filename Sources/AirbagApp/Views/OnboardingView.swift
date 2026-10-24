@@ -3,7 +3,7 @@ import AppKit
 import SwiftUI
 
 /// First run: what Airbag does → connect agents → choose projects → a live check that it works. Under a minute, and it
-/// says "You're protected" only when an agent is connected and a project is added.
+/// says "You're protected" only when an agent is connected and a project really has a snapshot.
 struct OnboardingView: View {
     @EnvironmentObject var model: AppModel
     @Environment(\.dismiss) private var dismiss
@@ -13,6 +13,8 @@ struct OnboardingView: View {
     /// The edge the next page comes in from (Back reverses it).
     @State private var edge: Edge = .trailing
     @State private var moveError: String?
+    /// Move to Applications quits this copy: its window closing then must not end setup for the new one.
+    @State private var relaunching = false
 
     @State private var selectedAgents: Set<AgentKind> = []
     /// Detection seeds the selection until the user changes it.
@@ -20,13 +22,16 @@ struct OnboardingView: View {
     @State private var connectResults: [AgentKind: ConnectPhase] = [:]
     @State private var connecting = false
     @State private var expandedAgent: AgentKind?
-    @State private var changesText = ""
+    @State private var changes: ChangesPreview?
+    @State private var copied = false
 
     @State private var suggestions: [Suggestion]?
     @State private var chosenRoots: Set<String> = []
     @State private var addedRoots: [String] = []
     @State private var addErrors: [String: String] = [:]
     @State private var dropTargeted = false
+    /// Retry on the Done page: its result replaces the first snapshot's.
+    @State private var retryResults: [String: ManualSnapshotResult] = [:]
 
     /// A hook call after this moment proves that the agent's connection works.
     @State private var startedAt = Clock.nowMsInt()
@@ -35,9 +40,11 @@ struct OnboardingView: View {
     @State private var openAtLogin = true
     @State private var finished = false
 
-    /// `step` and `suggestions` let the preview renderer show any page with demo data (nothing on the Mac is read).
-    init(step: Int = 0, suggestions: [(path: String, usedAt: Date)]? = nil) {
+    /// `step`, `suggestions` and `added` (folders added on the projects page) let the preview renderer show any page with
+    /// demo data (nothing on the Mac is read).
+    init(step: Int = 0, suggestions: [(path: String, usedAt: Date)]? = nil, added: [String] = []) {
         _step = State(initialValue: step)
+        _addedRoots = State(initialValue: added)
         if let suggestions {
             _suggestions = State(initialValue: suggestions.map { Suggestion(path: $0.path, usedAt: $0.usedAt, picked: false) })
             _chosenRoots = State(initialValue: Set(suggestions.prefix(3).map(\.path)))
@@ -60,8 +67,12 @@ struct OnboardingView: View {
             guard !agentsTouched else { return }
             selectedAgents = Set(statuses.filter { canConnect($0) }.map(\.agent))
         }
-        // Everything is set up by the last page: closing the window there counts as Done.
-        .onDisappear { if step == 3 && !finished { applyChoices() } }
+        // Closing the window ends setup at any step (the popover's "No agents connected" and Settings › Run Setup Again…
+        // cover a user who left early); only the last page, where the login toggle is shown, applies its choices.
+        .onDisappear {
+            guard !finished, !relaunching, !model.frozen else { return }
+            if step == 3 { applyChoices() } else { finished = true; model.finishOnboarding() }
+        }
     }
 
     @ViewBuilder private var page: some View {
@@ -80,6 +91,9 @@ struct OnboardingView: View {
     }
 
     // MARK: chrome
+
+    /// Where a card row's name starts (padding, status slot, icon column): separators begin there.
+    static let textInset: CGFloat = 12 + 18 + 10 + AgentName.iconWidth + 6
 
     private func appIcon(_ size: CGFloat) -> some View {
         Image(nsImage: NSApp.applicationIconImage).resizable().interpolation(.high).frame(width: size, height: size)
@@ -114,8 +128,13 @@ struct OnboardingView: View {
         case 0:
             if model.installLocationProblem != nil {
                 Button("Continue") { go(to: 1) }
-                Button("Move to Applications") { withAnimation(.snappy) { moveError = model.moveToApplications() } }
-                    .keyboardShortcut(.defaultAction)
+                Button("Move to Applications") {
+                    relaunching = true
+                    let error = model.moveToApplications()
+                    relaunching = error == nil
+                    withAnimation(.snappy) { moveError = error }
+                }
+                .keyboardShortcut(.defaultAction)
             } else {
                 Button("Get Started") { go(to: 1) }.keyboardShortcut(.defaultAction)
             }
@@ -214,7 +233,7 @@ struct OnboardingView: View {
                     FittingScroll(target: expandedAgent.map(AnyHashable.init)) {
                         VStack(spacing: 0) {
                             ForEach(Array(model.hookStatuses.enumerated()), id: \.element.agent) { i, s in
-                                if i > 0 { Divider().padding(.leading, 40) }
+                                if i > 0 { Divider().padding(.leading, Self.textInset) }
                                 agentRow(s)
                             }
                         }
@@ -224,8 +243,11 @@ struct OnboardingView: View {
                 if !model.hookStatuses.isEmpty && !model.hookStatuses.contains(where: \.detected) {
                     Callout(.info, "No agents found on this Mac yet. When you install one, Airbag will offer to connect it.").font(.callout)
                 }
-                if selectedAgents.contains(.codex) || isConnected(.codex) {
-                    Callout(.info, "Codex asks you to trust new hooks once: open Codex, type /hooks and press t.").font(.callout)
+                // Until Codex has run a command through Airbag, it may still be waiting for the user's trust.
+                if selectedAgents.contains(.codex) || (isConnected(.codex) && model.lastHookAt[.codex] == nil) {
+                    Callout(.info, Text.withCommands(String(localized: "Codex asks you to trust Airbag once: open Codex, type \(Text.commandMarker) and press \(Text.commandMarker)."),
+                                                     "/hooks", "t"))
+                        .font(.callout)
                 }
             }
             Spacer(minLength: 0)
@@ -260,7 +282,7 @@ struct OnboardingView: View {
                     }
                 }
                 .frame(width: 18, height: 18)
-                AgentBadge(agent: s.agent).font(.body)
+                AgentName(agent: s.agent).font(.body).fixedSize()
                     .foregroundStyle(s.detected ? .primary : .secondary)
                     .contentShape(Rectangle())
                     .onTapGesture {
@@ -321,28 +343,72 @@ struct OnboardingView: View {
         })
     }
 
-    private func toggleChanges(_ agent: AgentKind) {
-        if expandedAgent != agent {
-            do { changesText = try model.installer.plan(agent, install: true, strict: model.strictMode).after ?? "" }
-            catch { changesText = model.describe(error) }
+    /// What Show Changes shows: Airbag's edit as a diff, or, for a file Airbag will not rewrite (it has comments), the
+    /// entries to add by hand.
+    enum ChangesPreview: Equatable {
+        case diff(TextDiff), snippet(String), error(String)
+    }
+
+    private func preview(_ agent: AgentKind) -> ChangesPreview {
+        do {
+            let c = try model.installer.plan(agent, install: true, strict: model.strictMode)
+            return .diff(TextDiff.compute(old: c.before.map { Data($0.utf8) }, new: c.after.map { Data($0.utf8) }))
+        } catch HookInstallError.hasComments {
+            return .snippet(model.installer.snippet(agent, strict: model.strictMode))
+        } catch {
+            return .error(model.describe(error))
         }
+    }
+
+    private func toggleChanges(_ agent: AgentKind) {
+        if expandedAgent != agent { changes = preview(agent); copied = false }
         withAnimation(.snappy) { expandedAgent = expandedAgent == agent ? nil : agent }
     }
 
-    private func changesPreview(_ s: HookInstaller.AgentStatus) -> some View {
+    @ViewBuilder private func changesPreview(_ s: HookInstaller.AgentStatus) -> some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(verbatim: (s.configPath as NSString).abbreviatingWithTildeInPath)
-                .font(Theme.monoSmall).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
-            ScrollView([.vertical, .horizontal]) {
-                Text(verbatim: changesText).font(Theme.monoSmall).textSelection(.enabled)
-                    .fixedSize().padding(8)
+            // After a failed Connect, the row's message above already says to add them by hand.
+            if case .snippet = changes, connectResults[s.agent] == nil {
+                Text("Add these entries to the file by hand:").font(.callout)
             }
-            .defaultScrollAnchor(.topLeading)
-            .frame(height: 110)
-            .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 6))
-            .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Theme.cardStroke))
+            HStack(spacing: 8) {
+                Text(verbatim: (s.configPath as NSString).abbreviatingWithTildeInPath)
+                    .font(Theme.monoSmall).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+                Spacer(minLength: 8)
+                if case .snippet(let text) = changes {
+                    Button { copy(text) } label: {
+                        Label("Copy", systemImage: copied ? "checkmark" : "doc.on.doc").contentTransition(.symbolEffect(.replace))
+                    }
+                    .buttonStyle(.borderless).controlSize(.small)
+                }
+            }
+            if case .error(let message) = changes {
+                Callout(.warning, verbatim: message).font(.callout)
+            } else {
+                // Short diffs hug the leading edge; long lines scroll sideways.
+                ScrollView(.vertical) {
+                    ScrollView(.horizontal) {
+                        Group {
+                            if case .diff(let diff) = changes { DiffView(diff: diff) }
+                            if case .snippet(let text) = changes {
+                                Text(verbatim: text).font(Theme.monoSmall).textSelection(.enabled).fixedSize()
+                            }
+                        }
+                        .padding(8)
+                    }
+                }
+                .frame(height: 160)
+                .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 6))
+                .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Theme.cardStroke))
+            }
         }
         .padding(.leading, 28)
+    }
+
+    private func copy(_ text: String) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+        withAnimation(.snappy) { copied = true }
     }
 
     /// Connects every pending agent, flips each row to its result, then moves on when nothing failed.
@@ -363,8 +429,14 @@ struct OnboardingView: View {
         for a in agents {
             // A moment of progress per row, so the change of each row can be followed.
             try? await Task.sleep(for: .milliseconds(180))
-            let error = model.connect(a)
+            let error: String?
+            // Entries added by hand to a file Airbag will not rewrite (it has comments) count: Retry then succeeds.
+            let status = model.installer.status(a)
+            if status.installed && status.current && !status.brokenCommand { error = nil; model.refreshHooks() }
+            else { error = model.connect(a) }
             withAnimation(.snappy) { connectResults[a] = error.map { .failed($0) } ?? .connected }
+            // Such a file can only be edited by hand: show the entries to add right away.
+            if error != nil, expandedAgent == nil, case .snippet = preview(a) { toggleChanges(a) }
         }
         connecting = false
     }
@@ -444,23 +516,30 @@ struct OnboardingView: View {
 
     private func projectRow(_ s: Suggestion) -> some View {
         let protected = isProtected(s.path)
+        let details = VStack(alignment: .leading, spacing: 2) {
+            Text(verbatim: (s.path as NSString).lastPathComponent).font(.body.weight(.medium)).lineLimit(1)
+            Text(verbatim: (s.path as NSString).abbreviatingWithTildeInPath)
+                .font(Theme.monoSmall).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+                .help(Text(verbatim: s.path))
+            if !s.picked && !protected && Self.asksForAccess(s.path) {
+                Text("macOS will ask once to allow access.").font(.caption).foregroundStyle(.secondary)
+            }
+        }
         return VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .firstTextBaseline, spacing: 10) {
-                Toggle(isOn: projectBinding(s.path, protected: protected)) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(verbatim: (s.path as NSString).lastPathComponent).font(.body.weight(.medium)).lineLimit(1)
-                        Text(verbatim: (s.path as NSString).abbreviatingWithTildeInPath)
-                            .font(Theme.monoSmall).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
-                            .help(Text(verbatim: s.path))
-                        if !s.picked && !protected && Self.asksForAccess(s.path) {
-                            Text("macOS will ask once to allow access.").font(.caption).foregroundStyle(.secondary)
-                        }
+                // Already protected reads as done (like a connected agent), not as an unavailable choice.
+                if protected {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.body).foregroundStyle(Theme.ok)
+                        .frame(width: 18)
+                        .accessibilityHidden(true)
+                    details.frame(maxWidth: .infinity, alignment: .leading)
+                } else {
+                    Toggle(isOn: projectBinding(s.path)) {
+                        details.padding(.leading, 9).frame(maxWidth: .infinity, alignment: .leading)
                     }
-                    .padding(.leading, 9)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .toggleStyle(.checkbox)
                 }
-                .toggleStyle(.checkbox)
-                .disabled(protected)
                 if protected {
                     Text("Protected").font(.callout).foregroundStyle(.secondary)
                 } else if let usedAt = s.usedAt {
@@ -483,8 +562,8 @@ struct OnboardingView: View {
         .padding(.horizontal, 12).padding(.vertical, 8)
     }
 
-    private func projectBinding(_ path: String, protected: Bool) -> Binding<Bool> {
-        Binding(get: { protected || chosenRoots.contains(path) }, set: { on in
+    private func projectBinding(_ path: String) -> Binding<Bool> {
+        Binding(get: { chosenRoots.contains(path) }, set: { on in
             withAnimation(.snappy) {
                 if on { chosenRoots.insert(path) } else { chosenRoots.remove(path); addErrors[path] = nil }
             }
@@ -558,28 +637,37 @@ struct OnboardingView: View {
         addedRoots.isEmpty ? model.projects.filter(\.rootExists).prefix(3).map(\.root) : addedRoots
     }
 
-    private var isFullyProtected: Bool { !connectedAgents.isEmpty && !doneRoots.isEmpty }
-
     private var doneStep: some View {
-        VStack(spacing: 0) {
-            if isFullyProtected {
-                header(Text("You're protected"), Text("Run any command in a new agent session to check that Airbag sees it."))
-            } else if !connectedAgents.isEmpty {
-                header(Text("Airbag is ready"), Text("Projects are added automatically the first time an agent runs a command there."))
-            } else {
-                header(Text("Airbag is ready"), Text("Connect an agent any time in Settings."))
+        let states = doneRoots.map { model.firstSnapshotState($0, retried: retryResults[$0]) }
+        let failed = states.contains { $0.isFailure }
+        // A project only counts once it really has a snapshot, and no project added here is left without one.
+        let protected = !connectedAgents.isEmpty && states.contains(.ok) && !failed
+        return VStack(spacing: 0) {
+            Group {
+                if protected {
+                    header(Text("You're protected"), Text("Run any command in a new agent session to check that Airbag sees it."))
+                } else if connectedAgents.isEmpty {
+                    header(Text("Airbag is ready"), Text("Connect an agent any time in Settings."))
+                } else if doneRoots.isEmpty {
+                    header(Text("Airbag is ready"), Text("Projects are added automatically the first time an agent runs a command there."))
+                } else if failed {
+                    header(Text("Airbag is ready"), Text("Airbag couldn't take a snapshot of a project yet."))
+                } else {
+                    header(Text("Airbag is ready"), Text("Run any command in a new agent session to check that Airbag sees it."))
+                }
             }
+            .animation(.snappy, value: protected)
             VStack(alignment: .leading, spacing: 14) {
                 if !connectedAgents.isEmpty || !doneRoots.isEmpty {
                     FittingScroll {
                         VStack(spacing: 0) {
                             ForEach(Array(connectedAgents.enumerated()), id: \.element) { i, agent in
-                                if i > 0 { Divider().padding(.leading, 40) }
+                                if i > 0 { Divider().padding(.leading, Self.textInset) }
                                 AgentCheckRow(agent: agent, startedAt: startedAt)
                             }
-                            ForEach(Array(doneRoots.enumerated()), id: \.element) { i, root in
-                                if i > 0 || !connectedAgents.isEmpty { Divider().padding(.leading, 40) }
-                                ProjectCheckRow(root: root)
+                            ForEach(Array(zip(doneRoots, states).enumerated()), id: \.element.0) { i, item in
+                                if i > 0 || !connectedAgents.isEmpty { Divider().padding(.leading, Self.textInset) }
+                                ProjectCheckRow(root: item.0, state: item.1) { retrySnapshot(item.0) }
                             }
                         }
                     }
@@ -602,6 +690,13 @@ struct OnboardingView: View {
             Spacer(minLength: 0)
         }
         .padding(.horizontal, 32)
+    }
+
+    private func retrySnapshot(_ root: String) {
+        Task {
+            let result = await model.snapshotNow(root)
+            withAnimation(.snappy) { retryResults[root] = result }
+        }
     }
 
     private var testRow: some View {
@@ -703,26 +798,26 @@ private struct FittingScroll<Content: View>: View {
 
 /// The leading status of a checklist row: progress while waiting, then a check that bounces once when it arrives.
 private struct CheckSlot: View {
-    let done: Bool
-    var failed = false
+    enum Kind { case waiting, done, failed, idle }
+    let kind: Kind
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var bounce = 0
     var body: some View {
         Group {
-            if done || failed {
-                Image(systemName: failed ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
+            if kind == .waiting {
+                ProgressView().controlSize(.small).transition(.opacity)
+            } else {
+                Image(systemName: kind == .done ? "checkmark.circle.fill" : kind == .failed ? "exclamationmark.triangle.fill" : "circle.dashed")
                     .font(.body)
-                    .foregroundStyle(failed ? Theme.warning : Theme.ok)
+                    .foregroundStyle(kind == .done ? Theme.ok : kind == .failed ? Theme.warning : .secondary)
                     .contentTransition(.symbolEffect(.replace))
                     .symbolEffect(.bounce, value: bounce)
                     .transition(reduceMotion ? .opacity : .scale(scale: 0.5).combined(with: .opacity))
-            } else {
-                ProgressView().controlSize(.small).transition(.opacity)
             }
         }
         .frame(width: 18, height: 18)
         .accessibilityHidden(true)
-        .onChange(of: done) { _, now in if now { bounce += 1 } }
+        .onChange(of: kind) { _, now in if now == .done { bounce += 1 } }
     }
 }
 
@@ -734,8 +829,8 @@ private struct AgentCheckRow: View {
     var body: some View {
         let seen = (model.lastHookAt[agent] ?? 0) > startedAt
         HStack(spacing: 10) {
-            CheckSlot(done: seen)
-            AgentBadge(agent: agent).font(.body)
+            CheckSlot(kind: seen ? .done : .waiting)
+            AgentName(agent: agent).font(.body).fixedSize()
             Spacer(minLength: 8)
             Group {
                 if seen { Text("Saw a command just now") } else { Text("Waiting for the first command…") }
@@ -747,35 +842,102 @@ private struct AgentCheckRow: View {
     }
 }
 
-/// A project added in setup: progress while its first snapshot runs, then a check (or why there is none).
+/// Whether a project on the Done page has a snapshot yet, and if not, why. The header and the row read the same answer.
+fileprivate enum FirstSnapshotState: Equatable {
+    case working, ok, failed(String), unreadable, noneYet
+
+    var isFailure: Bool {
+        switch self {
+        case .failed, .unreadable: return true
+        default: return false
+        }
+    }
+
+    var slot: CheckSlot.Kind {
+        switch self {
+        case .working: return .waiting
+        case .ok: return .done
+        case .failed, .unreadable: return .failed
+        case .noneYet: return .idle
+        }
+    }
+}
+
+fileprivate extension AppModel {
+    /// `retried` is the result of Retry on the Done page, which replaces the first snapshot's.
+    func firstSnapshotState(_ root: String, retried: ManualSnapshotResult? = nil) -> FirstSnapshotState {
+        if snapshottingRoots.contains(root) { return .working }
+        let project = projects.first { $0.root == root }
+        if (project?.snapshotCount ?? 0) > 0 { return .ok }
+        // A folder that exists but cannot be listed: macOS denied access (or its permissions do).
+        func readable() -> Bool { (try? FileManager.default.contentsOfDirectory(atPath: root)) != nil }
+        switch retried ?? firstSnapshotResults[root] {
+        case .created: return .ok   // the project list catches up a moment later
+        case .failed(let why): return readable() ? .failed(why) : .unreadable
+        case .unchanged: return readable() ? .noneYet : .unreadable
+        // Protected before this session (no first snapshot here), or added and not yet in the project list.
+        case nil: return project == nil ? .working : .noneYet
+        }
+    }
+}
+
+/// A project on the Done page: progress while its first snapshot runs, then a check, or why there is none and what
+/// fixes it.
 private struct ProjectCheckRow: View {
-    @EnvironmentObject var model: AppModel
     let root: String
-    /// The project list refreshes a moment after the snapshot ends; only a row still missing after that is a failure.
-    @State private var settled = false
+    fileprivate let state: FirstSnapshotState
+    let retry: () -> Void
+
     var body: some View {
-        let row = model.projects.first { $0.root == root }
-        let snapshotting = model.snapshottingRoots.contains(root)
-        let working = snapshotting || (row == nil && !settled)
-        let ok = !working && (row?.snapshotCount ?? 0) > 0
-        HStack(spacing: 10) {
-            CheckSlot(done: ok, failed: !working && !ok)
-            Label { Text(verbatim: (root as NSString).lastPathComponent) } icon: { Image(systemName: "folder") }
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 10) {
+                CheckSlot(kind: state.slot)
+                HStack(spacing: 6) {
+                    Image(systemName: "folder").frame(width: AgentName.iconWidth).foregroundStyle(.secondary).accessibilityHidden(true)
+                    Text(verbatim: (root as NSString).lastPathComponent)
+                }
                 .font(.body).lineLimit(1)
                 .help(Text(verbatim: (root as NSString).abbreviatingWithTildeInPath))
-            Spacer(minLength: 8)
-            Group {
-                if working { Text("Taking the first snapshot…") } else if ok { Text("Protected") } else { Text("No snapshots yet") }
+                Spacer(minLength: 8)
+                Group {
+                    switch state {
+                    case .working: Text("Taking the first snapshot…")
+                    case .ok: Text("Protected")
+                    case .noneYet: Text("No snapshots yet").help(Text("The first snapshot appears when an agent runs a command or a file changes."))
+                    case .failed, .unreadable: Text("No snapshots yet")
+                    }
+                }
+                .font(.callout).foregroundStyle(.secondary).lineLimit(1)
             }
-            .font(.callout).foregroundStyle(.secondary).lineLimit(1)
+            if state.isFailure {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Group {
+                        if case .failed(let why) = state { Text(verbatim: why) } else { Text("The folder could not be read.") }
+                    }
+                    .font(.callout).fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 8)
+                    if state == .unreadable && OnboardingView.asksForAccess(root) {
+                        Button("Open Privacy & Security") {
+                            NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_FilesAndFolders")!)
+                        }
+                    }
+                    Button("Retry", action: retry)
+                }
+                .controlSize(.small)
+                .padding(.leading, OnboardingView.textInset - 12)
+                .transition(.opacity)
+            }
         }
         .padding(.horizontal, 12).padding(.vertical, 9)
-        .animation(.snappy, value: working)
-        .task(id: snapshotting) {
-            settled = false
-            guard !snapshotting else { return }
-            try? await Task.sleep(for: .seconds(3))
-            settled = true
-        }
+        .animation(.snappy, value: state)
+    }
+}
+
+private extension Text {
+    /// `withCommand` for a sentence with several commands, filled in order.
+    static func withCommands(_ sentence: String, _ commands: String...) -> Text {
+        let parts = sentence.components(separatedBy: commandMarker)
+        guard parts.count == commands.count + 1 else { return Text(verbatim: sentence) }
+        return zip(commands, parts.dropFirst()).reduce(Text(verbatim: parts[0])) { $0 + Text(verbatim: $1.0).monospaced() + Text(verbatim: $1.1) }
     }
 }

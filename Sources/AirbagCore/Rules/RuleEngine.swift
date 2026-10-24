@@ -62,7 +62,7 @@ public struct GuardContext: Sendable {
     public var environment: [String: String]
     /// Airbag's own data directory (agents must not disable the safety net).
     public var airbagHome: String?
-    /// Rule ids the user turned off.
+    /// Rule ids the user turned off: their asks are skipped, their blocks always apply.
     public var disabledRules: Set<String>
     /// Look at the real file system (symlink resolution). Off in fixture tests.
     public var useFileSystem: Bool
@@ -94,7 +94,8 @@ public struct RuleEngine: Sendable {
     public func evaluate(_ command: String, context: GuardContext) -> GuardVerdict {
         var analyzer = Analyzer(context: context)
         analyzer.analyze(command, depth: 0)
-        var findings = analyzer.findings.filter { !context.disabledRules.contains($0.ruleId) }
+        // Turning a rule off relaxes what it asks about; what it blocks (wiping home, a disk, Airbag itself) stays blocked.
+        var findings = analyzer.findings.filter { $0.decision == .block || !context.disabledRules.contains($0.ruleId) }
         // Read-only detection: when nothing matched and every command is known read-only, no snapshot is needed.
         if findings.isEmpty {
             findings = []
@@ -774,7 +775,8 @@ struct Analyzer {
             else if text.contains("delete") || text.contains("do shell script") { add("sys.osascript", .ask, .recommended, "it runs an AppleScript that can delete or run commands outside the project.", whole) }
         case "php" where args.first?.text == "artisan":
             analyzeMigrationTool("artisan", Array(argv.dropFirst()), whole: whole)
-        case "python", "python3" where args.first.map({ ($0.text as NSString).lastPathComponent == "manage.py" }) == true:
+        case "python" where args.first.map({ ($0.text as NSString).lastPathComponent == "manage.py" }) == true,
+             "python3" where args.first.map({ ($0.text as NSString).lastPathComponent == "manage.py" }) == true:
             analyzeMigrationTool("manage.py", Array(argv.dropFirst()), whole: whole)
         case "python", "python2", "python3", "node", "perl", "ruby", "php", "deno", "lua", "Rscript", "swift":
             if name == "perl", args.contains(where: { $0.text.hasPrefix("-") && $0.text.contains("i") && !$0.text.hasPrefix("--") }) {

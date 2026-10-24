@@ -102,6 +102,9 @@ struct RadarScreen: View {
     private func endedRow(_ s: EndedSession) -> some View {
         let busy = s.servers.contains { stopping.contains($0.identity) }
         let failed = s.servers.filter { failures[$0.identity] != nil }
+        // Stop skips protected servers; when it would skip them all, the row says why instead of offering it.
+        let stoppable = s.servers.filter { $0.protection == nil }
+        let refusal = stoppable.isEmpty ? s.servers.compactMap(\.protection).first.map(Self.refusal) : nil
         return HStack(spacing: 10) {
             HStack(alignment: .top, spacing: 10) {
                 Circle().fill(Theme.warning).frame(width: 7, height: 7).padding(.top, 6).accessibilityHidden(true)
@@ -116,14 +119,18 @@ struct RadarScreen: View {
                     }
                     .font(.callout)
                     HStack(spacing: 12) {
-                        ForEach(s.servers) { p in
+                        ForEach(s.servers.distinctServers) { p in
                             HStack(spacing: 3) {
                                 Text(verbatim: p.name).foregroundStyle(.secondary)
+                                if let why = p.protection { Self.lock(why) }
                                 ForEach(p.uniquePorts, id: \.self) { PortLink(port: $0) }
                             }
                         }
                     }
                     .font(.caption)
+                    if let refusal {
+                        Text(verbatim: refusal).font(.caption).foregroundStyle(.secondary).lineLimit(1).help(Text(verbatim: refusal))
+                    }
                     if let first = failed.first, let why = failures[first.identity] {
                         HStack(spacing: 6) {
                             Image(systemName: "xmark.octagon.fill").foregroundStyle(Theme.danger)
@@ -140,10 +147,12 @@ struct RadarScreen: View {
             Spacer(minLength: 12)
             Button("Keep Running") { withAnimation(.snappy) { s.servers.forEach(model.keep) } }
                 .disabled(busy)
-            Button { stop(s.servers, force: false) } label: {
-                Text("Stop").opacity(busy ? 0 : 1).overlay { if busy { ProgressView().controlSize(.mini) } }
+            if !stoppable.isEmpty {
+                Button { stop(stoppable, force: false) } label: {
+                    Text("Stop").opacity(busy ? 0 : 1).overlay { if busy { ProgressView().controlSize(.mini) } }
+                }
+                .disabled(busy)
             }
-            .disabled(busy)
         }
         .padding(.horizontal, 12).padding(.vertical, 9)
         .contentShape(Rectangle())
@@ -163,22 +172,19 @@ struct RadarScreen: View {
             TableColumn("Process", value: \.name) { p in
                 HStack(spacing: 4) {
                     Text(verbatim: p.name).lineLimit(1)
-                    if let why = p.protection {
-                        Image(systemName: "lock.fill").font(.caption2).foregroundStyle(.tertiary)
-                            .help(Text(Self.refusal(why)))
-                            .accessibilityLabel(Text(Self.refusal(why)))
-                    }
+                    if let why = p.protection { Self.lock(why) }
                 }
                 .help(Text(verbatim: "\(p.commandLine)\nPID \(p.identity.pid)"))
             }
-            .width(min: 80, ideal: 100, max: 180)
+            .width(min: 80, ideal: 100, max: 160)
+            // No maximum: the session title gets the width the short columns leave.
             TableColumn("Project · Session") { p in projectCell(p) }
-                .width(min: 120, ideal: 160)
+                .width(min: 140, ideal: 300)
             TableColumn("RAM", value: \.memorySortKey) { p in Text(verbatim: p.memoryText).monospacedDigit() }
-                .width(min: 50, ideal: 60, max: 80)
+                .width(min: 50, ideal: 60, max: 70)
                 .alignment(.trailing)
             TableColumn("Uptime", value: \.uptimeSortKey) { p in Text(verbatim: p.uptimeText).monospacedDigit() }
-                .width(min: 54, ideal: 64, max: 90)
+                .width(min: 54, ideal: 64, max: 76)
                 .alignment(.trailing)
             TableColumn("Status") { p in statusCell(p) }
                 .width(min: 100, ideal: 140, max: 260)
@@ -192,20 +198,21 @@ struct RadarScreen: View {
         }
     }
 
-    /// The project, and under it the agent and session that started the server (when known).
+    /// The project, then the agent and session that started the server (when known), on one line so every row has the
+    /// table's row height; the tooltip has the full title.
     private func projectCell(_ p: RadarProcess) -> some View {
-        VStack(alignment: .leading, spacing: 1) {
-            Text(verbatim: projectName(p)).lineLimit(1).truncationMode(.middle)
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            Text(verbatim: projectName(p)).truncationMode(.middle).layoutPriority(1)
             if let a = p.attribution, a.agent != nil {
-                HStack(spacing: 4) {
-                    AgentBadge(agent: a.agent)
-                    if let t = a.sessionTitle { Text(verbatim: "“\(t)”").lineLimit(1) }
+                AgentBadge(agent: a.agent).font(.caption).foregroundStyle(.secondary).layoutPriority(1)
+                if let t = a.sessionTitle {
+                    Text(verbatim: "“\(t)”").font(.caption).foregroundStyle(.secondary).truncationMode(.tail)
                 }
-                .font(.caption).foregroundStyle(.secondary)
             }
         }
-        .padding(.vertical, 2)
-        .help(Text(attributionHelp(p)))
+        .lineLimit(1)
+        .help(Text(verbatim: [p.attribution?.agent?.displayName, p.attribution?.sessionTitle.map { "“\($0)”" }, attributionHelp(p)]
+            .compactMap { $0 }.joined(separator: "\n")))
     }
 
     @ViewBuilder private func statusCell(_ p: RadarProcess) -> some View {
@@ -217,7 +224,7 @@ struct RadarScreen: View {
         } else if let why = failures[p.identity] {
             HStack(spacing: 6) {
                 Image(systemName: "xmark.octagon.fill").foregroundStyle(Theme.danger)
-                Text(verbatim: why).font(.caption).foregroundStyle(.secondary).lineLimit(2).help(Text(verbatim: why))
+                Text(verbatim: why).font(.caption).foregroundStyle(.secondary).lineLimit(1).help(Text(verbatim: why))
                 if p.protection == nil {
                     Button("Force Stop") { stop([p], force: true) }
                         .buttonStyle(.bordered)
@@ -332,6 +339,13 @@ struct RadarScreen: View {
         }
     }
 
+    /// Marks a process Airbag won't stop; the tooltip says why.
+    private static func lock(_ why: String) -> some View {
+        Image(systemName: "lock.fill").font(.caption2).foregroundStyle(.tertiary)
+            .help(Text(refusal(why)))
+            .accessibilityLabel(Text(refusal(why)))
+    }
+
     /// Why Airbag won't stop a process, in the user's language (the radar names the reason in English).
     nonisolated static func refusal(_ raw: String) -> String {
         let reason: String
@@ -359,7 +373,7 @@ private struct EndedSession: Identifiable {
 
 fileprivate extension RadarProcess {
     /// Each port once (a server often listens on IPv4 and IPv6), lowest first.
-    var uniquePorts: [Int] { Array(Set(listeners.map(\.port))).sorted() }
+    var uniquePorts: [Int] { portSet.sorted() }
     var portSortKey: Int { uniquePorts.first ?? .max }
     var memorySortKey: Int64 { footprintBytes ?? -1 }
     var uptimeSortKey: Int64 { -startedAtMs }
@@ -369,11 +383,17 @@ fileprivate extension RadarProcess {
 
 struct GuardScreen: View {
     @EnvironmentObject var model: AppModel
+    @Environment(\.controlActiveState) private var activeState
     @State private var expanded = Set<String>()
     @State private var filter = GuardFilter.all
     @State private var flashID: String?
     /// What became of the allowances granted for entries (read from the registry when an entry becomes "allowed").
     @State private var allowances: [String: Allowance] = [:]
+    /// The store each entry's snapshot is in: a session in a git worktree snapshots the worktree, while the entry names
+    /// the main checkout.
+    @State private var snapshotRoots: [String: String] = [:]
+    /// Rows scrolled under the pinned day header (the newest entries are then out of sight).
+    @State private var scrolledAway = false
 
     private var filtered: [GuardEntry] { model.guardEntries.filter(filter.includes) }
 
@@ -388,6 +408,7 @@ struct GuardScreen: View {
     }
 
     private var allowedIDs: [String] { model.guardEntries.filter { $0.resolution == "user_allowed" }.map(\.id) }
+    private var snapshotIDs: [String] { model.guardEntries.compactMap(\.snapshotID) }
 
     var body: some View {
         ScrollViewReader { proxy in
@@ -416,14 +437,17 @@ struct GuardScreen: View {
                 .help(Text("Filter"))
             }
         }
-        // Opening the log (or a new entry arriving while it is open) counts as having looked; the dots then fade out.
-        .task(id: model.guardEntries.first?.id) {
+        // Looking at the log counts as having looked, and the dots then fade out: only while its window is key (not behind
+        // other apps, minimized or hidden), the newest entries are in sight and no unseen entry is filtered out.
+        .task(id: "\(model.guardEntries.first?.id ?? "")|\(activeState == .key)|\(scrolledAway)|\(filter)") {
+            guard activeState == .key, !scrolledAway, model.unseenGuards.allSatisfy(filter.includes) else { return }
             try? await Task.sleep(for: .seconds(1.5))
             guard !Task.isCancelled, !model.frozen else { return }
-            withAnimation(.easeOut(duration: 0.6)) { model.markGuardsReviewed() }
+            withAnimation(.easeOut(duration: 0.6)) { model.markGuardEntriesReviewed() }
         }
         // Also on every agent command: using an allowance does not change the entry, only its token.
         .task(id: "\(allowedIDs.joined(separator: ","))|\(model.hookTick)") { allowances = model.allowances(allowedIDs) }
+        .task(id: snapshotIDs) { snapshotRoots = model.snapshotRoots(snapshotIDs) }
         .onAppear {
             // Preview rendering: open the entry a user is most likely to come for.
             if model.frozen, expanded.isEmpty, let g = model.guardEntries.first(where: { $0.decision == "allow_fallback" }) { expanded = [g.id] }
@@ -442,14 +466,16 @@ struct GuardScreen: View {
     private var log: some View {
         let waitingIDs = Set(model.needsApproval.map(\.id))
         return ScrollView {
-            LazyVStack(alignment: .leading, spacing: 0) {
+            // Day headers as in the Timeline: same size, flush with the cards, pinned.
+            LazyVStack(alignment: .leading, spacing: 8, pinnedViews: [.sectionHeaders]) {
                 ForEach(days) { day in
                     Section {
                         VStack(spacing: 0) {
                             ForEach(Array(day.entries.enumerated()), id: \.element.id) { i, g in
                                 if i > 0 { Divider().padding(.leading, GuardLogRow.indent) }
                                 GuardLogRow(entry: g, expanded: expanded.contains(g.id), unread: g.ts > model.guardReviewedThrough,
-                                            waiting: waitingIDs.contains(g.id), allowance: allowances[g.id]) {
+                                            waiting: waitingIDs.contains(g.id), allowance: allowances[g.id],
+                                            snapshotRoot: g.snapshotID.flatMap { snapshotRoots[$0] }) {
                                     withAnimation(.snappy) { if expanded.remove(g.id) == nil { expanded.insert(g.id) } }
                                 }
                                 .flash(flashID == g.id)
@@ -458,17 +484,26 @@ struct GuardScreen: View {
                         }
                         .clipShape(RoundedRectangle(cornerRadius: 10))
                         .card()
-                        .padding(.bottom, 10)
+                        .padding(.horizontal, 16)
                     } header: {
                         Text(verbatim: day.title)
-                            .font(.headline).foregroundStyle(.secondary)
-                            .padding(.top, 14).padding(.bottom, 8).padding(.horizontal, 4)
+                            .font(.subheadline.weight(.semibold)).foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, 16).padding(.top, 8).padding(.bottom, 6)
+                            // A bar only once rows scroll under the pinned header; at the top it sits on the window.
+                            .background(scrolledAway ? AnyShapeStyle(.bar) : AnyShapeStyle(Color.clear))
                             .accessibilityAddTraits(.isHeader)
                     }
                 }
             }
-            .padding(.horizontal, 16).padding(.bottom, 8)
+            .padding(.bottom, 16)
+            .background(alignment: .top) {
+                GeometryReader { g in
+                    Color.clear.onChange(of: g.frame(in: .named("guardLog")).minY < -24) { _, away in scrolledAway = away }
+                }
+            }
         }
+        .coordinateSpace(name: "guardLog")
     }
 
     private var emptyState: some View {
@@ -535,6 +570,8 @@ private struct GuardLogRow: View {
     /// The agent is waiting for an answer (Allow Once / Dismiss).
     let waiting: Bool
     let allowance: Allowance?
+    /// The store the entry's snapshot is in, when it is not the entry's project (a git worktree).
+    let snapshotRoot: String?
     let toggle: () -> Void
     @State private var hover = false
     @State private var copied = false
@@ -544,6 +581,10 @@ private struct GuardLogRow: View {
     static let indent: CGFloat = 50
 
     private var style: GuardStyle { GuardStyle(entry.decision) }
+    /// Orange only while the agent is still waiting: an answered or expired approval is history.
+    private var settledApproval: Bool { entry.decision == "deny_fallback" && !waiting }
+    /// Commands Airbag knows ran (the user did not stop them): they can be undone from here.
+    private var ran: Bool { entry.decision == "allow_fallback" || entry.decision == "allow_once" }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -572,7 +613,8 @@ private struct GuardLogRow: View {
             Circle().fill(Theme.accent).frame(width: 7, height: 7)
                 .opacity(unread ? 1 : 0)
                 .accessibilityHidden(true)
-            Image(systemName: style.symbol).foregroundStyle(style.color)
+            Image(systemName: settledApproval ? "questionmark.circle" : style.symbol)
+                .foregroundStyle(settledApproval ? Color.secondary : style.color)
                 .frame(width: 18)
                 .help(Text(style.title))
                 .accessibilityLabel(Text(style.title))
@@ -630,11 +672,11 @@ private struct GuardLogRow: View {
             }
             .controlSize(.small)
             .transition(.opacity)
-        } else if let resolution = entry.resolution {
+        } else {
             Group {
-                switch resolution {
-                case "token_used": used
-                case "user_allowed":
+                switch entry.resolution {
+                case "token_used"?: used
+                case "user_allowed"?:
                     switch allowance {
                     case .used?: used
                     case .until(let expiry)? where !expired && expiry > Date():
@@ -645,9 +687,11 @@ private struct GuardLogRow: View {
                     case nil:
                         Label { Text("Allowed once") } icon: { Image(systemName: "checkmark.circle.fill").foregroundStyle(Theme.ok) }
                     }
-                case "user_denied":
+                case "user_denied"?:
                     Label { Text("Dismissed") } icon: { Image(systemName: "xmark.circle").foregroundStyle(.secondary) }
-                default: EmptyView()
+                default:
+                    // Unanswered for hours (or expired): Allow Once is gone, so the line says why.
+                    Label { Text("Not answered · the agent is no longer waiting") } icon: { Image(systemName: "clock").foregroundStyle(.secondary) }
                 }
             }
             .font(.caption).foregroundStyle(.secondary)
@@ -671,14 +715,14 @@ private struct GuardLogRow: View {
                     .textSelection(.enabled)
                 HStack(spacing: 4) {
                     Text(style.title)
-                    if let category = Self.category(entry.ruleID) {
+                    if let category = GuardRule.category(entry.ruleID) {
                         Text(verbatim: "·").foregroundStyle(.tertiary)
                         Text(verbatim: category)
                     }
                 }
                 .font(.caption).foregroundStyle(.secondary)
             }
-            if entry.decision == "allow_fallback" {
+            if ran {
                 if entry.snapshotID == nil {
                     Callout(.info, "No snapshot was taken before this command.").font(.caption)
                 } else {
@@ -686,8 +730,9 @@ private struct GuardLogRow: View {
                 }
             }
             HStack(spacing: 8) {
-                if let snapshot = entry.snapshotID, let root = entry.projectRoot {
-                    if entry.decision == "allow_fallback" {
+                // The snapshot's own store: in a git worktree that is the worktree, not the project the entry names.
+                if let snapshot = entry.snapshotID, let root = snapshotRoot ?? entry.projectRoot {
+                    if ran {
                         Button {
                             model.requestRestore(root: root, snapshot: snapshot, time: entry.ts, intent: .restore, command: entry.command)
                         } label: { Label("Restore Project to Before This…", systemImage: "arrow.uturn.backward") }
@@ -703,17 +748,31 @@ private struct GuardLogRow: View {
                     Label("Copy Command", systemImage: copied ? "checkmark" : "doc.on.doc")
                         .contentTransition(.symbolEffect(.replace))
                 }
+                if !offersRuleToggle { Spacer(minLength: 12); ruleIDText }
             }
             .controlSize(.small)
-            HStack(alignment: .firstTextBaseline) {
-                Toggle("Check commands like this", isOn: Binding(get: { !model.disabledRules.contains(entry.ruleID) },
-                                                                set: { model.setRule(entry.ruleID, enabled: $0) }))
-                    .toggleStyle(.checkbox)
-                Spacer(minLength: 12)
-                Text("Rule ID: \(entry.ruleID)").foregroundStyle(.tertiary).textSelection(.enabled)
+            if offersRuleToggle {
+                HStack(alignment: .firstTextBaseline) {
+                    Toggle("Check commands like this", isOn: Binding(get: { !model.disabledRules.contains(entry.ruleID) },
+                                                                    set: { on in withAnimation(.snappy) { model.setRule(entry.ruleID, enabled: on) } }))
+                        .toggleStyle(.checkbox)
+                    Spacer(minLength: 12)
+                    ruleIDText
+                }
+                .font(.caption)
+                .transition(.opacity)
             }
-            .font(.caption)
         }
+    }
+
+    /// A rule that blocks harm no snapshot covers is never offered for turning off; one turned off earlier can still be
+    /// turned back on here.
+    private var offersRuleToggle: Bool {
+        model.disabledRules.contains(entry.ruleID) || (entry.decision != "deny" && GuardRule.canTurnOff(entry.ruleID))
+    }
+
+    private var ruleIDText: some View {
+        Text("Rule ID: \(entry.ruleID)").font(.caption).foregroundStyle(.tertiary).textSelection(.enabled)
     }
 
     /// The rule's reason is written for the agent ("it deletes …"); people read it as a sentence.
@@ -721,6 +780,19 @@ private struct GuardLogRow: View {
         var s = reason.trimmingCharacters(in: .whitespacesAndNewlines)
         if s.lowercased().hasPrefix("it ") { s = String(s.dropFirst(3)) }
         return s.prefix(1).uppercased() + s.dropFirst()
+    }
+}
+
+/// Guard rule ids as people read them (also for a list of rules that are turned off).
+enum GuardRule {
+    /// Rules that can block (RuleEngine: wiping home, a disk or system folders, the system itself, Airbag's own data
+    /// and hooks, emptying the Trash, deleting a GitHub repository). RuleEngine drops every finding of a disabled rule,
+    /// so the app never offers to turn these off.
+    static func canTurnOff(_ ruleID: String) -> Bool {
+        let parts = ruleID.split(separator: ".").map(String.init)
+        if ["sys", "disk", "self"].contains(parts.first ?? "") { return false }
+        if parts.contains("catastrophic") || parts.contains("device") || ruleID.hasPrefix("fs.rm.home") { return false }
+        return !["fs.trash.empty", "gh.repo.delete"].contains(ruleID)
     }
 
     /// What kind of harm the rule is about, from its id ("fs.rm.outside" → files outside the project).
@@ -792,6 +864,15 @@ fileprivate extension AppModel {
                                 ids) { r -> (String, Allowance) in
             (r.text(0), r.intOrNil(2) != nil ? .used : .until(Date(timeIntervalSince1970: Double(r.int(1)) / 1000)))
         }) ?? []
+        return Dictionary(rows, uniquingKeysWith: { a, _ in a })
+    }
+
+    /// The store root of each snapshot. A session in a git worktree snapshots the worktree's own store, while its Guard
+    /// entries name the main checkout, so Restore and Show in Timeline need this root.
+    func snapshotRoots(_ ids: [String]) -> [String: String] {
+        guard !ids.isEmpty, let db = registry?.db else { return [:] }
+        let marks = ids.map { _ in "?" }.joined(separator: ",")
+        let rows = (try? db.all("SELECT id, root_path FROM snapshots WHERE id IN (\(marks))", ids) { r in (r.text(0), r.text(1)) }) ?? []
         return Dictionary(rows, uniquingKeysWith: { a, _ in a })
     }
 }
