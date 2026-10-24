@@ -139,3 +139,22 @@ neither a git checkout nor the agent's launch folder is snapshotted only while i
 500 MB; the cap is stored with the store, so the app and background snapshots honour it. Retention also caps each root
 at 200 unpinned snapshots within the 7-day window. `csrutil status`, `fdesetup status|isactive|list|…`, `nvram -p`,
 `nvram NAME` and `bless --info|--getBoot` are allowed; every other use of these tools stays blocked (`sys.security`).
+
+**ADR-033 Undo without a confirmation; Restore with one.** Two verbs only. *Undo* puts back what one moment changed
+(the files that snapshot recorded, as they were in the snapshot before it) and runs at once from the popover, the
+Timeline row and the file menu: it is reversible, because the restore snapshots first and its message offers Undo
+(⌥⇧⌘Z later). *Restore* makes the whole project, or a file, match a chosen moment; it can overwrite later good work,
+so it opens the confirmation window, which groups the plan into files brought back, files reverted and newer files
+set aside. The restore target is always looked up in the store (the snapshot before the moment), never taken from
+what a filtered list shows. The Timeline is command-centric: a command's before and after snapshots form one row named
+by the command, whose Undo reverts exactly what that command did.
+
+**ADR-034 Evidence over configuration, and a quiet notification policy.** "Connected" in Settings and onboarding
+comes with the last time that agent called Airbag (`events`), so a hook that is installed but never runs (Codex
+before `/hooks` trust, managed settings) reads "no commands yet" instead of "Protected"; "Test Protection" runs the
+exact binary written into agent configs on a command it must block. The popover leads with the state that matters
+(an agent waiting > paused > a protection problem > "Protecting N projects") and proves its work ("212 commands checked
+today"). Notifications: an agent waiting for approval rings (Allow Once / Show); a block and a command that ran
+without asking go quietly to Notification Center, one per session; servers left running offer Stop / Keep Running;
+nothing while the popover already shows the item, and nothing for snapshots, restores done in the app or pauses.
+"Keep Running" is stored, so kept servers stay quiet after a relaunch. Settings is a real Settings window (⌘,).
