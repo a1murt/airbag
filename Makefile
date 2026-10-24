@@ -40,7 +40,7 @@ l10n:
 	python3 -I Scripts/check-l10n.py
 
 icon:
-	swift Scripts/make-icon.swift "$(CURDIR)"
+	mkdir -p build && swiftc -O Scripts/make-icon.swift -o build/make-icon && build/make-icon "$(CURDIR)"
 
 clean:
 	rm -rf .build build
