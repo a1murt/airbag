@@ -104,6 +104,7 @@ final class Box<T>: @unchecked Sendable {
         #expect(!SnapshotStore.storeExists(root: h.root, paths: h.paths))
         let after = h.run(.claudeCode, h.claudePre("rm -rf src", id: "i-2"))
         #expect(after.snapshot == nil && after.record?.snapshotSkipped == "not_protected")
+        #expect(after.finalDecision == "allow") // no snapshot wanted here, so none is waited for
         #expect(!SnapshotStore.storeExists(root: h.root, paths: h.paths))
         // Guard rules still treat the folder as the project.
         #expect(h.run(.claudeCode, h.claudePre("rm -rf ~", id: "i-3")).finalDecision == "deny")

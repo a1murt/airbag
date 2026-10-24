@@ -120,7 +120,7 @@ enum HookCommands {
         }
     }
 
-    /// airbag allow <guard-id> — approve one blocked/asked command once for its session.
+    /// airbag allow <guard-id> — let one command that waited for approval run once in its session (hard blocks never).
     static func allow(_ argv: [String]) throws -> Int32 {
         let a = try Args(argv, valueOptions: [])
         guard let id = a.positionals.first else { throw CLIError.usage("usage: airbag allow <guard-entry-id>   (see `airbag guard`)") }

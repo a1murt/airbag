@@ -466,6 +466,7 @@ public final class SnapshotStore {
         for p in deletes { current.removeValue(forKey: p) }
         // A snapshot that missed something cannot be used to decide which files did not exist at that moment.
         let complete = walkComplete && walk.unreadableDirs.isEmpty && !uncaptured.contains(where: { p in !walk.skippedLarge.contains(p) })
+        stats.complete = complete
 
         // Rows stored under another normalisation form are rewritten under their NFC key.
         if !strayRows.isEmpty {

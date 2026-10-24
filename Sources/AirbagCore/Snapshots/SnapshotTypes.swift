@@ -56,6 +56,7 @@ public struct SnapshotStats: Sendable, Equatable, Codable {
     public var skippedLarge = 0
     public var errors = 0
     public var durationMs = 0
+    public var complete = false     // the walk saw everything: no deadline, no unreadable folders
 }
 
 /// Size cap of a root that is not known to be a project (no `.git`, not the folder the agent was started in): a folder

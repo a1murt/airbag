@@ -85,6 +85,10 @@ public final class OutputSlot: @unchecked Sendable {
 
 public struct HookBridge {
     /// Projects other than the session's that the command `cd`s into (validated; never the home folder).
+    /// Snapshot skip reasons that mean no snapshot is needed: nothing in the folder to capture, or the user stopped
+    /// protecting it.
+    static let nothingToCapture: Set<String> = ["empty", "not_protected"]
+
     public static func visitedRoots(_ command: String, context: GuardContext, paths: AirbagPaths) -> [String] {
         var out: [String] = []
         for dir in RuleEngine().visitedDirectories(command, context: context) {
@@ -204,14 +208,21 @@ public struct HookBridge {
                                         durationMs: st.durationMs, complete: s.complete, label: s.label) }
                 return (s, s.complete ? nil : "incomplete")
             case .unchanged(let latest, let st):
-                if let l = latest, !l.complete { spawnBackgroundSnapshot(r) }
-                if let l = latest, links {
+                // No snapshot yet and nothing to take one of. A walk that saw the whole folder and found no files (none
+                // skipped for size, no errors) means there is nothing a command could lose; a walk cut short proves nothing.
+                guard let l = latest else {
+                    if st.complete && st.walked == 0 && st.skippedLarge == 0 && st.errors == 0 { return (nil, "empty") }
+                    spawnBackgroundSnapshot(r)
+                    return (nil, "incomplete")
+                }
+                if !l.complete { spawnBackgroundSnapshot(r) }
+                if links {
                     // Nothing changed since `l`: the event points at it (restoring it = state right before this command).
                     record.snapshot = .init(id: l.id, rootID: store.rootID, rootPath: r, seq: l.seq, trigger: l.trigger.rawValue,
                                             fileCount: l.fileCount, changedCount: l.changedCount, bytesAdded: l.bytesAdded,
                                             durationMs: st.durationMs, complete: l.complete, label: l.label)
                 }
-                return (latest, latest?.complete == false ? "incomplete" : nil)
+                return (l, l.complete ? nil : "incomplete")
             case .busy: return (nil, "busy")
             case .lowDisk: return (nil, "low_disk")
             case .tooLarge: return (nil, "too_large")
@@ -305,15 +316,20 @@ public struct HookBridge {
                 for r in visitedRoots {
                     let (s, k) = takeSnapshot(.preCommand, label: label, root: r)
                     if snap == nil { snap = s }
-                    if skipped == nil { skipped = k }
+                    if skipped == nil || HookBridge.nothingToCapture.contains(skipped!) { skipped = k ?? skipped }
                 }
+                if snap != nil && skipped == "empty" { skipped = nil }
                 outcome.snapshot = snap
                 outcome.snapshotSkipped = skipped
                 record.snapshotSkipped = skipped
                 timing["snapshot"] = Clock.elapsedMs(since: t0)
             }
-            // A destructive-but-recoverable command needs a usable snapshot; without one, escalate to ask.
-            if verdict.decision == .allow && verdict.snapshot == .required && (skipped != nil || snap == nil) {
+            // A command that needs a snapshot and didn't get a usable one waits for the user, whatever else it is. An
+            // empty folder, or one the user stopped protecting, needs none, as long as it is the only folder the rules
+            // protect here (a target in the launch folder or the main checkout is not covered by it).
+            let onlyRoot = roots.allSatisfy { $0 == snapshotRoot || visitedRoots.contains($0) }
+            let needsNone = skipped.map { HookBridge.nothingToCapture.contains($0) } == true && onlyRoot
+            if verdict.snapshot == .required && !needsNone && (skipped != nil || snap == nil) {
                 verdict = unavailable(skipped ?? "unknown")
             }
             if verdict.decision == .ask {
@@ -322,7 +338,8 @@ public struct HookBridge {
                     reply = .allow
                     record.decision = "allow_once"
                     record.guardEntry = guardRef("allow_once")
-                } else if mode == .allowSnapshot && !verdict.findings.contains(where: { $0.ruleId == "snapshot.unavailable" }) {
+                } else if mode == .allowSnapshot && !verdict.findings.contains(where: { $0.ruleId == "snapshot.unavailable" || $0.ruleId.hasPrefix("self.") }) {
+                    // (Switching Airbag itself off is never just recorded: that one always waits for the user.)
                     // Runs and is recorded; when a project change could not be snapshotted, the user still decides.
                     reply = .allow
                     record.decision = "allow_fallback"

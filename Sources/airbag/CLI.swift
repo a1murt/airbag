@@ -15,7 +15,7 @@ enum CLI {
         ("check", "show what the circuit breaker decides for a shell command (--cwd, --root)", GuardCommands.check),
         ("hooks", "manage agent hooks: status | install | uninstall [agents…|--all] [--dry-run] [--strict]", HookCommands.hooks),
         ("guard", "recent blocked, asked and risky commands", HookCommands.guardLog),
-        ("allow", "approve one blocked or asked command once (id from `airbag guard`)", HookCommands.allow),
+        ("allow", "let one command that is waiting for your approval run once; blocks stay blocked (id from `airbag guard`)", HookCommands.allow),
         ("sessions", "agent sessions Airbag has seen (--all includes ended ones)", HookCommands.sessions),
         ("log", "agent commands with their decision and the snapshot taken right before them", HookCommands.log),
         ("ports", "listening dev servers and the agent session that started them (--all)", RadarCommands.ports),

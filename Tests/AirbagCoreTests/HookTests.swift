@@ -99,6 +99,23 @@ func decode(_ s: String?) -> [String: Any] {
         #expect(selfApproval.finalDecision == "deny")
     }
 
+    @Test func switchingProtectionOffIsNeverJustRecorded() {
+        let h = HookSandbox(); defer { h.cleanup() }
+        // Under bypass permissions other risky commands run and are recorded; removing a hook config stops the agent.
+        let config = h.run(.claudeCode, h.claudePre("rm \(h.userHome)/.claude/settings.json", mode: "bypassPermissions"))
+        #expect(config.finalDecision == "deny_fallback")
+        #expect(config.verdict?.findings.contains { $0.ruleId == "self.hooks" } == true)
+        let codex = h.run(.codex, ["session_id": "thread-9", "turn_id": "t1", "cwd": h.root, "hook_event_name": "PreToolUse", "tool_name": "Bash",
+                                   "tool_input": ["command": "airbag hooks uninstall --all"], "tool_use_id": "c1"], hint: "pre-bash")
+        #expect(codex.finalDecision == "deny_fallback")
+        let copilot = h.run(.claudeCode, h.claudePre("rm \(h.userHome)/.copilot/hooks/airbag.json", mode: "bypassPermissions"))
+        #expect(copilot.finalDecision == "deny_fallback")
+        let repointed = h.run(.claudeCode, h.claudePre("airbag hooks install --all --command /usr/bin/true", mode: "bypassPermissions"))
+        #expect(repointed.finalDecision == "deny_fallback")
+        let preview = h.run(.claudeCode, h.claudePre("airbag hooks uninstall --dry-run", mode: "bypassPermissions"))
+        #expect(preview.finalDecision == "allow")
+    }
+
     @Test func codexAskIsRecordedByDefault() {
         let h = HookSandbox(); defer { h.cleanup() }
         let out = h.run(.codex, ["session_id": "thread-9", "turn_id": "t1", "cwd": h.root, "hook_event_name": "PreToolUse", "tool_name": "Bash",
@@ -216,6 +233,65 @@ func decode(_ s: String?) -> [String: Any] {
         #expect(out.snapshotSkipped == "busy")
         #expect((decode(out.output)["hookSpecificOutput"] as? [String: Any])?["permissionDecision"] as? String == "ask")
         #expect(out.verdict?.findings.contains { $0.ruleId == "snapshot.unavailable" } == true)
+    }
+
+    @Test func writingTheFirstFileInAnEmptyFolderIsAllowed() throws {
+        // An empty folder has nothing to snapshot; that used to read as "snapshot unavailable" and block the first
+        // file an agent wrote into a new project.
+        let h = HookSandbox(); defer { h.cleanup() }
+        let fresh = h.sb.tmp.sub("fresh")
+        try FileManager.default.createDirectory(atPath: fresh, withIntermediateDirectories: true)
+        var payload = h.claudePre("cat > notes.md <<'EOF'\nhello\nEOF")
+        payload["cwd"] = fresh
+        let out = h.run(.claudeCode, payload)
+        #expect(out.finalDecision == "allow")
+        #expect(out.snapshotSkipped == "empty")
+    }
+
+    @Test func aFolderWithOnlyFilesTooLargeToSnapshotIsNotEmpty() throws {
+        let h = HookSandbox(); defer { h.cleanup() }
+        let fresh = h.sb.tmp.sub("media")
+        try FileManager.default.createDirectory(atPath: fresh, withIntermediateDirectories: true)
+        FileManager.default.createFile(atPath: fresh + "/big.sqlite", contents: nil)
+        let f = try #require(FileHandle(forWritingAtPath: fresh + "/big.sqlite"))
+        try f.truncate(atOffset: 150 << 20) // sparse, over the 100 MiB per-file cap
+        try f.close()
+        var payload = h.claudePre("rm -rf ./*")
+        payload["cwd"] = fresh
+        let out = h.run(.claudeCode, payload)
+        #expect(out.finalDecision == "ask")
+        #expect(out.verdict?.findings.contains { $0.ruleId == "snapshot.unavailable" } == true)
+    }
+
+    @Test func anEmptyFolderDoesNotCoverTheLaunchFolder() throws {
+        // The agent was started in the project and works in an empty nested repository: deleting a project file from
+        // there is not covered by the empty folder's "snapshot".
+        let h = HookSandbox(); defer { h.cleanup() }
+        let sub = h.root + "/sub"
+        try FileManager.default.createDirectory(atPath: sub, withIntermediateDirectories: true)
+        _ = sh("git init -q", cwd: sub)
+        var payload = h.claudePre("rm ../src/index.ts")
+        payload["cwd"] = sub
+        let out = h.run(.claudeCode, payload, env: ["CLAUDE_PROJECT_DIR": h.root])
+        #expect(out.finalDecision == "ask")
+        #expect(out.snapshotSkipped == "empty")
+        #expect(out.verdict?.findings.contains { $0.ruleId == "snapshot.unavailable" } == true)
+    }
+
+    @Test func failedSnapshotStopsAnAskEvenWhereAsksAreRecorded() throws {
+        // `rm -rf .` asks and needs a snapshot. Under bypass permissions asks are only recorded, but not when the
+        // snapshot could not be taken.
+        let h = HookSandbox(); defer { h.cleanup() }
+        let store = try SnapshotStore.open(root: h.root, paths: h.paths)
+        _ = store.snapshot(SnapshotRequest(trigger: .initial))
+        #expect(store.lock.acquire(waitMs: 0))
+        defer { store.lock.release() }
+        var cfg = HookBridgeConfig(paths: h.paths, environment: [:])
+        cfg.spawnBackground = false; cfg.home = h.userHome; cfg.lockWaitMs = 50
+        let data = try JSONSerialization.data(withJSONObject: h.claudePre("rm -rf .", mode: "bypassPermissions"))
+        let out = HookBridge(config: cfg).handle(payload: data, declared: .claudeCode, eventHint: nil)
+        #expect(out.snapshotSkipped == "busy")
+        #expect(out.finalDecision == "deny_fallback")
     }
 
     @Test func postCommandSnapshotRecordsWhatChanged() throws {

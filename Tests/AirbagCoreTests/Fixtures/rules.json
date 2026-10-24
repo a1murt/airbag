@@ -912,6 +912,183 @@
    "rule": "db.destructive"
   },
   {
+   "cmd": "dropdb app",
+   "expect": {
+    "decision": "ask"
+   },
+   "rule": "db.destructive"
+  },
+  {
+   "cmd": "dropdb -h prod.example.com app",
+   "expect": {
+    "decision": "ask"
+   },
+   "rule": "db.destructive"
+  },
+  {
+   "cmd": "dropuser bob",
+   "expect": {
+    "decision": "ask"
+   },
+   "rule": "db.destructive"
+  },
+  {
+   "cmd": "mysqladmin -u root drop shop",
+   "expect": {
+    "decision": "ask"
+   },
+   "rule": "db.destructive"
+  },
+  {
+   "cmd": "dropdb --help",
+   "expect": {
+    "decision": "allow"
+   }
+  },
+  {
+   "cmd": "mysqladmin status",
+   "expect": {
+    "decision": "allow"
+   }
+  },
+  {
+   "cmd": "sudo -u postgres dropdb app",
+   "expect": {
+    "decision": "ask"
+   },
+   "rule": "db.destructive"
+  },
+  {
+   "cmd": "echo app | xargs dropdb",
+   "expect": {
+    "decision": "ask"
+   },
+   "rule": "db.destructive"
+  },
+  {
+   "cmd": "dropdb -V",
+   "expect": {
+    "decision": "allow"
+   }
+  },
+  {
+   "cmd": "mysqladmin DROP shop",
+   "expect": {
+    "decision": "ask"
+   },
+   "rule": "db.destructive",
+   "why": "mysqladmin takes its commands in any case and as unique prefixes"
+  },
+  {
+   "cmd": "mysqladmin -u drop status",
+   "expect": {
+    "decision": "allow"
+   },
+   "why": "`drop` is the user name here, not the command"
+  },
+  {
+   "cmd": "mysqladmin create drop",
+   "expect": {
+    "decision": "allow"
+   },
+   "why": "creates a database named drop"
+  },
+  {
+   "cmd": "ssh db dropdb app",
+   "expect": {
+    "decision": "ask"
+   },
+   "rule": "remote.destructive"
+  },
+  {
+   "cmd": "ssh db mysqladmin drop app",
+   "expect": {
+    "decision": "ask"
+   },
+   "rule": "remote.destructive"
+  },
+  {
+   "cmd": "rm ~/.copilot/hooks/airbag.json",
+   "expect": {
+    "decision": "ask"
+   },
+   "rule": "self.hooks"
+  },
+  {
+   "cmd": "rm -rf ~/.copilot/hooks",
+   "expect": {
+    "decision": "ask"
+   },
+   "rule": "self.hooks"
+  },
+  {
+   "cmd": "echo '{}' > ~/.copilot/settings.json",
+   "expect": {
+    "decision": "ask"
+   },
+   "rule": "self.hooks"
+  },
+  {
+   "cmd": "airbag hooks install --all --command /usr/bin/true",
+   "expect": {
+    "decision": "ask"
+   },
+   "rule": "self.hooks"
+  },
+  {
+   "cmd": "airbag hooks install --all",
+   "expect": {
+    "decision": "allow"
+   }
+  },
+  {
+   "cmd": "airbag hooks uninstall --dry-run",
+   "expect": {
+    "decision": "allow"
+   }
+  },
+  {
+   "cmd": "brew uninstall --cask airbag",
+   "expect": {
+    "decision": "ask"
+   },
+   "rule": "self.airbag"
+  },
+  {
+   "cmd": "brew uninstall --zap a1murt/airbag/airbag",
+   "expect": {
+    "decision": "ask"
+   },
+   "rule": "self.airbag"
+  },
+  {
+   "cmd": "brew upgrade --cask airbag",
+   "expect": {
+    "decision": "allow"
+   }
+  },
+  {
+   "cmd": "sqlite3 ~/Library/Application\\ Support/Airbag/registry.sqlite \"INSERT OR REPLACE INTO settings(key,value) VALUES('protection.pausedUntil','99999999999999')\"",
+   "expect": {
+    "decision": "block"
+   },
+   "rule": "self.airbag"
+  },
+  {
+   "cmd": "sqlite3 \"$HOME/Library/Application Support/Airbag/registry.sqlite\"",
+   "expect": {
+    "decision": "block"
+   },
+   "rule": "self.airbag",
+   "why": "no SQL: reads statements from stdin, which can write"
+  },
+  {
+   "cmd": "sqlite3 ~/Library/Application\\ Support/Airbag/registry.sqlite 'select count(*) from events'",
+   "expect": {
+    "decision": "allow"
+   }
+  },
+  {
    "cmd": "npx prisma migrate reset --force",
    "expect": {
     "decision": "ask"

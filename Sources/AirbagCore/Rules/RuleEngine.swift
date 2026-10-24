@@ -252,7 +252,18 @@ struct Analyzer {
     var hookConfigFiles: Set<String> {
         let h = context.home
         return [h + "/.claude/settings.json", h + "/.claude/settings.local.json", h + "/.codex/hooks.json", h + "/.codex/config.toml",
-                h + "/.cursor/hooks.json", h + "/.gemini/settings.json"]
+                h + "/.cursor/hooks.json", h + "/.gemini/settings.json", h + "/.copilot/settings.json", h + "/.copilot/settings.local.json"]
+    }
+
+    /// A user-level hook configuration file, including any file in Copilot CLI's hook folder.
+    func isHookConfig(_ path: String) -> Bool {
+        hookConfigFiles.contains(path) || (path.hasPrefix(context.home + "/.copilot/hooks/") && path.hasSuffix(".json"))
+    }
+
+    /// A folder that holds hook configuration (`~/.claude`, `~/.copilot/hooks`): deleting or moving it switches Airbag off.
+    func holdsHookConfig(_ path: String) -> Bool {
+        path == context.home + "/.copilot/hooks" || (context.home + "/.copilot/hooks").hasPrefix(path + "/")
+            || hookConfigFiles.contains { $0.hasPrefix(path + "/") }
     }
 
     func classify(_ resolved: Resolved?) -> PathClass {
@@ -425,6 +436,38 @@ struct Analyzer {
         }
     }
 
+    /// mysqladmin's commands (`drop db`, `status`, …): the words after its options, lowercased. Options given as a separate
+    /// word take the next word as their value (`-u root`, `--host db`).
+    static func mysqladminCommands(_ argv: [String]) -> [String] {
+        let valueOpts: Set<String> = ["-u", "-h", "-P", "-S", "-c", "-i", "-w", "-O", "--user", "--host", "--port", "--socket",
+                                      "--count", "--sleep", "--wait", "--defaults-file", "--defaults-extra-file", "--login-path",
+                                      "--character-sets-dir", "--default-character-set", "--protocol", "--plugin-dir", "--ssl-ca",
+                                      "--ssl-cert", "--ssl-key", "--connect-timeout", "--shutdown-timeout"]
+        var out: [String] = []
+        var i = 0
+        while i < argv.count {
+            let a = argv[i]
+            if a == "--" { out += argv[(i + 1)...].map { $0.lowercased() }; break }
+            if a.hasPrefix("-") { i += valueOpts.contains(a) ? 2 : 1; continue }
+            out.append(a.lowercased())
+            i += 1
+        }
+        return out
+    }
+
+    /// `mysqladmin … drop db`: its commands take unique prefixes in any case (`DROP`, `dr`); `create`, `kill` and
+    /// `password` take the next word as their argument, so `create drop` makes a database named "drop".
+    static func mysqladminDrops(_ argv: [String]) -> Bool {
+        let words = mysqladminCommands(argv)
+        var i = 0
+        while i < words.count {
+            let w = words[i]
+            if w.count >= 2 && "drop".hasPrefix(w) { return true }
+            i += ["create", "kill", "password", "old-password"].contains(where: { w.count >= 2 && $0.hasPrefix(w) }) ? 2 : 1
+        }
+        return false
+    }
+
     /// A sed script whose `w`/`W` command or `w` flag writes a file, or whose `e` runs a command. Scripts read from a
     /// file (`-f`) cannot be inspected. Errs towards "writes": a false alarm only costs a snapshot.
     static func sedScriptWrites(_ argv: [String]) -> Bool {
@@ -541,7 +584,7 @@ struct Analyzer {
         // Redirections that write.
         for r in cmd.redirects where Analyzer.opensFileForWriting(r) {
             let truncates = !r.op.contains(">>")
-            if let rp = resolve(r.target), hookConfigFiles.contains(rp.path) {
+            if let rp = resolve(r.target), isHookConfig(rp.path) {
                 add("self.hooks", .ask, .none, "it rewrites an agent's hook configuration, which can switch Airbag's protection off.", r.target.text)
                 mayWrite("\(r.op) \(r.target.text)")
                 continue
@@ -785,6 +828,14 @@ struct Analyzer {
             analyzeInterpreter(name, args, whole: whole, depth: depth)
         case "psql", "mysql", "mariadb", "sqlcmd", "clickhouse-client", "cockroach", "mongosh", "mongo", "redis-cli", "sqlite3", "duckdb", "pgcli", "mycli", "litecli":
             analyzeDatabase(name, args, whole: whole)
+        case "dropdb", "dropuser", "mysqladmin", "mariadb-admin":
+            // PostgreSQL's drop wrappers and `mysqladmin drop`: no SQL text to read, the program name says it all.
+            let help = argv.contains { ["--help", "-?", "--version", "-V"].contains($0) }
+            let drops = name == "dropdb" || name == "dropuser" || Analyzer.mysqladminDrops(argv)
+            if drops && !help {
+                add("db.destructive", .ask, .none, name == "dropuser" ? "it drops a database role, which file snapshots cannot restore."
+                    : "it drops a database, which file snapshots cannot restore.", whole)
+            }
         case "prisma", "drizzle-kit", "supabase", "rails", "rake", "knex", "sequelize", "typeorm", "artisan", "manage.py", "alembic", "dbmate", "goose", "flyway", "liquibase", "atlas":
             analyzeMigrationTool(name, argv, whole: whole)
         case "terraform", "tofu", "pulumi", "cdk", "cdktf", "sst", "serverless", "sls":
@@ -804,14 +855,24 @@ struct Analyzer {
         case "docker", "docker-compose", "podman", "podman-compose", "nerdctl", "colima", "orb", "orbctl": analyzeContainers(name, argv, whole: whole)
         case "curl", "wget", "http", "xh": analyzeDownload(cmdIn: cmd, previousConnector: cmdIn.connector, whole: whole)
         case "airbag":
-            if argv.contains("uninstall") || (argv.first == "hooks" && argv.contains("uninstall")) {
+            let preview = argv.contains { ["--dry-run", "--help", "-h"].contains($0) }
+            if argv.contains("uninstall") && !preview {
                 add("self.airbag", .ask, .none, "it removes Airbag's protection; only the user should do that.", whole)
+            }
+            // Re-pointing the hooks at another program switches Airbag off just as well as removing them.
+            if argv.first == "hooks", argv.contains("install"), !preview,
+               argv.contains(where: { $0 == "--command" || $0.hasPrefix("--command=") || $0 == "--home" || $0.hasPrefix("--home=") }) {
+                add("self.hooks", .ask, .none, "it points the agents' hooks at another program, which can switch Airbag's protection off.", whole)
             }
             if argv.first == "allow" {
                 add("self.allow", .block, .none, "only the user can approve a command Airbag stopped (menu bar → Guard → Allow once); an agent approving its own command makes the question meaningless.", whole)
             }
         case "brew":
             if !["list", "info", "search", "--version", "config", "doctor", "outdated", "deps", "leaves"].contains(argv.first ?? "") { mayWrite() }
+            // The cask's uninstall step removes every agent's hooks (and --zap trashes the snapshots).
+            if ["uninstall", "remove", "rm"].contains(argv.first ?? ""), argv.contains(where: { $0 == "airbag" || $0.hasSuffix("/airbag") }) {
+                add("self.airbag", .ask, .none, "it uninstalls Airbag, which removes its protection; only the user should do that.", whole)
+            }
         default:
             break
         }
@@ -821,9 +882,12 @@ struct Analyzer {
 
     mutating func classifyDeletion(_ targets: [ShellWord], recursive: Bool, verb: String, whole: String) {
         for t in targets {
-            if let r = resolve(t), hookConfigFiles.contains(r.path) {
+            if let r = resolve(t), isHookConfig(r.path) {
                 add("self.hooks", .ask, .none, "it removes an agent's hook configuration, which switches Airbag's protection off.", t.text)
                 continue
+            }
+            if let r = resolve(t), holdsHookConfig(r.path) {
+                add("self.hooks", .ask, .none, "it removes a folder with an agent's hook configuration, which switches Airbag's protection off.", t.text)
             }
             let cls = classify(resolve(t))
             switch cls {
@@ -1010,9 +1074,12 @@ struct Analyzer {
         if dest.text == "/dev/null" { classifyDeletion(sources, recursive: true, verb: "delete", whole: whole); return }
         defer { destinationCheck("mv", sources, dest, truncates: false, intoDirectory: target != nil, whole: whole) }
         for s in sources {
-            if let r = resolve(s), hookConfigFiles.contains(r.path) {
+            if let r = resolve(s), isHookConfig(r.path) {
                 add("self.hooks", .ask, .none, "it moves an agent's hook configuration away, which switches Airbag's protection off.", s.text)
                 continue
+            }
+            if let r = resolve(s), holdsHookConfig(r.path) {
+                add("self.hooks", .ask, .none, "it moves a folder with an agent's hook configuration away, which switches Airbag's protection off.", s.text)
             }
             switch classify(resolve(s)) {
             case .catastrophic(let p): add("fs.mv.catastrophic", .block, .none, "it would move \(describe(p)) away, breaking the system or your files.", s.text)
@@ -1139,7 +1206,7 @@ struct Analyzer {
     /// A command writes to `target` (sed -i, tee, cp/mv destination, perl -pi).
     mutating func writeCheck(_ target: ShellWord, truncates: Bool, whole: String) {
         let resolved = resolve(target)
-        if let r = resolved, hookConfigFiles.contains(r.path) {
+        if let r = resolved, isHookConfig(r.path) {
             add("self.hooks", .ask, .none, "it edits an agent's hook configuration, which can switch Airbag's protection off.", target.text)
             return
         }
@@ -1157,7 +1224,7 @@ struct Analyzer {
 
     mutating func analyzeTruncateTargets(_ targets: [ShellWord], whole: String) {
         for t in targets {
-            if let r = resolve(t), hookConfigFiles.contains(r.path) {
+            if let r = resolve(t), isHookConfig(r.path) {
                 add("self.hooks", .ask, .none, "it empties an agent's hook configuration, which switches Airbag's protection off.", t.text)
                 continue
             }
@@ -1394,6 +1461,17 @@ struct Analyzer {
 
     mutating func analyzeDatabase(_ name: String, _ args: [ShellWord], whole: String) {
         let text = args.map(\.text).joined(separator: " ").uppercased()
+        // SQL written into Airbag's own database (pausing it, rewriting the log) is the same as editing its files. A
+        // client opened without SQL reads from stdin, which can write too.
+        if ["sqlite3", "duckdb", "litecli"].contains(name), let i = args.firstIndex(where: { !$0.text.hasPrefix("-") }),
+           case .airbag = classify(resolve(args[i])) {
+            let sql = args[(i + 1)...].map(\.text).joined(separator: " ").uppercased()
+            let writes = ["INSERT", "UPDATE", "DELETE", "REPLACE", "DROP", "CREATE", "ALTER", "ATTACH", "VACUUM", "PRAGMA", ".RESTORE", ".IMPORT"]
+            if sql.isEmpty || writes.contains(where: { sql.contains($0) }) {
+                add("self.airbag", .block, .none, "it changes Airbag's own data, which protects this project.", whole)
+                return
+            }
+        }
         let destructive = ["DROP DATABASE", "DROP SCHEMA", "DROP TABLE", "TRUNCATE", "DROPDATABASE", "FLUSHALL", "FLUSHDB", "DELETE FROM", "DROP INDEX", "DROP COLLECTION", ".DROP(", "DROPTABLE"]
         guard destructive.contains(where: { text.contains($0) }) else { return }
         if name == "sqlite3" || name == "duckdb" || name == "litecli" {
@@ -1553,8 +1631,11 @@ struct Analyzer {
         let remote = args[(i + 1)...].map(\.text).joined(separator: " ")
         let lowered = remote.lowercased()
         let patterns = ["rm -rf", "rm -fr", "rm -r ", "mkfs", "dd if=", "drop database", "drop table", "truncate ", "shutdown", "reboot",
-                        "git push --force", "git reset --hard", "flushall", "docker system prune", "db:drop", "migrate reset", "> /dev/sd"]
-        if patterns.contains(where: { lowered.contains($0) }) {
+                        "git push --force", "git reset --hard", "flushall", "docker system prune", "db:drop", "migrate reset", "> /dev/sd",
+                        "dropdb ", "dropuser "]
+        let remoteWords = lowered.split(separator: " ").map(String.init)
+        let mysqladminDrop = remoteWords.firstIndex(of: "mysqladmin").map { Analyzer.mysqladminDrops(Array(remoteWords[($0 + 1)...])) } ?? false
+        if patterns.contains(where: { lowered.contains($0) }) || mysqladminDrop {
             add("remote.destructive", .ask, .none, "it runs a destructive command on a remote machine, outside anything Airbag can snapshot.", whole)
         }
     }
