@@ -86,6 +86,17 @@ public final class SnapshotStore {
         paths.stores.appendingPathComponent(rootID(for: root)).path
     }
 
+    /// Deletes a project's store (all its snapshots). Waits for a running snapshot or restore of that root.
+    public static func removeStore(root: String, paths: AirbagPaths = .resolve()) throws {
+        let canonical = FileSystem.canonicalPath(root) ?? root
+        let dir = storeDirectory(forCanonicalRoot: canonical, paths: paths)
+        guard FileManager.default.fileExists(atPath: dir) else { return }
+        let lock = StoreLock(path: dir + "/lock")
+        guard lock.acquire(waitMs: 5000) else { throw SnapshotError.busy }
+        defer { lock.release() }
+        try FileManager.default.removeItem(atPath: dir)
+    }
+
     public static func storeExists(root: String, paths: AirbagPaths = .resolve()) -> Bool {
         guard let canonical = FileSystem.canonicalPath(root) else { return false }
         return FileManager.default.fileExists(atPath: storeDirectory(forCanonicalRoot: canonical, paths: paths) + "/manifest.sqlite")
@@ -209,6 +220,11 @@ public final class SnapshotStore {
 
     public func info(_ id: String) throws -> SnapshotInfo? {
         try db.first("SELECT \(Self.infoColumns) FROM snapshots WHERE id = ?", [id], Self.info)
+    }
+
+    /// Snapshots kept forever (exempt from cleanup).
+    public func pinnedCount() throws -> Int {
+        Int(try db.scalarInt("SELECT count(*) FROM snapshots WHERE pinned = 1") ?? 0)
     }
 
     public func latest() throws -> SnapshotInfo? {

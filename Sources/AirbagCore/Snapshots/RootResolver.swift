@@ -24,3 +24,25 @@ public enum RootResolver {
         return start
     }
 }
+
+/// Folders the user stopped protecting ("Stop Protecting…"). Hooks take no snapshots there; the folder still counts as
+/// a project for Guard rules, so commands in it are judged the same way. Adding the folder again removes it from the list.
+public enum IgnoredRoots {
+    public static func load(paths: AirbagPaths) -> Set<String> {
+        guard let data = try? Data(contentsOf: paths.ignoredRoots), let list = try? JSONDecoder().decode([String].self, from: data) else { return [] }
+        return Set(list)
+    }
+
+    public static func contains(_ root: String, paths: AirbagPaths) -> Bool {
+        FileManager.default.fileExists(atPath: paths.ignoredRoots.path) && load(paths: paths).contains(FileSystem.canonicalPath(root) ?? root)
+    }
+
+    public static func set(_ root: String, ignored: Bool, paths: AirbagPaths) throws {
+        var list = load(paths: paths)
+        let canonical = FileSystem.canonicalPath(root) ?? root
+        if ignored { list.insert(canonical) } else { list.remove(canonical) }
+        let data = try JSONEncoder().encode(list.sorted())
+        try FileSystem.ensureDirectory(paths.home.path, mode: 0o700)
+        try data.write(to: paths.ignoredRoots, options: .atomic)
+    }
+}

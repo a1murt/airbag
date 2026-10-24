@@ -184,6 +184,7 @@ public struct HookBridge {
             // The event links to the session's own snapshot; a visited project's snapshot only when there is none.
             let links = root == nil || record.snapshot == nil
             if duplicate { return (nil, "duplicate_route") }
+            if IgnoredRoots.contains(r, paths: config.paths) { return (nil, "not_protected") }
             let exists = SnapshotStore.storeExists(root: r, paths: config.paths)
             let cap = limits(for: r)
             let deadline = Clock.monotonicNs() + UInt64(config.snapshotDeadlineMs) * 1_000_000

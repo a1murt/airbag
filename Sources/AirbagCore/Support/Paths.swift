@@ -29,6 +29,8 @@ public struct AirbagPaths: Sendable, Equatable {
     public var logs: URL { home.appendingPathComponent("logs", isDirectory: true) }
     public var backups: URL { home.appendingPathComponent("backups", isDirectory: true) }
     public var stores: URL { home.appendingPathComponent("stores.noindex", isDirectory: true) }
+    /// Folders the user stopped protecting: hooks take no snapshots there (Guard rules still apply).
+    public var ignoredRoots: URL { home.appendingPathComponent("ignored-roots.json") }
 
     /// Creates the directory tree with owner-only permissions and re-applies 0700 to existing directories.
     public func prepare() throws {

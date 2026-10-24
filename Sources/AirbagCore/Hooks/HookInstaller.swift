@@ -288,6 +288,11 @@ public struct HookInstaller {
 
     /// The file content after installing (or removing, with `install: false`) Airbag's hooks.
     public func plan(_ agent: AgentKind, install: Bool, strict: Bool = false) throws -> Change {
+        try plan(agent, install: install, strict: strict, allowComments: false)
+    }
+
+    /// `allowComments` reads a commented file without refusing (for status only; such a file is never rewritten).
+    func plan(_ agent: AgentKind, install: Bool, strict: Bool, allowComments: Bool) throws -> Change {
         let path = configPath(agent)
         if agent == .copilot {
             let before = FileManager.default.contents(atPath: path).map { String(decoding: $0, as: UTF8.self) }
@@ -300,7 +305,7 @@ public struct HookInstaller {
             let after = OrderedJSON.object([("version", .number("1")), ("hooks", .object(hooks))]).serialized()
             return Change(agent: agent, path: path, before: before, after: after, backup: nil)
         }
-        let loaded = try load(path, forWriting: true)
+        let loaded = try load(path, forWriting: !allowComments)
         let before = loaded.text
         var json = loaded.json
         let merged = merge(json["hooks"] ?? .object([]), desired: install ? desired(agent, strict: strict) : [], nestedGroups: usesNestedGroups(agent))
@@ -311,6 +316,13 @@ public struct HookInstaller {
         if before == nil && !install { return Change(agent: agent, path: path, before: nil, after: nil, backup: nil) }
         if let b = before, (try? OrderedJSON.parse(b)) == json { return Change(agent: agent, path: path, before: b, after: b, backup: nil) }
         return Change(agent: agent, path: path, before: before, after: json.serialized(), backup: nil)
+    }
+
+    /// Airbag's entries on their own, for a file Airbag will not rewrite (it has comments): what to paste in by hand.
+    public func snippet(_ agent: AgentKind, strict: Bool = false) -> String {
+        if agent == .copilot, let after = try? plan(agent, install: true, strict: strict).after { return after }
+        let hooks = merge(.object([]), desired: desired(agent, strict: strict), nestedGroups: usesNestedGroups(agent))
+        return OrderedJSON.object([("hooks", hooks)]).serialized()
     }
 
     @discardableResult
@@ -374,8 +386,9 @@ public struct HookInstaller {
             let (_, json) = try load(path)
             let commands = strip(json["hooks"] ?? .object([]), nestedGroups: usesNestedGroups(agent)).1
             let installed = !commands.isEmpty
-            let plannedStrict = try plan(agent, install: true, strict: true)
-            let plannedNormal = try plan(agent, install: true, strict: false)
+            // A commented file is read for its state; Airbag never rewrites it (Connect says to add the entries by hand).
+            let plannedStrict = try plan(agent, install: true, strict: true, allowComments: true)
+            let plannedNormal = try plan(agent, install: true, strict: false, allowComments: true)
             let current = installed && (!plannedNormal.changed || !plannedStrict.changed)
             var note: String?
             if agent == .codex && installed { note = "Codex runs new hooks only after you trust them: open Codex, type /hooks and press t." }

@@ -95,6 +95,23 @@ final class Box<T>: @unchecked Sendable {
         #expect(try store.snapshotIDs(touchingPathContaining: "%").isEmpty) // LIKE wildcards are literal
     }
 
+    @Test func stopProtectingSkipsSnapshotsButKeepsRules() throws {
+        let h = HookSandbox(); defer { h.cleanup() }
+        _ = h.run(.claudeCode, h.claudePre("touch a", id: "i-1"))
+        #expect(SnapshotStore.storeExists(root: h.root, paths: h.paths))
+        try IgnoredRoots.set(h.root, ignored: true, paths: h.paths)
+        try SnapshotStore.removeStore(root: h.root, paths: h.paths)
+        #expect(!SnapshotStore.storeExists(root: h.root, paths: h.paths))
+        let after = h.run(.claudeCode, h.claudePre("rm -rf src", id: "i-2"))
+        #expect(after.snapshot == nil && after.record?.snapshotSkipped == "not_protected")
+        #expect(!SnapshotStore.storeExists(root: h.root, paths: h.paths))
+        // Guard rules still treat the folder as the project.
+        #expect(h.run(.claudeCode, h.claudePre("rm -rf ~", id: "i-3")).finalDecision == "deny")
+        try IgnoredRoots.set(h.root, ignored: false, paths: h.paths)
+        _ = h.run(.claudeCode, h.claudePre("touch b", id: "i-4"))
+        #expect(SnapshotStore.storeExists(root: h.root, paths: h.paths))
+    }
+
     @Test func globalRetentionHonoursBudget() throws {
         let sb = Sandbox("ret"); defer { sb.cleanup() }
         let store = try sb.store()

@@ -450,7 +450,7 @@ struct RestoreWindow: View {
         undoError = nil
         withAnimation(.snappy) { phase = .undoing(rep) }
         Task {
-            if await model.revertRestore(root: r.root, to: undo, scope: r.scope) {
+            if await model.revertRestore(root: r.root, to: undo, scope: r.scope) != nil {
                 withAnimation(.snappy) { phase = .undone }
                 AccessibilityNotification.Announcement(String(localized: "Restore undone")).post()
             } else {

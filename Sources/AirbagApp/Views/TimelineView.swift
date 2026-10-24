@@ -437,7 +437,7 @@ struct TimelineScreen: View {
 
     func load() async {
         guard let root = model.selectedRoot else { return }
-        let new = await model.timeline(root: root)
+        let new = await model.timeline(root: root).entries
         // A newer load is on its way (another command ran meanwhile): only the latest result is shown.
         guard !Task.isCancelled, root == model.selectedRoot else { return }
         let newRows = TimelineRow.build(new)

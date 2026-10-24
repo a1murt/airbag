@@ -363,18 +363,6 @@ private struct AgentRow: View {
 }
 
 /// An agent's name with its symbol in a fixed-width column, so the names of all rows line up.
-private struct AgentName: View {
-    static let iconWidth: CGFloat = 20
-    let agent: AgentKind
-    var body: some View {
-        HStack(spacing: 6) {
-            Image(systemName: AgentBadge.symbol(agent)).frame(width: Self.iconWidth).foregroundStyle(.secondary).accessibilityHidden(true)
-            Text(verbatim: agent.displayName).lineLimit(1)
-        }
-        .font(.body)
-    }
-}
-
 /// "Show Changes…": what Connect or Repair would write into the agent's settings file, as a diff.
 struct AgentChangesView: View {
     @EnvironmentObject var model: AppModel

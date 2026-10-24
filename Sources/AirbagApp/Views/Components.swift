@@ -194,6 +194,18 @@ struct AgentBadge: View {
     }
 }
 
+/// An agent's name with its symbol in a fixed-width column, so names line up in lists (Settings, onboarding).
+struct AgentName: View {
+    static let iconWidth: CGFloat = 20
+    let agent: AgentKind
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: AgentBadge.symbol(agent)).frame(width: Self.iconWidth).foregroundStyle(.secondary).accessibilityHidden(true)
+            Text(verbatim: agent.displayName).lineLimit(1)
+        }
+    }
+}
+
 /// One vocabulary for Guard decisions everywhere (popover, Guard, Timeline, notifications).
 struct GuardStyle {
     let title: LocalizedStringKey
@@ -392,8 +404,10 @@ struct DiffView: View {
 }
 
 extension RadarProcess {
+    /// The ports it listens on, each once (a server bound to 127.0.0.1 and ::1 has two listeners on one port).
+    var portSet: Set<Int> { Set(listeners.map(\.port)) }
     var portsText: String {
-        listeners.map { ":\($0.port)" }.joined(separator: " ")
+        portSet.sorted().map { ":\($0)" }.joined(separator: " ")
     }
     var uptimeText: String {
         let secs = max(0, Int(Date().timeIntervalSince1970) - Int(startedAtMs / 1000))
@@ -404,4 +418,11 @@ extension RadarProcess {
         return f.string(from: TimeInterval(secs)) ?? ""
     }
     var memoryText: String { footprintBytes.map { ByteCountFormatter.string(fromByteCount: $0, countStyle: .memory) } ?? "—" }
+}
+
+extension Array where Element == RadarProcess {
+    /// One per server: forked workers that share the inherited listening socket count once.
+    var distinctServers: [RadarProcess] {
+        reduce(into: []) { acc, p in if !acc.contains(where: { $0.portSet == p.portSet }) { acc.append(p) } }
+    }
 }

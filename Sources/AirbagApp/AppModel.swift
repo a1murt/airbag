@@ -2,6 +2,7 @@
 import AppKit
 import Combine
 import Foundation
+import os
 import ServiceManagement
 import UserNotifications
 
@@ -193,10 +194,12 @@ final class AppModel: ObservableObject {
     /// Guard entries already known (only newer ones are notified; nil until the first load).
     private var knownGuardIDs: Set<String>?
 
-    @Published var selectedTab: MainTab = .timeline
+    @Published var selectedTab: MainTab = .timeline { didSet { if selectedTab != oldValue { scheduleRadar() } } }
     @Published var selectedRoot: String?
-    @Published var projects: [ProjectRow] = []
-    @Published var servers: [RadarProcess] = []
+    @Published var projects: [ProjectRow] = [] {
+        didSet { if oldValue.contains(where: { $0.liveSessions > 0 }) != projects.contains(where: { $0.liveSessions > 0 }) { scheduleRadar() } }
+    }
+    @Published var servers: [RadarProcess] = [] { didSet { if oldValue.isEmpty != servers.isEmpty { scheduleRadar() } } }
     @Published var allListening: [RadarProcess] = []
     @Published var guardEntries: [GuardEntry] = []
     @Published var hookStatuses: [HookInstaller.AgentStatus] = []
@@ -236,8 +239,20 @@ final class AppModel: ObservableObject {
     /// Servers the user chose to keep running (stored in the registry, so they stay quiet after a relaunch).
     @Published private(set) var keptProcesses = Set<ProcessIdentity>()
     @Published var restoreRequest: RestoreRequest?
-    /// The last restore, for "Undo Restore" (⇧⌘Z) after its message is gone.
-    @Published private(set) var lastRestore: (root: String, undoSnapshot: String, scope: RestoreScope)?
+    /// The last restore, for "Undo Restore" (⌥⇧⌘Z) after its message is gone. It expires once newer work lands in that
+    /// project (a newer snapshot than the one the restore left) or after 10 minutes, so it never silently discards
+    /// later work.
+    @Published private(set) var lastRestore: (root: String, undoSnapshot: String, scope: RestoreScope, latestAfter: String?, at: Date)?
+    /// Moments undone this session (their snapshot id → the snapshot the undo took first), so the popover keeps their
+    /// check and ⌥⌘Z moves on to the next one instead of undoing the same moment twice.
+    @Published private(set) var undoneMoments: [String: (root: String, at: Int64, undoSnapshot: String)] = [:]
+    /// The outcome of the first snapshot of a folder added in this session (onboarding and Add Project show it).
+    @Published private(set) var firstSnapshotResults: [String: ManualSnapshotResult] = [:]
+    private var radarInterval: TimeInterval = 0
+    private var radarWasWatched = false
+    private var radarPokes: [DispatchWorkItem] = []
+    private var projectsRefreshRunning = false
+    private var projectsRefreshAgain = false
     private var pauseTimer: Timer?
     @Published var retentionDays: Int = 7
     @Published var budgetGB: Int = 5
@@ -361,6 +376,7 @@ final class AppModel: ObservableObject {
         watcher?.stop()
         wakeServer?.stop()
         radarTimer?.invalidate()
+        radarInterval = 0
     }
 
     private func hookEvent(_ msg: [String: Any]) {
@@ -369,8 +385,13 @@ final class AppModel: ObservableObject {
         if (msg["skipped"] as? String) == "low_disk", lowDiskFree == nil { lowDiskFree = FileSystem.availableBytes(at: paths.home.path) ?? 0 }
         refreshGuard()
         refreshProjects()
-        // Servers bind a moment after the command that starts them.
-        for delay in [0.3, 2.0, 10.0] { DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in self?.scanRadar() } }
+        // Servers bind a moment after the command that starts them; a burst of commands gives one series of scans.
+        radarPokes.forEach { $0.cancel() }
+        radarPokes = [0.3, 2.0, 10.0].map { delay in
+            let item = DispatchWorkItem { [weak self] in self?.scanRadar() }
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: item)
+            return item
+        }
         // Blocked, waiting for approval, or run without asking: the user should look (the popover lists all three).
         if let d = msg["decision"] as? String, ["deny", "deny_fallback", "allow_fallback"].contains(d), !popoverVisible { badge = true }
     }
@@ -390,8 +411,11 @@ final class AppModel: ObservableObject {
 
     // MARK: projects and stores
 
+    /// At most one refresh runs, and at most one more follows (agents in auto mode send a hook call per command).
     func refreshProjects() {
         guard !demo else { return }
+        if projectsRefreshRunning { projectsRefreshAgain = true; return }
+        projectsRefreshRunning = true
         let paths = self.paths
         let reg = registry
         let workReg = workRegistry
@@ -399,11 +423,13 @@ final class AppModel: ObservableObject {
         work.async {
             var rows: [ProjectRow] = []
             var recent: [RecentChange] = []
+            var latestIDs: [String: String] = [:]
             for loc in SnapshotStore.allStores(paths: paths) {
                 guard let store = try? SnapshotStore.openLocation(loc, paths: paths) else { continue }
                 let latest = try? store.latest()
+                latestIDs[loc.root] = latest?.id
                 let usage = try? store.usage()
-                let pinned = (try? store.list(limit: 1000).filter(\.pinned).count) ?? 0
+                let pinned = (try? store.pinnedCount()) ?? 0
                 let layout = GitLayout.inspect(root: loc.root)
                 rows.append(ProjectRow(root: loc.root, name: (loc.root as NSString).lastPathComponent, isWorktree: layout.isWorktree,
                                        rootExists: loc.rootExists, snapshotCount: usage?.snapshots ?? 0, lastSnapshotAt: latest?.createdAt,
@@ -426,16 +452,36 @@ final class AppModel: ObservableObject {
                 if top != self.recentChanges { self.recentChanges = top }
                 let live = reg?.liveSessionCounts() ?? [:]
                 var withLive = rows.map { r -> ProjectRow in var r = r; r.liveSessions = live[r.root] ?? 0; return r }
-                for (i, r) in withLive.enumerated() {
-                    withLive[i].ports = self.servers.filter { s in (s.attribution?.projectRoot ?? s.cwd).map { $0 == r.root || $0.hasPrefix(r.root + "/") } ?? false }
-                        .flatMap { $0.listeners.map(\.port) }.sorted()
-                }
+                for (i, r) in withLive.enumerated() { withLive[i].ports = self.ports(for: r.root) }
                 let sorted = withLive.sorted { ($0.lastSnapshotAt ?? 0) > ($1.lastSnapshotAt ?? 0) }
                 if sorted != self.projects { self.projects = sorted }
-                if self.selectedRoot == nil || !self.projects.contains(where: { $0.root == self.selectedRoot }) { self.selectedRoot = self.projects.first?.root }
+                // Keep a selection that is still being added (its store appears after the first snapshot).
+                if let sel = self.selectedRoot {
+                    let known = self.projects.contains { $0.root == sel } || self.snapshottingRoots.contains(sel)
+                        || SnapshotStore.storeExists(root: sel, paths: self.paths)
+                    if !known { self.selectedRoot = self.projects.first?.root }
+                } else {
+                    self.selectedRoot = self.projects.first?.root
+                }
+                // Undo Restore expires once newer work landed in that project.
+                if let r = self.lastRestore, latestIDs[r.root] != r.latestAfter || Date().timeIntervalSince(r.at) > 600 { self.lastRestore = nil }
                 self.restartWatcherIfNeeded()
+                self.projectsRefreshRunning = false
+                if self.projectsRefreshAgain { self.projectsRefreshAgain = false; self.refreshProjects() }
             }
         }
+    }
+
+    /// Ports of the servers inside a project, each once (forked workers and dual-stack sockets share a port).
+    private func ports(for root: String) -> [Int] {
+        Array(Set(servers.filter { s in (s.attribution?.projectRoot ?? s.cwd).map { $0 == root || $0.hasPrefix(root + "/") } ?? false }
+            .flatMap { $0.listeners.map(\.port) })).sorted()
+    }
+
+    /// The project rows' ports follow the radar (a stopped server's link goes away with the next scan).
+    private func refreshProjectPorts() {
+        let updated = projects.map { p -> ProjectRow in var p = p; p.ports = ports(for: p.root); return p }
+        if updated != projects { projects = updated }
     }
 
     private var watchedRoots: [String] = []
@@ -500,6 +546,11 @@ final class AppModel: ObservableObject {
                 cont.resume(returning: self?.snapshotSync(root: root, trigger: .manual, label: String(localized: "Manual snapshot")))
             }
         }
+        return Self.manualResult(outcome)
+    }
+
+    /// What a snapshot outcome means for the person who asked for it.
+    static func manualResult(_ outcome: SnapshotOutcome?) -> ManualSnapshotResult {
         switch outcome {
         case .created(let info, _): return .created(changed: info.changedCount)
         case .unchanged: return .unchanged
@@ -513,15 +564,31 @@ final class AppModel: ObservableObject {
         }
     }
 
-    /// Fire-and-forget variant for menus.
-    func snapshotNow(_ root: String) { Task { await snapshotNow(root) } }
+    /// Menu variant (⌘S, context menus): the result comes back as a message, since no button shows it.
+    func snapshotNow(_ root: String) {
+        Task {
+            switch await snapshotNow(root) {
+            case .created: show(String(localized: "Snapshot taken"), style: .success)
+            case .unchanged: show(String(localized: "No changes since the last snapshot"))
+            case .failed(let why): show(why, style: .failure)
+            }
+        }
+    }
 
     func snapshotAll() {
         Task {
             var createdCount = 0
-            for p in projects where p.rootExists { if case .created = await snapshotNow(p.root) { createdCount += 1 } }
-            show(createdCount > 0 ? String(localized: "Snapshot taken of \(createdCount) projects") : String(localized: "No changes since the last snapshot"),
-                 style: .success)
+            var failure: String?
+            for p in projects where p.rootExists {
+                switch await snapshotNow(p.root) {
+                case .created: createdCount += 1
+                case .unchanged: break
+                case .failed(let why): failure = failure ?? why
+                }
+            }
+            if let failure { show(failure, style: .failure) }
+            else if createdCount > 0 { show(String(localized: "Snapshot taken of \(createdCount) projects"), style: .success) }
+            else { show(String(localized: "No changes since the last snapshot")) }
         }
     }
 
@@ -531,17 +598,53 @@ final class AppModel: ObservableObject {
         let path = FileSystem.canonicalPath(url.path) ?? url.path
         do {
             _ = try SnapshotStore.validateRoot(path, paths: paths)
+            try? IgnoredRoots.set(path, ignored: false, paths: paths)
+            // Adding a folder that is already protected takes an ordinary snapshot (edits since the last one stay undoable).
+            let existing = SnapshotStore.storeExists(root: path, paths: paths)
             snapshottingRoots.insert(path)
+            firstSnapshotResults[path] = nil
             snapshotQueue.async { [weak self] in
-                _ = self?.snapshotSync(root: path, trigger: .initial, label: String(localized: "Project added"))
-                Task { @MainActor in self?.snapshottingRoots.remove(path); self?.refreshProjects() }
+                let outcome = self?.snapshotSync(root: path, trigger: existing ? .manual : .initial,
+                                                 label: existing ? String(localized: "Manual snapshot") : String(localized: "Project added"))
+                Task { @MainActor in
+                    if !existing { self?.firstSnapshotResults[path] = Self.manualResult(outcome) }
+                    self?.snapshottingRoots.remove(path)
+                    self?.refreshProjects()
+                }
             }
-            if announce { show(String(localized: "Protecting \(url.lastPathComponent)…"), style: .success) }
+            if announce {
+                show(existing ? String(localized: "\(url.lastPathComponent) is already protected") : String(localized: "Protecting \(url.lastPathComponent)…"),
+                     style: .success)
+            }
             return nil
         } catch {
             let message = describe(error)
             if announce { show(message, style: .failure) }
             return message
+        }
+    }
+
+    /// "Stop Protecting…": deletes the project's snapshots and stops taking new ones there (Guard rules still apply).
+    /// Adding the folder again protects it again.
+    func removeProject(root: String) {
+        guard !snapshottingRoots.contains(root) else {
+            show(String(localized: "Another snapshot or restore is running; try again in a moment."), style: .failure); return
+        }
+        let paths = self.paths
+        let name = (root as NSString).lastPathComponent
+        snapshotQueue.async { [weak self] in
+            let result: String? = {
+                do { try IgnoredRoots.set(root, ignored: true, paths: paths); try SnapshotStore.removeStore(root: root, paths: paths); return nil }
+                catch { return String(describing: error) }
+            }()
+            Task { @MainActor in
+                guard let self else { return }
+                if let result { self.show(result, style: .failure) } else { self.show(String(localized: "Stopped protecting \(name)")) }
+                self.undoneMoments = self.undoneMoments.filter { $0.value.root != root }
+                if self.lastRestore?.root == root { self.lastRestore = nil }
+                if self.selectedRoot == root { self.selectedRoot = nil }
+                self.refreshProjects()
+            }
         }
     }
 
@@ -560,28 +663,52 @@ final class AppModel: ObservableObject {
         return try? SnapshotStore.openLocation(loc, paths: paths)
     }
 
-    func timeline(root: String) async -> [TimelineEntry] {
+    /// The newest 200 moments of a project, and whether the store holds older ones (the oldest listed moment has no
+    /// "before" when it is the first snapshot left after cleanup, so it cannot be undone).
+    func timeline(root: String) async -> (entries: [TimelineEntry], hasOlder: Bool) {
         let reg = workRegistry
         let paths = self.paths
         return await withCheckedContinuation { cont in
             work.async {
                 guard let loc = SnapshotStore.allStores(paths: paths).first(where: { $0.root == root }),
-                      let store = try? SnapshotStore.openLocation(loc, paths: paths) else { cont.resume(returning: []); return }
-                if let reg { cont.resume(returning: reg.timeline(store: store)) } else {
-                    cont.resume(returning: ((try? store.list(limit: 200)) ?? []).map { TimelineEntry(snapshot: $0, commands: []) })
-                }
+                      let store = try? SnapshotStore.openLocation(loc, paths: paths) else { cont.resume(returning: ([], false)); return }
+                let entries = reg.map { $0.timeline(store: store) }
+                    ?? ((try? store.list(limit: 200)) ?? []).map { TimelineEntry(snapshot: $0, commands: []) }
+                let hasOlder = entries.last.map { (try? store.list(limit: 1, beforeSeq: $0.snapshot.seq))?.first != nil } ?? false
+                cont.resume(returning: (entries, hasOlder))
             }
         }
     }
 
-    func changes(root: String, snapshot: String) async -> [FileChange] {
+    /// Files a snapshot recorded as changed. Nil when the caller was cancelled before its turn on the queue (a row that
+    /// scrolled away), so a long scroll does not queue work for every row.
+    func changes(root: String, snapshot: String) async -> [FileChange]? {
         let paths = self.paths
-        return await withCheckedContinuation { cont in
-            work.async {
-                let s = SnapshotStore.allStores(paths: paths).first(where: { $0.root == root }).flatMap { try? SnapshotStore.openLocation($0, paths: paths) }
-                cont.resume(returning: (try? s?.changes(in: snapshot)) ?? [])
+        let cancelled = OSAllocatedUnfairLock(initialState: false)
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { cont in
+                work.async {
+                    if cancelled.withLock({ $0 }) { cont.resume(returning: nil); return }
+                    let s = SnapshotStore.allStores(paths: paths).first(where: { $0.root == root }).flatMap { try? SnapshotStore.openLocation($0, paths: paths) }
+                    cont.resume(returning: (try? s?.changes(in: snapshot)) ?? [])
+                }
             }
-        }
+        } onCancel: { cancelled.withLock { $0 = true } }
+    }
+
+    /// Files that differ between two snapshots (what a command changed when its effect spans several snapshots).
+    func changes(root: String, from base: String, to effect: String) async -> [FileChange]? {
+        let paths = self.paths
+        let cancelled = OSAllocatedUnfairLock(initialState: false)
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { cont in
+                work.async {
+                    if cancelled.withLock({ $0 }) { cont.resume(returning: nil); return }
+                    let s = SnapshotStore.allStores(paths: paths).first(where: { $0.root == root }).flatMap { try? SnapshotStore.openLocation($0, paths: paths) }
+                    cont.resume(returning: (try? s?.diff(from: base, to: effect)) ?? [])
+                }
+            }
+        } onCancel: { cancelled.withLock { $0 = true } }
     }
 
     /// Snapshots of a project whose changes touch a path containing `text` (Timeline search by file name).
@@ -595,12 +722,14 @@ final class AppModel: ObservableObject {
         }
     }
 
-    func fileDiff(root: String, snapshot: String, path: String) async -> TextDiff? {
+    /// A file as it changed in a snapshot (against the snapshot before it), or between two snapshots.
+    func fileDiff(root: String, snapshot: String, path: String, from base: String? = nil) async -> TextDiff? {
         let paths = self.paths
         return await withCheckedContinuation { cont in
             work.async {
                 guard let s = SnapshotStore.allStores(paths: paths).first(where: { $0.root == root }).flatMap({ try? SnapshotStore.openLocation($0, paths: paths) }),
                       let info = try? s.info(snapshot) else { cont.resume(returning: nil); return }
+                if let base { cont.resume(returning: try? s.fileDiff(path: path, from: base, to: snapshot)); return }
                 // Diff against the previous snapshot: what this snapshot recorded as changed.
                 let prev = (try? s.list(limit: 1, beforeSeq: info.seq))?.first
                 if let prev { cont.resume(returning: try? s.fileDiff(path: path, from: prev.id, to: snapshot)) }
@@ -639,62 +768,95 @@ final class AppModel: ObservableObject {
         windowRequest = .restore
     }
 
-    /// Restores and reports the result as a message with Undo; the Restore window shows its own success state too.
-    func restore(root: String, snapshot: String, scope: RestoreScope, announce: Bool = true) async -> Result<RestoreReport, Error> {
+    /// Restores on the snapshot queue. `paths` resolves the scope once the store is open (an undo's changed files).
+    private func performRestore(root: String, scope resolve: @escaping @Sendable (SnapshotStore) throws -> (target: String, scope: RestoreScope))
+        async -> Result<(report: RestoreReport, scope: RestoreScope, latestAfter: String?), Error> {
         let paths = self.paths
-        let result: Result<RestoreReport, Error> = await withCheckedContinuation { cont in
+        return await withCheckedContinuation { cont in
             snapshotQueue.async {
-                guard let loc = SnapshotStore.allStores(paths: paths).first(where: { $0.root == root }) else {
-                    cont.resume(returning: .failure(SnapshotError.notFound(root))); return
-                }
                 do {
+                    guard let loc = SnapshotStore.allStores(paths: paths).first(where: { $0.root == root }) else { throw SnapshotError.notFound(root) }
                     let s = try SnapshotStore.openLocation(loc, paths: paths)
-                    cont.resume(returning: .success(try s.restore(to: snapshot, scope: scope)))
+                    let (target, scope) = try resolve(s)
+                    let report = try s.restore(to: target, scope: scope)
+                    cont.resume(returning: .success((report, scope, try? s.latest()?.id)))
                 } catch { cont.resume(returning: .failure(error)) }
             }
         }
-        if case .success(let r) = result {
-            if let undo = r.undoSnapshotId { lastRestore = (root, undo, scope) }
-            if announce { announceRestore(r, root: root, scope: scope) }
-        }
+    }
+
+    private func remember(_ report: RestoreReport, root: String, scope: RestoreScope, latestAfter: String?) {
+        guard let undo = report.undoSnapshotId else { lastRestore = nil; return }
+        lastRestore = (root, undo, scope, latestAfter, Date())
+    }
+
+    /// Restores and reports the result as a message with Undo; the Restore window shows its own success state too.
+    func restore(root: String, snapshot: String, scope: RestoreScope, announce: Bool = true) async -> Result<RestoreReport, Error> {
+        let result = await performRestore(root: root) { _ in (snapshot, scope) }
         refreshProjects()
-        return result
+        switch result {
+        case .success(let r):
+            remember(r.report, root: root, scope: scope, latestAfter: r.latestAfter)
+            // A whole restore can bring back what an undone moment removed, so those checks no longer hold.
+            undoneMoments = undoneMoments.filter { $0.value.root != root }
+            if announce { announceRestore(r.report, root: root, scope: scope) }
+            return .success(r.report)
+        case .failure(let e): return .failure(e)
+        }
     }
 
     /// "Undo" on a moment: puts back the files that snapshot recorded as changed (or the given ones), as they were in the
     /// snapshot before it. Runs without a confirmation because it is reversible: the restore snapshots first and the
     /// message offers Undo. The target is always found in the store, never from what a filtered list shows.
     @discardableResult
-    func undoChanges(root: String, snapshot: String, paths only: [String]? = nil) async -> Bool {
-        let paths = self.paths
-        let result: Result<(RestoreReport, [String]), Error> = await withCheckedContinuation { cont in
-            snapshotQueue.async {
-                do {
-                    guard let loc = SnapshotStore.allStores(paths: paths).first(where: { $0.root == root }) else { throw SnapshotError.notFound(root) }
-                    let s = try SnapshotStore.openLocation(loc, paths: paths)
-                    guard let info = try s.info(snapshot), let previous = try s.list(limit: 1, beforeSeq: info.seq).first else {
-                        throw SnapshotError.notFound(snapshot)
-                    }
-                    let changed = try only ?? s.changes(in: snapshot).map(\.path)
-                    cont.resume(returning: .success((try s.restore(to: previous.id, scope: .paths(changed)), changed)))
-                } catch { cont.resume(returning: .failure(error)) }
+    func undoChanges(root: String, snapshot: String, paths only: [String]? = nil) async -> RestoreReport? {
+        await undo(root: root, moment: snapshot, paths: only) { s in
+            guard let info = try s.info(snapshot), let previous = try s.list(limit: 1, beforeSeq: info.seq).first else {
+                throw SnapshotError.notFound(snapshot)
             }
-        }
-        refreshProjects()
-        switch result {
-        case .success(let (report, changed)):
-            if let undo = report.undoSnapshotId { lastRestore = (root, undo, .paths(changed)) }
-            announceRestore(report, root: root, scope: .paths(changed))
-            return true
-        case .failure(let e):
-            show(describe(e), style: .failure)
-            return false
+            return (previous.id, .paths(try only ?? s.changes(in: snapshot).map(\.path)), info.createdAt)
         }
     }
 
-    /// ⌥⌘Z: undoes the newest change in the selected project (or anywhere when none is selected).
+    /// Undo of a command whose effect spans several snapshots (a file-change snapshot taken while it ran): the files that
+    /// differ between `base` (before the command) and `effect` (after it) go back to `base`.
+    @discardableResult
+    func undoChanges(root: String, from base: String, to effect: String, paths only: [String]? = nil) async -> RestoreReport? {
+        await undo(root: root, moment: effect, paths: only) { s in
+            guard let info = try s.info(effect), try s.info(base) != nil else { throw SnapshotError.notFound(effect) }
+            return (base, .paths(try only ?? s.diff(from: base, to: effect).map(\.path)), info.createdAt)
+        }
+    }
+
+    private func undo(root: String, moment: String, paths only: [String]?,
+                      _ plan: @escaping @Sendable (SnapshotStore) throws -> (target: String, scope: RestoreScope, at: Int64)) async -> RestoreReport? {
+        let at = OSAllocatedUnfairLock(initialState: Int64(0))
+        let result = await performRestore(root: root) { s in
+            let p = try plan(s)
+            at.withLock { $0 = p.at }
+            return (p.target, p.scope)
+        }
+        refreshProjects()
+        switch result {
+        case .success(let r):
+            remember(r.report, root: root, scope: r.scope, latestAfter: r.latestAfter)
+            if only == nil, let undo = r.report.undoSnapshotId {
+                let when = at.withLock { $0 }
+                // Undoing this moment can bring back what older undone moments of this project removed.
+                undoneMoments = undoneMoments.filter { $0.value.root != root || $0.value.at > when }
+                undoneMoments[moment] = (root, when, undo)
+            }
+            announceRestore(r.report, root: root, scope: r.scope)
+            return r.report
+        case .failure(let e):
+            show(describe(e), style: .failure)
+            return nil
+        }
+    }
+
+    /// ⌥⌘Z and the popover's ⌘Z: the newest change anywhere that has not been undone yet (the popover's top row).
     var latestUndoable: RecentChange? {
-        recentChanges.first { selectedRoot == nil || $0.root == selectedRoot } ?? recentChanges.first
+        recentChanges.first { undoneMoments[$0.snapshotID] == nil }
     }
 
     func undoLatest() {
@@ -704,42 +866,46 @@ final class AppModel: ObservableObject {
 
     /// The result of a restore as a message with Undo (back to the snapshot the restore took first).
     private func announceRestore(_ r: RestoreReport, root: String, scope: RestoreScope) {
-        let name = (root as NSString).lastPathComponent
-        var text = String(localized: "Restored \(r.restored.count + r.movedAside.count) files in \(name)")
+        var text = RestoreWindow.headline(r, root: root)
         if !r.conflicts.isEmpty { text += " · " + String(localized: "\(r.conflicts.count) skipped because they changed during the restore.") }
         if !r.failed.isEmpty { text += " · " + String(localized: "\(r.failed.count) failed.") }
-        guard let undo = r.undoSnapshotId else { show(text, style: r.failed.isEmpty ? .success : .warning); return }
-        show(text, style: r.failed.isEmpty ? .success : .warning, action: (String(localized: "Undo"), { [weak self] in
+        let style: Toast.Style = r.conflicts.isEmpty && r.failed.isEmpty ? .success : .warning
+        guard let undo = r.undoSnapshotId else { show(text, style: style); return }
+        show(text, style: style, action: (String(localized: "Undo"), { [weak self] in
             Task { await self?.revertRestore(root: root, to: undo, scope: scope) }
         }))
     }
 
-    /// Undoes the last restore (back to the snapshot it took first).
+    /// Undoes the last restore (back to the snapshot it took first), while no newer work exists.
     func undoLastRestore() {
         guard let r = lastRestore else { return }
         Task { await revertRestore(root: r.root, to: r.undoSnapshot, scope: r.scope) }
     }
 
+    /// Puts files back as they were right before a restore. Reversible too: its message offers Undo again.
     @discardableResult
-    func revertRestore(root: String, to snapshot: String, scope: RestoreScope) async -> Bool {
-        let paths = self.paths
-        let result: Result<RestoreReport, Error> = await withCheckedContinuation { cont in
-            snapshotQueue.async {
-                do {
-                    guard let loc = SnapshotStore.allStores(paths: paths).first(where: { $0.root == root }) else { throw SnapshotError.notFound(root) }
-                    cont.resume(returning: .success(try SnapshotStore.openLocation(loc, paths: paths).restore(to: snapshot, scope: scope)))
-                } catch { cont.resume(returning: .failure(error)) }
-            }
-        }
+    func revertRestore(root: String, to snapshot: String, scope: RestoreScope) async -> RestoreReport? {
+        let result = await performRestore(root: root) { _ in (snapshot, scope) }
         refreshProjects()
         switch result {
-        case .success:
-            lastRestore = nil
-            show(String(localized: "Restore undone"), style: .success)
-            return true
+        case .success(let r):
+            remember(r.report, root: root, scope: scope, latestAfter: r.latestAfter)
+            undoneMoments = undoneMoments.filter { $0.value.undoSnapshot != snapshot }
+            var text = String(localized: "Restore undone")
+            if !r.report.conflicts.isEmpty { text += " · " + String(localized: "\(r.report.conflicts.count) skipped because they changed during the restore.") }
+            if !r.report.failed.isEmpty { text += " · " + String(localized: "\(r.report.failed.count) failed.") }
+            let style: Toast.Style = r.report.conflicts.isEmpty && r.report.failed.isEmpty ? .success : .warning
+            if let again = r.report.undoSnapshotId {
+                show(text, style: style, action: (String(localized: "Undo"), { [weak self] in
+                    Task { await self?.revertRestore(root: root, to: again, scope: scope) }
+                }))
+            } else {
+                show(text, style: style)
+            }
+            return r.report
         case .failure(let e):
             show(describe(e), style: .failure)
-            return false
+            return nil
         }
     }
 
@@ -754,10 +920,10 @@ final class AppModel: ObservableObject {
     // MARK: messages
 
     /// Shows a message. Its timer starts once a window or the popover shows it, and it waits while the pointer is on it.
+    /// A message nobody sees within a couple of minutes is dropped, so an old one never shows up hours later.
     func show(_ text: String, style: Toast.Style = .info, action: (String, @MainActor () -> Void)? = nil) {
         toast = Toast(text: text, style: style, actionTitle: action?.0, action: action?.1)
-        toastTimer?.invalidate()
-        if popoverVisible || mainWindowVisible { scheduleToastEnd() }
+        scheduleToastEnd(unseen: !(popoverVisible || mainWindowVisible))
     }
 
     func dismissToast() {
@@ -770,10 +936,11 @@ final class AppModel: ObservableObject {
         if hold { toastTimer?.invalidate() } else { scheduleToastEnd() }
     }
 
-    private func scheduleToastEnd() {
+    private func scheduleToastEnd(unseen: Bool = false) {
         toastTimer?.invalidate()
         guard let t = toast else { return }
-        let seconds: TimeInterval = t.action != nil ? 30 : (t.style == .failure || t.style == .warning ? 15 : 6)
+        let problem = t.style == .failure || t.style == .warning
+        let seconds: TimeInterval = unseen ? (problem && t.action == nil ? 600 : 120) : (t.action != nil ? 30 : (problem ? 15 : 6))
         toastTimer = Timer.scheduledTimer(withTimeInterval: seconds, repeats: false) { [weak self] _ in
             Task { @MainActor in if self?.toast?.id == t.id { self?.toast = nil } }
         }
@@ -804,13 +971,23 @@ final class AppModel: ObservableObject {
         return a.count == b.count && zip(a, b).allSatisfy { strip($0) == strip($1) }
     }
 
+    /// Someone looks at the servers: the popover is open or the Radar is the main window's view.
+    private var radarWatched: Bool { popoverVisible || (mainWindowVisible && selectedTab == .radar) }
+
+    /// The scan cadence follows what is going on (re-evaluated when visibility, the tab, live sessions or the server
+    /// list change); the timer is replaced only when the cadence changes.
     func scheduleRadar() {
-        radarTimer?.invalidate()
+        let watching = radarWatched
         let live = projects.contains { $0.liveSessions > 0 }
-        let watching = popoverVisible || (mainWindowVisible && selectedTab == .radar)
         let interval: TimeInterval = watching ? 1.5 : (live ? 2 : (servers.isEmpty ? 10 : 5))
-        radarTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in Task { @MainActor in self?.scanRadar() } }
-        if watching { scanRadar() } // fresh numbers as soon as the radar becomes visible
+        if watching && !radarWasWatched { scanRadar() } // fresh numbers as soon as the radar becomes visible
+        radarWasWatched = watching
+        guard interval != radarInterval else { return }
+        radarInterval = interval
+        radarTimer?.invalidate()
+        let t = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in Task { @MainActor in self?.scanRadar() } }
+        t.tolerance = interval * 0.2
+        radarTimer = t
     }
 
     func scanRadar() {
@@ -827,8 +1004,12 @@ final class AppModel: ObservableObject {
             Task { @MainActor in
                 // Memory and CPU time change on every scan. They are re-published only while someone looks at the radar,
                 // so an idle menu bar app does not re-render its views every couple of seconds.
-                let watching = self.popoverVisible || self.mainWindowVisible
-                if snap.servers != self.servers, watching || !Self.sameIgnoringUsage(snap.servers, self.servers) { self.servers = snap.servers }
+                // Memory and CPU are shown only in the Radar view; elsewhere only membership changes are published.
+                let watching = self.mainWindowVisible && self.selectedTab == .radar
+                if snap.servers != self.servers, watching || !Self.sameIgnoringUsage(snap.servers, self.servers) {
+                    self.servers = snap.servers
+                    self.refreshProjectPorts()
+                }
                 if all != self.allListening, watching || !Self.sameIgnoringUsage(all, self.allListening) { self.allListening = all }
                 if kept != self.keptProcesses { self.keptProcesses = kept }
                 // Orphans are announced after 20 s (doc 11 §6.4): a resumed session takes them back first.
@@ -894,10 +1075,11 @@ final class AppModel: ObservableObject {
         for (sid, procs) in bySession where !notifiedSessions.contains(sid) {
             notifiedSessions.insert(sid)
             let agent = procs.first?.attribution?.agent?.displayName
-            let servers = ListFormatter.localizedString(byJoining: procs.map { "\($0.name) :\($0.listeners.first?.port ?? 0)" })
+            let shown = procs.distinctServers
+            let servers = ListFormatter.localizedString(byJoining: shown.map { "\($0.name) :\($0.portSet.min() ?? 0)" })
             Notifier.shared.post(.orphans, id: sid,
                                  title: agent.map { name in String(localized: "\(name) session ended") } ?? String(localized: "An agent session ended"),
-                                 body: String(localized: "It left \(procs.count) servers running: \(servers)"),
+                                 body: String(localized: "It left \(shown.count) servers running: \(servers)"),
                                  info: ["session": sid], thread: procs.first?.attribution?.projectRoot)
         }
     }
@@ -908,7 +1090,20 @@ final class AppModel: ObservableObject {
         case .orphans:
             let procs = leftRunning.filter { ($0.attribution?.agentSessionID ?? "?") == info["session"] }
             switch action {
-            case "stop": Task { for p in procs { _ = await stopProcess(p, force: false) } }
+            case "stop":
+                let sid = info["session"] ?? "?"
+                Task {
+                    var failed: [String] = []
+                    for p in procs {
+                        let why = await stopProcess(p, force: false)
+                        if !why.isEmpty { failed.append("\(p.name) :\(p.listeners.first?.port ?? 0) — \(why)") }
+                    }
+                    guard !failed.isEmpty else { return }
+                    // The system removed the notification when its button was used: say so again, with Stop / Keep Running.
+                    if !popoverVisible { badge = true }
+                    Notifier.shared.post(.orphans, id: sid, title: String(localized: "Some servers didn't stop"), body: failed.joined(separator: "\n"),
+                                         info: ["session": sid], thread: procs.first?.attribution?.projectRoot)
+                }
             case "keep": procs.forEach(keep)
             default: if let p = procs.first { reveal(.process(p.identity)) } else { windowRequest = .main(.radar) }
             }
@@ -971,7 +1166,16 @@ final class AppModel: ObservableObject {
 
     /// Marks every Guard entry so far as looked at ("Got it" in the popover, or opening the Guard view).
     func markGuardsReviewed() {
-        if pausedUntil == nil { pausedSince = nil; unprotectedDuringPause = 0 }
+        if pausedUntil == nil, pausedSince != nil {
+            pausedSince = nil
+            unprotectedDuringPause = 0
+            try? registry?.db.run("DELETE FROM settings WHERE key = 'pause.sinceTs'")
+        }
+        markGuardEntriesReviewed()
+    }
+
+    /// Opening the Guard view: its entries are looked at (the pause notice stays until "Got it" in the popover).
+    func markGuardEntriesReviewed() {
         guard let newest = guardEntries.map(\.ts).max(), newest > guardReviewedThrough else { return }
         guardReviewedThrough = newest
         try? registry?.setSetting("guard.reviewedThroughTs", newest)
@@ -1061,7 +1265,7 @@ final class AppModel: ObservableObject {
         switch issue {
         case .brokenHooks(let agents): agents.forEach(installHooks)
         case .noAgentConnected: openSettings(tab: "agents")
-        case .lowDisk: revealInFinder(paths.stores.path)
+        case .lowDisk: openSettings(tab: "snapshots")
         case .databaseUnavailable: revealInFinder(paths.logs.path)
         }
     }
@@ -1071,10 +1275,12 @@ final class AppModel: ObservableObject {
         try? registry?.setSetting("hook.recordInsteadOfAsking", on)
     }
 
-    func setStrict(_ on: Bool) {
+    /// Rewrites each connected agent's hook for the new mode; returns the agents that could not be updated.
+    @discardableResult
+    func setStrict(_ on: Bool) -> [(agent: AgentKind, error: String)] {
         strictMode = on
         try? registry?.setSetting("hook.strictMode", on)
-        for s in hookStatuses where s.installed { connect(s.agent) }
+        return hookStatuses.filter(\.installed).compactMap { s in connect(s.agent).map { (s.agent, $0) } }
     }
 
     // MARK: pause, retention, settings
@@ -1093,7 +1299,12 @@ final class AppModel: ObservableObject {
 
     func pause(until: Date?) {
         try? registry?.pause(untilMs: until.map { Int64($0.timeIntervalSince1970 * 1000) })
-        if until != nil, pausedUntil == nil { pausedSince = Date(); unprotectedDuringPause = 0 }
+        if until != nil, pausedUntil == nil {
+            let now = Date()
+            pausedSince = now
+            unprotectedDuringPause = 0
+            try? registry?.setSetting("pause.sinceTs", Int64(now.timeIntervalSince1970 * 1000))
+        }
         pausedUntil = until
         schedulePauseEnd()
         startWatching()
@@ -1144,6 +1355,8 @@ final class AppModel: ObservableObject {
         recordInsteadOfAsking = reg.setting("hook.recordInsteadOfAsking", default: true)
         guardReviewedThrough = reg.setting("guard.reviewedThroughTs", default: Int64(0))
         pausedUntil = reg.pausedUntilMs.map { Date(timeIntervalSince1970: Double($0) / 1000) }
+        // Kept after the pause ends, so the popover can still say how many commands ran without snapshots.
+        pausedSince = reg.setting("pause.sinceTs", as: Int64.self).map { Date(timeIntervalSince1970: Double($0) / 1000) }
         schedulePauseEnd()
     }
 
@@ -1185,13 +1398,22 @@ final class AppModel: ObservableObject {
         let source = Bundle.main.bundleURL
         for dir in ["/Applications", NSHomeDirectory() + "/Applications"] {
             let target = URL(fileURLWithPath: dir).appendingPathComponent(source.lastPathComponent)
+            let temporary = URL(fileURLWithPath: dir).appendingPathComponent(".Airbag-new.app")
             do {
                 try fm.createDirectory(atPath: dir, withIntermediateDirectories: true)
-                if fm.fileExists(atPath: target.path) { try fm.trashItem(at: target, resultingItemURL: nil) }
-                try fm.copyItem(at: source, to: target)
+                try? fm.removeItem(at: temporary)
+                // Copy under a temporary name first, so a failed copy never costs the existing app.
+                try fm.copyItem(at: source, to: temporary)
+                // A copied app keeps the download's quarantine flag, and Gatekeeper would translocate it again.
+                let strip = Process()
+                strip.executableURL = URL(fileURLWithPath: "/usr/bin/xattr")
+                strip.arguments = ["-dr", "com.apple.quarantine", temporary.path]
+                try? strip.run(); strip.waitUntilExit()
+                if fm.fileExists(atPath: target.path) { _ = try fm.replaceItemAt(target, withItemAt: temporary) }
+                else { try fm.moveItem(at: temporary, to: target) }
                 relaunch(at: target.path)
                 return nil
-            } catch { continue }
+            } catch { try? fm.removeItem(at: temporary); continue }
         }
         return String(localized: "Airbag could not copy itself to Applications. Drag it there from the disk image.")
     }
@@ -1295,7 +1517,7 @@ final class AppModel: ObservableObject {
                 }
                 scan(home + "/.claude/projects", depth: 1)
                 scan(home + "/.codex/sessions", depth: 3)
-                var seen = Set<String>()
+                var seen = IgnoredRoots.load(paths: paths)
                 var out: [(path: String, usedAt: Date)] = []
                 for (cwd, date) in found.sorted(by: { $0.1 > $1.1 }) {
                     guard fm.fileExists(atPath: cwd) else { continue }
