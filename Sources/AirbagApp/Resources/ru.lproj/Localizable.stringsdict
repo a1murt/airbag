@@ -2,6 +2,46 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<key>%lld commands checked today</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@n@</string>
+		<key>n</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>few</key>
+			<string>%lld команды проверены сегодня</string>
+			<key>many</key>
+			<string>%lld команд проверено сегодня</string>
+			<key>one</key>
+			<string>%lld команда проверена сегодня</string>
+			<key>other</key>
+			<string>%lld команды проверено сегодня</string>
+		</dict>
+	</dict>
+	<key>%lld commands ran without snapshots</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@n@</string>
+		<key>n</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>few</key>
+			<string>%lld команды выполнены без снимков</string>
+			<key>many</key>
+			<string>%lld команд выполнено без снимков</string>
+			<key>one</key>
+			<string>%lld команда выполнена без снимка</string>
+			<key>other</key>
+			<string>%lld команды выполнено без снимков</string>
+		</dict>
+	</dict>
 	<key>%lld days</key>
 	<dict>
 		<key>NSStringLocalizedFormatKey</key>
@@ -42,7 +82,7 @@
 			<string>%lld файла</string>
 		</dict>
 	</dict>
-	<key>%lld files created later will be moved into Airbag's store (not deleted)</key>
+	<key>%lld newer files set aside, not deleted</key>
 	<dict>
 		<key>NSStringLocalizedFormatKey</key>
 		<string>%#@n@</string>
@@ -53,93 +93,13 @@
 			<key>NSStringFormatValueTypeKey</key>
 			<string>lld</string>
 			<key>few</key>
-			<string>%lld файла, созданные позже, будут перенесены в хранилище Airbag (не удалены)</string>
+			<string>%lld более новых файла отложены, а не удалены</string>
 			<key>many</key>
-			<string>%lld файлов, созданных позже, будут перенесены в хранилище Airbag (не удалены)</string>
+			<string>%lld более новых файлов отложено, а не удалено</string>
 			<key>one</key>
-			<string>%lld файл, созданный позже, будет перенесён в хранилище Airbag (не удалён)</string>
+			<string>%lld более новый файл отложен, а не удалён</string>
 			<key>other</key>
-			<string>%lld файла будут перенесены в хранилище Airbag (не удалены)</string>
-		</dict>
-	</dict>
-	<key>%lld files will be restored</key>
-	<dict>
-		<key>NSStringLocalizedFormatKey</key>
-		<string>%#@n@</string>
-		<key>n</key>
-		<dict>
-			<key>NSStringFormatSpecTypeKey</key>
-			<string>NSStringPluralRuleType</string>
-			<key>NSStringFormatValueTypeKey</key>
-			<string>lld</string>
-			<key>few</key>
-			<string>Будут восстановлены %lld файла</string>
-			<key>many</key>
-			<string>Будет восстановлено %lld файлов</string>
-			<key>one</key>
-			<string>Будет восстановлен %lld файл</string>
-			<key>other</key>
-			<string>Будут восстановлены %lld файла</string>
-		</dict>
-	</dict>
-	<key>%lld live</key>
-	<dict>
-		<key>NSStringLocalizedFormatKey</key>
-		<string>%#@n@</string>
-		<key>n</key>
-		<dict>
-			<key>NSStringFormatSpecTypeKey</key>
-			<string>NSStringPluralRuleType</string>
-			<key>NSStringFormatValueTypeKey</key>
-			<string>lld</string>
-			<key>few</key>
-			<string>%lld активные</string>
-			<key>many</key>
-			<string>%lld активных</string>
-			<key>one</key>
-			<string>%lld активная</string>
-			<key>other</key>
-			<string>%lld активные</string>
-		</dict>
-	</dict>
-	<key>%lld orphans</key>
-	<dict>
-		<key>NSStringLocalizedFormatKey</key>
-		<string>%#@n@</string>
-		<key>n</key>
-		<dict>
-			<key>NSStringFormatSpecTypeKey</key>
-			<string>NSStringPluralRuleType</string>
-			<key>NSStringFormatValueTypeKey</key>
-			<string>lld</string>
-			<key>few</key>
-			<string>%lld сироты</string>
-			<key>many</key>
-			<string>%lld сирот</string>
-			<key>one</key>
-			<string>%lld сирота</string>
-			<key>other</key>
-			<string>%lld сироты</string>
-		</dict>
-	</dict>
-	<key>%lld projects protected</key>
-	<dict>
-		<key>NSStringLocalizedFormatKey</key>
-		<string>%#@project@</string>
-		<key>project</key>
-		<dict>
-			<key>NSStringFormatSpecTypeKey</key>
-			<string>NSStringPluralRuleType</string>
-			<key>NSStringFormatValueTypeKey</key>
-			<string>lld</string>
-			<key>few</key>
-			<string>%lld проекта под защитой</string>
-			<key>many</key>
-			<string>%lld проектов под защитой</string>
-			<key>one</key>
-			<string>%lld проект под защитой</string>
-			<key>other</key>
-			<string>%lld проекта под защитой</string>
+			<string>%lld более нового файла отложено, а не удалено</string>
 		</dict>
 	</dict>
 	<key>%lld servers</key>
@@ -162,6 +122,26 @@
 			<string>%lld сервера</string>
 		</dict>
 	</dict>
+	<key>%lld skipped because they changed during the restore.</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@n@</string>
+		<key>n</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>few</key>
+			<string>%lld файла пропущены — они изменились во время восстановления.</string>
+			<key>many</key>
+			<string>%lld файлов пропущено — они изменились во время восстановления.</string>
+			<key>one</key>
+			<string>%lld файл пропущен — он изменился во время восстановления.</string>
+			<key>other</key>
+			<string>%lld файла пропущено — они изменились во время восстановления.</string>
+		</dict>
+	</dict>
 	<key>%lld snapshots</key>
 	<dict>
 		<key>NSStringLocalizedFormatKey</key>
@@ -182,7 +162,7 @@
 			<string>%lld снимка</string>
 		</dict>
 	</dict>
-	<key>Restore %lld items to %@?</key>
+	<key>It left %lld servers running: %@</key>
 	<dict>
 		<key>NSStringLocalizedFormatKey</key>
 		<string>%1$#@n@</string>
@@ -193,13 +173,93 @@
 			<key>NSStringFormatValueTypeKey</key>
 			<string>lld</string>
 			<key>few</key>
-			<string>Откатить %1$lld объекта к состоянию на %2$@?</string>
+			<string>Остались работать %1$lld сервера: %2$@</string>
 			<key>many</key>
-			<string>Откатить %1$lld объектов к состоянию на %2$@?</string>
+			<string>Осталось работать %1$lld серверов: %2$@</string>
 			<key>one</key>
-			<string>Откатить %1$lld объект к состоянию на %2$@?</string>
+			<string>Остался работать %1$lld сервер: %2$@</string>
 			<key>other</key>
-			<string>Откатить %1$lld объекта к состоянию на %2$@?</string>
+			<string>Осталось работать %1$lld сервера: %2$@</string>
+		</dict>
+	</dict>
+	<key>Protecting %lld projects</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@n@</string>
+		<key>n</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>few</key>
+			<string>Под защитой %lld проекта</string>
+			<key>many</key>
+			<string>Под защитой %lld проектов</string>
+			<key>one</key>
+			<string>Под защитой %lld проект</string>
+			<key>other</key>
+			<string>Под защитой %lld проекта</string>
+		</dict>
+	</dict>
+	<key>Removed %lld old snapshots · %@ freed</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%1$#@n@</string>
+		<key>n</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>few</key>
+			<string>Удалено %1$lld старых снимка · освобождено %2$@</string>
+			<key>many</key>
+			<string>Удалено %1$lld старых снимков · освобождено %2$@</string>
+			<key>one</key>
+			<string>Удалён %1$lld старый снимок · освобождено %2$@</string>
+			<key>other</key>
+			<string>Удалено %1$lld старого снимка · освобождено %2$@</string>
+		</dict>
+	</dict>
+	<key>Restore %lld files to %@?</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%1$#@n@</string>
+		<key>n</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>few</key>
+			<string>Восстановить %1$lld файла к состоянию на %2$@?</string>
+			<key>many</key>
+			<string>Восстановить %1$lld файлов к состоянию на %2$@?</string>
+			<key>one</key>
+			<string>Восстановить %1$lld файл к состоянию на %2$@?</string>
+			<key>other</key>
+			<string>Восстановить %1$lld файла к состоянию на %2$@?</string>
+		</dict>
+	</dict>
+	<key>Restored %lld files in %@</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%1$#@n@</string>
+		<key>n</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>few</key>
+			<string>Восстановлено %1$lld файла в %2$@</string>
+			<key>many</key>
+			<string>Восстановлено %1$lld файлов в %2$@</string>
+			<key>one</key>
+			<string>Восстановлен %1$lld файл в %2$@</string>
+			<key>other</key>
+			<string>Восстановлено %1$lld файла в %2$@</string>
 		</dict>
 	</dict>
 	<key>Session ended — stop its %lld servers?</key>
@@ -220,6 +280,26 @@
 			<string>Сессия завершилась — остановить её %lld сервер?</string>
 			<key>other</key>
 			<string>Сессия завершилась — остановить её %lld сервера?</string>
+		</dict>
+	</dict>
+	<key>Snapshot taken of %lld projects</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@n@</string>
+		<key>n</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>few</key>
+			<string>Снимок сделан: %lld проекта</string>
+			<key>many</key>
+			<string>Снимок сделан: %lld проектов</string>
+			<key>one</key>
+			<string>Снимок сделан: %lld проект</string>
+			<key>other</key>
+			<string>Снимок сделан: %lld проекта</string>
 		</dict>
 	</dict>
 </dict>

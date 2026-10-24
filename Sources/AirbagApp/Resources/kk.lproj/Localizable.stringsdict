@@ -2,6 +2,38 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<key>%lld commands checked today</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@n@</string>
+		<key>n</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>Бүгін %lld команда тексерілді</string>
+			<key>other</key>
+			<string>Бүгін %lld команда тексерілді</string>
+		</dict>
+	</dict>
+	<key>%lld commands ran without snapshots</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@n@</string>
+		<key>n</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>%lld команда снапшотсыз орындалды</string>
+			<key>other</key>
+			<string>%lld команда снапшотсыз орындалды</string>
+		</dict>
+	</dict>
 	<key>%lld days</key>
 	<dict>
 		<key>NSStringLocalizedFormatKey</key>
@@ -34,7 +66,7 @@
 			<string>%lld файл</string>
 		</dict>
 	</dict>
-	<key>%lld files created later will be moved into Airbag's store (not deleted)</key>
+	<key>%lld newer files set aside, not deleted</key>
 	<dict>
 		<key>NSStringLocalizedFormatKey</key>
 		<string>%#@n@</string>
@@ -45,73 +77,9 @@
 			<key>NSStringFormatValueTypeKey</key>
 			<string>lld</string>
 			<key>one</key>
-			<string>Кейін жасалған %lld файл Airbag қоймасына жылжытылады (жойылмайды)</string>
+			<string>Кейін жасалған %lld файл жойылмай, бөлек қойылды</string>
 			<key>other</key>
-			<string>Кейін жасалған %lld файл Airbag қоймасына жылжытылады (жойылмайды)</string>
-		</dict>
-	</dict>
-	<key>%lld files will be restored</key>
-	<dict>
-		<key>NSStringLocalizedFormatKey</key>
-		<string>%#@n@</string>
-		<key>n</key>
-		<dict>
-			<key>NSStringFormatSpecTypeKey</key>
-			<string>NSStringPluralRuleType</string>
-			<key>NSStringFormatValueTypeKey</key>
-			<string>lld</string>
-			<key>one</key>
-			<string>%lld файл қалпына келтіріледі</string>
-			<key>other</key>
-			<string>%lld файл қалпына келтіріледі</string>
-		</dict>
-	</dict>
-	<key>%lld live</key>
-	<dict>
-		<key>NSStringLocalizedFormatKey</key>
-		<string>%#@n@</string>
-		<key>n</key>
-		<dict>
-			<key>NSStringFormatSpecTypeKey</key>
-			<string>NSStringPluralRuleType</string>
-			<key>NSStringFormatValueTypeKey</key>
-			<string>lld</string>
-			<key>one</key>
-			<string>%lld белсенді</string>
-			<key>other</key>
-			<string>%lld белсенді</string>
-		</dict>
-	</dict>
-	<key>%lld orphans</key>
-	<dict>
-		<key>NSStringLocalizedFormatKey</key>
-		<string>%#@n@</string>
-		<key>n</key>
-		<dict>
-			<key>NSStringFormatSpecTypeKey</key>
-			<string>NSStringPluralRuleType</string>
-			<key>NSStringFormatValueTypeKey</key>
-			<string>lld</string>
-			<key>one</key>
-			<string>%lld иесіз</string>
-			<key>other</key>
-			<string>%lld иесіз</string>
-		</dict>
-	</dict>
-	<key>%lld projects protected</key>
-	<dict>
-		<key>NSStringLocalizedFormatKey</key>
-		<string>%#@project@</string>
-		<key>project</key>
-		<dict>
-			<key>NSStringFormatSpecTypeKey</key>
-			<string>NSStringPluralRuleType</string>
-			<key>NSStringFormatValueTypeKey</key>
-			<string>lld</string>
-			<key>one</key>
-			<string>%lld жоба қорғалған</string>
-			<key>other</key>
-			<string>%lld жоба қорғалған</string>
+			<string>Кейін жасалған %lld файл жойылмай, бөлек қойылды</string>
 		</dict>
 	</dict>
 	<key>%lld servers</key>
@@ -130,6 +98,22 @@
 			<string>%lld сервер</string>
 		</dict>
 	</dict>
+	<key>%lld skipped because they changed during the restore.</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@n@</string>
+		<key>n</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>%lld файл өткізіп жіберілді: қалпына келтіру кезінде өзгерген.</string>
+			<key>other</key>
+			<string>%lld файл өткізіп жіберілді: қалпына келтіру кезінде өзгерген.</string>
+		</dict>
+	</dict>
 	<key>%lld snapshots</key>
 	<dict>
 		<key>NSStringLocalizedFormatKey</key>
@@ -146,7 +130,7 @@
 			<string>%lld снапшот</string>
 		</dict>
 	</dict>
-	<key>Restore %lld items to %@?</key>
+	<key>It left %lld servers running: %@</key>
 	<dict>
 		<key>NSStringLocalizedFormatKey</key>
 		<string>%1$#@n@</string>
@@ -157,9 +141,73 @@
 			<key>NSStringFormatValueTypeKey</key>
 			<string>lld</string>
 			<key>one</key>
-			<string>%1$lld элемент %2$@ кезіндегі қалпына келтірілсін бе?</string>
+			<string>Ол %1$lld серверді қосулы қалдырды: %2$@</string>
 			<key>other</key>
-			<string>%1$lld элемент %2$@ кезіндегі қалпына келтірілсін бе?</string>
+			<string>Ол %1$lld серверді қосулы қалдырды: %2$@</string>
+		</dict>
+	</dict>
+	<key>Protecting %lld projects</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@n@</string>
+		<key>n</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>%lld жоба қорғалуда</string>
+			<key>other</key>
+			<string>%lld жоба қорғалуда</string>
+		</dict>
+	</dict>
+	<key>Removed %lld old snapshots · %@ freed</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%1$#@n@</string>
+		<key>n</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>%1$lld ескі снапшот жойылды · %2$@ босатылды</string>
+			<key>other</key>
+			<string>%1$lld ескі снапшот жойылды · %2$@ босатылды</string>
+		</dict>
+	</dict>
+	<key>Restore %lld files to %@?</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%1$#@n@</string>
+		<key>n</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>%1$lld файл мына сәттегі күйге қалпына келтірілсін бе: %2$@?</string>
+			<key>other</key>
+			<string>%1$lld файл мына сәттегі күйге қалпына келтірілсін бе: %2$@?</string>
+		</dict>
+	</dict>
+	<key>Restored %lld files in %@</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%1$#@n@</string>
+		<key>n</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>%2$@ жобасында %1$lld файл қалпына келтірілді</string>
+			<key>other</key>
+			<string>%2$@ жобасында %1$lld файл қалпына келтірілді</string>
 		</dict>
 	</dict>
 	<key>Session ended — stop its %lld servers?</key>
@@ -176,6 +224,22 @@
 			<string>Сессия аяқталды — оның %lld сервері тоқтатылсын ба?</string>
 			<key>other</key>
 			<string>Сессия аяқталды — оның %lld сервері тоқтатылсын ба?</string>
+		</dict>
+	</dict>
+	<key>Snapshot taken of %lld projects</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@n@</string>
+		<key>n</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>%lld жобаның снапшоты жасалды</string>
+			<key>other</key>
+			<string>%lld жобаның снапшоты жасалды</string>
 		</dict>
 	</dict>
 </dict>

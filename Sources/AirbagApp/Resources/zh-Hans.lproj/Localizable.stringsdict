@@ -2,6 +2,34 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<key>%lld commands checked today</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@n@</string>
+		<key>n</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>other</key>
+			<string>今天已检查 %lld 条命令</string>
+		</dict>
+	</dict>
+	<key>%lld commands ran without snapshots</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@n@</string>
+		<key>n</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>other</key>
+			<string>%lld 条命令运行时无快照</string>
+		</dict>
+	</dict>
 	<key>%lld days</key>
 	<dict>
 		<key>NSStringLocalizedFormatKey</key>
@@ -30,7 +58,7 @@
 			<string>%lld 个文件</string>
 		</dict>
 	</dict>
-	<key>%lld files created later will be moved into Airbag's store (not deleted)</key>
+	<key>%lld newer files set aside, not deleted</key>
 	<dict>
 		<key>NSStringLocalizedFormatKey</key>
 		<string>%#@n@</string>
@@ -41,63 +69,7 @@
 			<key>NSStringFormatValueTypeKey</key>
 			<string>lld</string>
 			<key>other</key>
-			<string>之后创建的 %lld 个文件将移入 Airbag 存储区（不会被删除）</string>
-		</dict>
-	</dict>
-	<key>%lld files will be restored</key>
-	<dict>
-		<key>NSStringLocalizedFormatKey</key>
-		<string>%#@n@</string>
-		<key>n</key>
-		<dict>
-			<key>NSStringFormatSpecTypeKey</key>
-			<string>NSStringPluralRuleType</string>
-			<key>NSStringFormatValueTypeKey</key>
-			<string>lld</string>
-			<key>other</key>
-			<string>将恢复 %lld 个文件</string>
-		</dict>
-	</dict>
-	<key>%lld live</key>
-	<dict>
-		<key>NSStringLocalizedFormatKey</key>
-		<string>%#@n@</string>
-		<key>n</key>
-		<dict>
-			<key>NSStringFormatSpecTypeKey</key>
-			<string>NSStringPluralRuleType</string>
-			<key>NSStringFormatValueTypeKey</key>
-			<string>lld</string>
-			<key>other</key>
-			<string>%lld 个活跃会话</string>
-		</dict>
-	</dict>
-	<key>%lld orphans</key>
-	<dict>
-		<key>NSStringLocalizedFormatKey</key>
-		<string>%#@n@</string>
-		<key>n</key>
-		<dict>
-			<key>NSStringFormatSpecTypeKey</key>
-			<string>NSStringPluralRuleType</string>
-			<key>NSStringFormatValueTypeKey</key>
-			<string>lld</string>
-			<key>other</key>
-			<string>%lld 个孤儿进程</string>
-		</dict>
-	</dict>
-	<key>%lld projects protected</key>
-	<dict>
-		<key>NSStringLocalizedFormatKey</key>
-		<string>%#@project@</string>
-		<key>project</key>
-		<dict>
-			<key>NSStringFormatSpecTypeKey</key>
-			<string>NSStringPluralRuleType</string>
-			<key>NSStringFormatValueTypeKey</key>
-			<string>lld</string>
-			<key>other</key>
-			<string>%lld 个项目受保护</string>
+			<string>%lld 个较新的文件已移至一旁，未删除</string>
 		</dict>
 	</dict>
 	<key>%lld servers</key>
@@ -114,6 +86,20 @@
 			<string>%lld 个服务器</string>
 		</dict>
 	</dict>
+	<key>%lld skipped because they changed during the restore.</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@n@</string>
+		<key>n</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>other</key>
+			<string>%lld 个文件在恢复期间有更改，已跳过。</string>
+		</dict>
+	</dict>
 	<key>%lld snapshots</key>
 	<dict>
 		<key>NSStringLocalizedFormatKey</key>
@@ -128,7 +114,7 @@
 			<string>%lld 个快照</string>
 		</dict>
 	</dict>
-	<key>Restore %lld items to %@?</key>
+	<key>It left %lld servers running: %@</key>
 	<dict>
 		<key>NSStringLocalizedFormatKey</key>
 		<string>%1$#@n@</string>
@@ -139,7 +125,63 @@
 			<key>NSStringFormatValueTypeKey</key>
 			<string>lld</string>
 			<key>other</key>
-			<string>要将这 %1$lld 项恢复到 %2$@ 时的状态吗？</string>
+			<string>它遗留了 %1$lld 个仍在运行的服务器：%2$@</string>
+		</dict>
+	</dict>
+	<key>Protecting %lld projects</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@n@</string>
+		<key>n</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>other</key>
+			<string>正在保护 %lld 个项目</string>
+		</dict>
+	</dict>
+	<key>Removed %lld old snapshots · %@ freed</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%1$#@n@</string>
+		<key>n</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>other</key>
+			<string>已移除 %1$lld 个旧快照 · 已释放 %2$@</string>
+		</dict>
+	</dict>
+	<key>Restore %lld files to %@?</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%1$#@n@</string>
+		<key>n</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>other</key>
+			<string>要将 %1$lld 个文件恢复到 %2$@ 的状态吗？</string>
+		</dict>
+	</dict>
+	<key>Restored %lld files in %@</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%1$#@n@</string>
+		<key>n</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>other</key>
+			<string>已恢复 %2$@ 中的 %1$lld 个文件</string>
 		</dict>
 	</dict>
 	<key>Session ended — stop its %lld servers?</key>
@@ -154,6 +196,20 @@
 			<string>lld</string>
 			<key>other</key>
 			<string>会话已结束，要停止它的 %lld 个服务器吗？</string>
+		</dict>
+	</dict>
+	<key>Snapshot taken of %lld projects</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@n@</string>
+		<key>n</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>other</key>
+			<string>已为 %lld 个项目创建快照</string>
 		</dict>
 	</dict>
 </dict>

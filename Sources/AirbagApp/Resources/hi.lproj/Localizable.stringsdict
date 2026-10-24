@@ -2,6 +2,38 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<key>%lld commands checked today</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@n@</string>
+		<key>n</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>आज %lld कमांड जाँची गई</string>
+			<key>other</key>
+			<string>आज %lld कमांड जाँची गईं</string>
+		</dict>
+	</dict>
+	<key>%lld commands ran without snapshots</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@n@</string>
+		<key>n</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>%lld कमांड बिना स्नैपशॉट के चली</string>
+			<key>other</key>
+			<string>%lld कमांड बिना स्नैपशॉट के चलीं</string>
+		</dict>
+	</dict>
 	<key>%lld days</key>
 	<dict>
 		<key>NSStringLocalizedFormatKey</key>
@@ -34,7 +66,7 @@
 			<string>%lld फ़ाइलें</string>
 		</dict>
 	</dict>
-	<key>%lld files created later will be moved into Airbag's store (not deleted)</key>
+	<key>%lld newer files set aside, not deleted</key>
 	<dict>
 		<key>NSStringLocalizedFormatKey</key>
 		<string>%#@n@</string>
@@ -45,73 +77,9 @@
 			<key>NSStringFormatValueTypeKey</key>
 			<string>lld</string>
 			<key>one</key>
-			<string>बाद में बनाई गई %lld फ़ाइल Airbag के स्टोरेज में ले जाई जाएगी (डिलीट नहीं होगी)</string>
+			<string>%lld नई फ़ाइल अलग रखी गई, हटाई नहीं गई</string>
 			<key>other</key>
-			<string>बाद में बनाई गई %lld फ़ाइलें Airbag के स्टोरेज में ले जाई जाएँगी (डिलीट नहीं होंगी)</string>
-		</dict>
-	</dict>
-	<key>%lld files will be restored</key>
-	<dict>
-		<key>NSStringLocalizedFormatKey</key>
-		<string>%#@n@</string>
-		<key>n</key>
-		<dict>
-			<key>NSStringFormatSpecTypeKey</key>
-			<string>NSStringPluralRuleType</string>
-			<key>NSStringFormatValueTypeKey</key>
-			<string>lld</string>
-			<key>one</key>
-			<string>%lld फ़ाइल रीस्टोर होगी</string>
-			<key>other</key>
-			<string>%lld फ़ाइलें रीस्टोर होंगी</string>
-		</dict>
-	</dict>
-	<key>%lld live</key>
-	<dict>
-		<key>NSStringLocalizedFormatKey</key>
-		<string>%#@n@</string>
-		<key>n</key>
-		<dict>
-			<key>NSStringFormatSpecTypeKey</key>
-			<string>NSStringPluralRuleType</string>
-			<key>NSStringFormatValueTypeKey</key>
-			<string>lld</string>
-			<key>one</key>
-			<string>%lld सक्रिय</string>
-			<key>other</key>
-			<string>%lld सक्रिय</string>
-		</dict>
-	</dict>
-	<key>%lld orphans</key>
-	<dict>
-		<key>NSStringLocalizedFormatKey</key>
-		<string>%#@n@</string>
-		<key>n</key>
-		<dict>
-			<key>NSStringFormatSpecTypeKey</key>
-			<string>NSStringPluralRuleType</string>
-			<key>NSStringFormatValueTypeKey</key>
-			<string>lld</string>
-			<key>one</key>
-			<string>%lld अनाथ</string>
-			<key>other</key>
-			<string>%lld अनाथ</string>
-		</dict>
-	</dict>
-	<key>%lld projects protected</key>
-	<dict>
-		<key>NSStringLocalizedFormatKey</key>
-		<string>%#@project@</string>
-		<key>project</key>
-		<dict>
-			<key>NSStringFormatSpecTypeKey</key>
-			<string>NSStringPluralRuleType</string>
-			<key>NSStringFormatValueTypeKey</key>
-			<string>lld</string>
-			<key>one</key>
-			<string>%lld प्रोजेक्ट सुरक्षित</string>
-			<key>other</key>
-			<string>%lld प्रोजेक्ट सुरक्षित</string>
+			<string>%lld नई फ़ाइलें अलग रखी गईं, हटाई नहीं गईं</string>
 		</dict>
 	</dict>
 	<key>%lld servers</key>
@@ -130,6 +98,22 @@
 			<string>%lld सर्वर</string>
 		</dict>
 	</dict>
+	<key>%lld skipped because they changed during the restore.</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@n@</string>
+		<key>n</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>%lld फ़ाइल छोड़ी गई, क्योंकि रीस्टोर के दौरान वह बदल गई।</string>
+			<key>other</key>
+			<string>%lld फ़ाइलें छोड़ी गईं, क्योंकि रीस्टोर के दौरान वे बदल गईं।</string>
+		</dict>
+	</dict>
 	<key>%lld snapshots</key>
 	<dict>
 		<key>NSStringLocalizedFormatKey</key>
@@ -146,7 +130,7 @@
 			<string>%lld स्नैपशॉट</string>
 		</dict>
 	</dict>
-	<key>Restore %lld items to %@?</key>
+	<key>It left %lld servers running: %@</key>
 	<dict>
 		<key>NSStringLocalizedFormatKey</key>
 		<string>%1$#@n@</string>
@@ -157,9 +141,73 @@
 			<key>NSStringFormatValueTypeKey</key>
 			<string>lld</string>
 			<key>one</key>
-			<string>%1$lld आइटम को %2$@ की स्थिति पर रीस्टोर करें?</string>
+			<string>इसने %1$lld सर्वर चलता छोड़ दिया: %2$@</string>
 			<key>other</key>
-			<string>%1$lld आइटम को %2$@ की स्थिति पर रीस्टोर करें?</string>
+			<string>इसने %1$lld सर्वर चलते छोड़ दिए: %2$@</string>
+		</dict>
+	</dict>
+	<key>Protecting %lld projects</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@n@</string>
+		<key>n</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>%lld प्रोजेक्ट सुरक्षित है</string>
+			<key>other</key>
+			<string>%lld प्रोजेक्ट सुरक्षित हैं</string>
+		</dict>
+	</dict>
+	<key>Removed %lld old snapshots · %@ freed</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%1$#@n@</string>
+		<key>n</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>%1$lld पुराना स्नैपशॉट हटाया गया · %2$@ जगह खाली हुई</string>
+			<key>other</key>
+			<string>%1$lld पुराने स्नैपशॉट हटाए गए · %2$@ जगह खाली हुई</string>
+		</dict>
+	</dict>
+	<key>Restore %lld files to %@?</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%1$#@n@</string>
+		<key>n</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>%1$lld फ़ाइल को %2$@ की स्थिति पर रीस्टोर करें?</string>
+			<key>other</key>
+			<string>%1$lld फ़ाइलों को %2$@ की स्थिति पर रीस्टोर करें?</string>
+		</dict>
+	</dict>
+	<key>Restored %lld files in %@</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%1$#@n@</string>
+		<key>n</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>%2$@ में %1$lld फ़ाइल रीस्टोर की गई</string>
+			<key>other</key>
+			<string>%2$@ में %1$lld फ़ाइलें रीस्टोर की गईं</string>
 		</dict>
 	</dict>
 	<key>Session ended — stop its %lld servers?</key>
@@ -176,6 +224,22 @@
 			<string>सेशन समाप्त हुआ — इसका %lld सर्वर रोकें?</string>
 			<key>other</key>
 			<string>सेशन समाप्त हुआ — इसके %lld सर्वर रोकें?</string>
+		</dict>
+	</dict>
+	<key>Snapshot taken of %lld projects</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@n@</string>
+		<key>n</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>%lld प्रोजेक्ट का स्नैपशॉट लिया गया</string>
+			<key>other</key>
+			<string>%lld प्रोजेक्ट के स्नैपशॉट लिए गए</string>
 		</dict>
 	</dict>
 </dict>

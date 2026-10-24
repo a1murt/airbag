@@ -1642,7 +1642,8 @@ enum RelativeTime {
             return text.prefix(1).uppercased() + text.dropFirst()
         }
         let sameYear = cal.component(.year, from: date) == cal.component(.year, from: Date())
-        return sameYear ? date.formatted(.dateTime.weekday(.wide).day().month(.wide)) : date.formatted(date: .complete, time: .omitted)
+        let text = sameYear ? date.formatted(.dateTime.weekday(.wide).day().month(.wide)) : date.formatted(date: .complete, time: .omitted)
+        return text.prefix(1).uppercased() + text.dropFirst() // a heading, also in languages that write weekdays in lower case
     }
 
     /// Start of the day of a timestamp, for grouping.

@@ -2,6 +2,46 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<key>%lld commands checked today</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@n@</string>
+		<key>n</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>few</key>
+			<string>%lld команди перевірено сьогодні</string>
+			<key>many</key>
+			<string>%lld команд перевірено сьогодні</string>
+			<key>one</key>
+			<string>%lld команду перевірено сьогодні</string>
+			<key>other</key>
+			<string>%lld команди перевірено сьогодні</string>
+		</dict>
+	</dict>
+	<key>%lld commands ran without snapshots</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@n@</string>
+		<key>n</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>few</key>
+			<string>%lld команди виконано без знімків</string>
+			<key>many</key>
+			<string>%lld команд виконано без знімків</string>
+			<key>one</key>
+			<string>%lld команду виконано без знімка</string>
+			<key>other</key>
+			<string>%lld команди виконано без знімків</string>
+		</dict>
+	</dict>
 	<key>%lld days</key>
 	<dict>
 		<key>NSStringLocalizedFormatKey</key>
@@ -12,12 +52,12 @@
 			<string>NSStringPluralRuleType</string>
 			<key>NSStringFormatValueTypeKey</key>
 			<string>lld</string>
-			<key>one</key>
-			<string>%lld день</string>
 			<key>few</key>
 			<string>%lld дні</string>
 			<key>many</key>
 			<string>%lld днів</string>
+			<key>one</key>
+			<string>%lld день</string>
 			<key>other</key>
 			<string>%lld дня</string>
 		</dict>
@@ -32,17 +72,17 @@
 			<string>NSStringPluralRuleType</string>
 			<key>NSStringFormatValueTypeKey</key>
 			<string>lld</string>
-			<key>one</key>
-			<string>%lld файл</string>
 			<key>few</key>
 			<string>%lld файли</string>
 			<key>many</key>
 			<string>%lld файлів</string>
+			<key>one</key>
+			<string>%lld файл</string>
 			<key>other</key>
 			<string>%lld файлу</string>
 		</dict>
 	</dict>
-	<key>%lld files created later will be moved into Airbag's store (not deleted)</key>
+	<key>%lld newer files set aside, not deleted</key>
 	<dict>
 		<key>NSStringLocalizedFormatKey</key>
 		<string>%#@n@</string>
@@ -52,94 +92,14 @@
 			<string>NSStringPluralRuleType</string>
 			<key>NSStringFormatValueTypeKey</key>
 			<string>lld</string>
-			<key>one</key>
-			<string>%lld файл, створений пізніше, буде переміщено в сховище Airbag (не видалено)</string>
 			<key>few</key>
-			<string>%lld файли, створені пізніше, буде переміщено в сховище Airbag (не видалено)</string>
+			<string>%lld новіші файли відкладено, а не видалено</string>
 			<key>many</key>
-			<string>%lld файлів, створених пізніше, буде переміщено в сховище Airbag (не видалено)</string>
-			<key>other</key>
-			<string>%lld файлу, створеного пізніше, буде переміщено в сховище Airbag (не видалено)</string>
-		</dict>
-	</dict>
-	<key>%lld files will be restored</key>
-	<dict>
-		<key>NSStringLocalizedFormatKey</key>
-		<string>%#@n@</string>
-		<key>n</key>
-		<dict>
-			<key>NSStringFormatSpecTypeKey</key>
-			<string>NSStringPluralRuleType</string>
-			<key>NSStringFormatValueTypeKey</key>
-			<string>lld</string>
+			<string>%lld новіших файлів відкладено, а не видалено</string>
 			<key>one</key>
-			<string>Буде відновлено %lld файл</string>
-			<key>few</key>
-			<string>Буде відновлено %lld файли</string>
-			<key>many</key>
-			<string>Буде відновлено %lld файлів</string>
+			<string>%lld новіший файл відкладено, а не видалено</string>
 			<key>other</key>
-			<string>Буде відновлено %lld файлу</string>
-		</dict>
-	</dict>
-	<key>%lld live</key>
-	<dict>
-		<key>NSStringLocalizedFormatKey</key>
-		<string>%#@n@</string>
-		<key>n</key>
-		<dict>
-			<key>NSStringFormatSpecTypeKey</key>
-			<string>NSStringPluralRuleType</string>
-			<key>NSStringFormatValueTypeKey</key>
-			<string>lld</string>
-			<key>one</key>
-			<string>%lld активна</string>
-			<key>few</key>
-			<string>%lld активні</string>
-			<key>many</key>
-			<string>%lld активних</string>
-			<key>other</key>
-			<string>%lld активних</string>
-		</dict>
-	</dict>
-	<key>%lld orphans</key>
-	<dict>
-		<key>NSStringLocalizedFormatKey</key>
-		<string>%#@n@</string>
-		<key>n</key>
-		<dict>
-			<key>NSStringFormatSpecTypeKey</key>
-			<string>NSStringPluralRuleType</string>
-			<key>NSStringFormatValueTypeKey</key>
-			<string>lld</string>
-			<key>one</key>
-			<string>%lld покинутий</string>
-			<key>few</key>
-			<string>%lld покинуті</string>
-			<key>many</key>
-			<string>%lld покинутих</string>
-			<key>other</key>
-			<string>%lld покинутих</string>
-		</dict>
-	</dict>
-	<key>%lld projects protected</key>
-	<dict>
-		<key>NSStringLocalizedFormatKey</key>
-		<string>%#@project@</string>
-		<key>project</key>
-		<dict>
-			<key>NSStringFormatSpecTypeKey</key>
-			<string>NSStringPluralRuleType</string>
-			<key>NSStringFormatValueTypeKey</key>
-			<string>lld</string>
-			<key>one</key>
-			<string>%lld проєкт під захистом</string>
-			<key>few</key>
-			<string>%lld проєкти під захистом</string>
-			<key>many</key>
-			<string>%lld проєктів під захистом</string>
-			<key>other</key>
-			<string>%lld проєкту під захистом</string>
+			<string>%lld новішого файлу відкладено, а не видалено</string>
 		</dict>
 	</dict>
 	<key>%lld servers</key>
@@ -152,14 +112,34 @@
 			<string>NSStringPluralRuleType</string>
 			<key>NSStringFormatValueTypeKey</key>
 			<string>lld</string>
-			<key>one</key>
-			<string>%lld сервер</string>
 			<key>few</key>
 			<string>%lld сервери</string>
 			<key>many</key>
 			<string>%lld серверів</string>
+			<key>one</key>
+			<string>%lld сервер</string>
 			<key>other</key>
 			<string>%lld сервера</string>
+		</dict>
+	</dict>
+	<key>%lld skipped because they changed during the restore.</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@n@</string>
+		<key>n</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>few</key>
+			<string>%lld файли пропущено — вони змінилися під час відновлення.</string>
+			<key>many</key>
+			<string>%lld файлів пропущено — вони змінилися під час відновлення.</string>
+			<key>one</key>
+			<string>%lld файл пропущено — він змінився під час відновлення.</string>
+			<key>other</key>
+			<string>%lld файлу пропущено — вони змінилися під час відновлення.</string>
 		</dict>
 	</dict>
 	<key>%lld snapshots</key>
@@ -172,17 +152,17 @@
 			<string>NSStringPluralRuleType</string>
 			<key>NSStringFormatValueTypeKey</key>
 			<string>lld</string>
-			<key>one</key>
-			<string>%lld знімок</string>
 			<key>few</key>
 			<string>%lld знімки</string>
 			<key>many</key>
 			<string>%lld знімків</string>
+			<key>one</key>
+			<string>%lld знімок</string>
 			<key>other</key>
 			<string>%lld знімка</string>
 		</dict>
 	</dict>
-	<key>Restore %lld items to %@?</key>
+	<key>It left %lld servers running: %@</key>
 	<dict>
 		<key>NSStringLocalizedFormatKey</key>
 		<string>%1$#@n@</string>
@@ -192,14 +172,94 @@
 			<string>NSStringPluralRuleType</string>
 			<key>NSStringFormatValueTypeKey</key>
 			<string>lld</string>
-			<key>one</key>
-			<string>Відкотити %1$lld елемент до стану на %2$@?</string>
 			<key>few</key>
-			<string>Відкотити %1$lld елементи до стану на %2$@?</string>
+			<string>Залишилися працювати %1$lld сервери: %2$@</string>
 			<key>many</key>
-			<string>Відкотити %1$lld елементів до стану на %2$@?</string>
+			<string>Залишилося працювати %1$lld серверів: %2$@</string>
+			<key>one</key>
+			<string>Залишився працювати %1$lld сервер: %2$@</string>
 			<key>other</key>
-			<string>Відкотити %1$lld елемента до стану на %2$@?</string>
+			<string>Залишилося працювати %1$lld сервера: %2$@</string>
+		</dict>
+	</dict>
+	<key>Protecting %lld projects</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@n@</string>
+		<key>n</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>few</key>
+			<string>Під захистом %lld проєкти</string>
+			<key>many</key>
+			<string>Під захистом %lld проєктів</string>
+			<key>one</key>
+			<string>Під захистом %lld проєкт</string>
+			<key>other</key>
+			<string>Під захистом %lld проєкту</string>
+		</dict>
+	</dict>
+	<key>Removed %lld old snapshots · %@ freed</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%1$#@n@</string>
+		<key>n</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>few</key>
+			<string>Видалено %1$lld старі знімки · звільнено %2$@</string>
+			<key>many</key>
+			<string>Видалено %1$lld старих знімків · звільнено %2$@</string>
+			<key>one</key>
+			<string>Видалено %1$lld старий знімок · звільнено %2$@</string>
+			<key>other</key>
+			<string>Видалено %1$lld старого знімка · звільнено %2$@</string>
+		</dict>
+	</dict>
+	<key>Restore %lld files to %@?</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%1$#@n@</string>
+		<key>n</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>few</key>
+			<string>Відновити %1$lld файли до стану на %2$@?</string>
+			<key>many</key>
+			<string>Відновити %1$lld файлів до стану на %2$@?</string>
+			<key>one</key>
+			<string>Відновити %1$lld файл до стану на %2$@?</string>
+			<key>other</key>
+			<string>Відновити %1$lld файлу до стану на %2$@?</string>
+		</dict>
+	</dict>
+	<key>Restored %lld files in %@</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%1$#@n@</string>
+		<key>n</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>few</key>
+			<string>Відновлено %1$lld файли у %2$@</string>
+			<key>many</key>
+			<string>Відновлено %1$lld файлів у %2$@</string>
+			<key>one</key>
+			<string>Відновлено %1$lld файл у %2$@</string>
+			<key>other</key>
+			<string>Відновлено %1$lld файлу у %2$@</string>
 		</dict>
 	</dict>
 	<key>Session ended — stop its %lld servers?</key>
@@ -212,14 +272,34 @@
 			<string>NSStringPluralRuleType</string>
 			<key>NSStringFormatValueTypeKey</key>
 			<string>lld</string>
-			<key>one</key>
-			<string>Сесію завершено — зупинити її %lld сервер?</string>
 			<key>few</key>
 			<string>Сесію завершено — зупинити її %lld сервери?</string>
 			<key>many</key>
 			<string>Сесію завершено — зупинити її %lld серверів?</string>
+			<key>one</key>
+			<string>Сесію завершено — зупинити її %lld сервер?</string>
 			<key>other</key>
 			<string>Сесію завершено — зупинити її %lld сервера?</string>
+		</dict>
+	</dict>
+	<key>Snapshot taken of %lld projects</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@n@</string>
+		<key>n</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>few</key>
+			<string>Знімок створено: %lld проєкти</string>
+			<key>many</key>
+			<string>Знімок створено: %lld проєктів</string>
+			<key>one</key>
+			<string>Знімок створено: %lld проєкт</string>
+			<key>other</key>
+			<string>Знімок створено: %lld проєкту</string>
 		</dict>
 	</dict>
 </dict>
