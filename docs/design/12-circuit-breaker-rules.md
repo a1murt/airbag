@@ -1,7 +1,7 @@
 # 12 — Circuit breaker (rules engine)
 
 Status: implemented in `Sources/AirbagCore/Rules/` (M3). Fixture: `Tests/AirbagCoreTests/Fixtures/rules.json`
-(307 cases, all green).
+(427 cases, all green).
 
 ## Principle
 
@@ -14,7 +14,8 @@ snapshot taken before every mutating command.
 `GuardVerdict { decision: allow | ask | block, snapshot: none | recommended | required, findings[] }`
 
 - `block`: the damage is outside every snapshot and catastrophic (home, system folders, user data folders, a
-  parent of a protected project, Airbag's own data, disks, power, Time Machine, `gh repo delete`).
+  parent of a protected project other than that of its own agent worktree, Airbag's own data, disks, power, Time
+  Machine, `gh repo delete`).
 - `ask`: the damage is outside the project or remote (other folders, git remote history, databases, cloud,
   containers' volumes, piping downloads into a shell, `sudo`, broad `killall`, editing agent hook configs).
 - `allow` + `required`: destructive but recoverable inside a protected root (`rm` in the project, `git reset
@@ -30,9 +31,10 @@ The verdict is the maximum over all findings; snapshot need is the maximum over 
 
 1. `ShellLexer` tokenizes with POSIX quoting (`'…'`, `"…"`, `$'…'`, backslash, line continuation), operators
    (`; && || | |& & ( )`), redirections (incl. `2>`, `&>`, heredocs whose bodies are skipped), comments,
-   tilde expansion, known variables (`HOME`, `PWD`, `TMPDIR`, …; `$(pwd)` resolves to the working directory) and
-   marks every other expansion, command substitution or arithmetic as **opaque**. Substitution bodies are analysed
-   as commands too.
+   tilde expansion, brace expansion of unquoted braces (`{a,b}`, `{1..3}`, `{01..10..2}`, `{a..e}`; one word each, as
+   the shell expands them, a redirect target included; more than 256 words make the word opaque), known variables
+   (`HOME`, `PWD`, `TMPDIR`, …; `$(pwd)` resolves to the working directory) and marks every other expansion, command
+   substitution or arithmetic as **opaque**. Substitution bodies are analysed as commands too.
 2. Each simple command is unwrapped: env assignments, `sudo/doas` (also raises `sys.sudo`), `env`, `nohup`,
    `time`, `nice`, `exec`, `command`, `timeout`, `caffeinate`, `watch`, …; `sh/bash/zsh -c "…"` and `eval` are
    parsed recursively (depth ≤ 6); `npx/pnpm/yarn/bun` run the inner binary; `xargs` takes its targets from a
@@ -41,7 +43,43 @@ The verdict is the maximum over all findings; snapshot need is the maximum over 
 4. Paths resolve against the working directory, normalise `..`, resolve symlinked parents (a trailing slash
    follows the link), and globs classify their directory (`dir/*` = contents of `dir`, which never includes `.git`).
 5. Classification: `catastrophic`, `airbag`, `gitInternals`, `projectRoot`, `insideProject`, `regenerable`
-   (excluded build/dependency folders, user caches), `temporary`, `device`, `outside`, `unknown`.
+   (excluded build/dependency folders, `.idea/caches`, user caches), `temporary`, `device`, `outside`, `unknown`. An
+   agent worktree is a `projectRoot` of its own and a path in it `insideProject` of the worktree (below).
+
+## Agent worktrees
+
+`.claude/worktrees` and `.codex/worktrees` are excluded from a project's snapshots because each worktree in them is a
+snapshot root of its own (doc 10 §5). The rules treat it as one:
+
+- A path in an agent worktree belongs to the worktree, not to its project: `rm -rf .claude/worktrees/x/src` is
+  `fs.rm.project`, `echo > .claude/worktrees/x/NOTES.md` is `fs.truncate.project`, `sed -i … .claude/worktrees/x/a.ts`
+  is `fs.write.project`, and `git -C .claude/worktrees/x reset --hard` targets the worktree's tree, each with the
+  worktree in `GuardFinding.roots`. The hook snapshots the roots that findings wanting a snapshot name (doc 10 §4.6),
+  so a worktree is snapshotted only when the command writes, moves or deletes something in it:
+  `git -C .claude/worktrees/x diff > review.patch` only reads it.
+- `rm -rf .claude/worktrees/x` (`fs.rm.project-root`) is allowed after that snapshot when the worktree's `.git` is a
+  file: the history it points to stays in the main checkout. Without a file system (the fixtures) `.git` may be a
+  directory, so there it asks.
+- Deleting or moving a folder that holds agent worktrees (`.claude/worktrees`, `.claude`, `.codex`, a glob that reaches
+  one, such as `.claude/*` or `.*`) takes every agent's working tree at once: it asks (`fs.rm.worktree`,
+  `fs.mv.worktree`), and the finding is `required` and names the folder's project and every existing worktree below
+  it. Each of them is snapshotted before the command runs, also where asks are only recorded, and a failed snapshot
+  makes the command wait for the user (`snapshot.unavailable`). Deleting a project root (`fs.rm.project-root`) names
+  the worktrees in it the same way.
+- What reaches into worktrees from the main checkout names them too: `find . -name X -delete` and `find … | xargs rm`
+  (`fs.find.delete.project`), `git clean` with `-f` given twice (`git clean -ffdx` removes nested repositories, linked
+  worktrees among them; with one `-f` git leaves them alone), and inline interpreter code that deletes a folder holding
+  worktrees (`interp.delete`, which then asks).
+- `git worktree remove --force <worktree>` (`git.worktree.remove`, ask) names the worktree it removes, by path or by
+  the last components of a registered worktree's path as git accepts them (`git worktree remove -f wt`), and needs its
+  snapshot; a worktree outside every project is snapshotted as a root of its own. One git cannot find needs none.
+- The worktree is the folder below `.claude/worktrees`, or for Codex's `<id>/<repo>` the folder with the `.git` (`<id>`
+  itself when none has one). A missing or empty entry has nothing to lose (`regenerable`), and neither have
+  dependency and build folders inside a worktree. Worktrees nested in a worktree count the same way.
+- A worktree among the protected roots (the session runs in it, or the command `cd`s into it) does not make its main
+  checkout, `.claude` or `.claude/worktrees` "the parent of a protected root": they are judged as above, so `rm -rf
+  ./*` and `git reset --hard` in the main checkout keep their usual rules. The parent of any other root is still
+  `catastrophic`.
 
 ## Rule catalog
 
@@ -65,6 +103,7 @@ The verdict is the maximum over all findings; snapshot need is the maximum over 
 | `fs.mv.opaque` | ask | recommended | it moves a path built from an unresolved variable. |
 | `fs.mv.outside` | ask | none | it moves (s.text), which is outside the protected project. |
 | `fs.mv.project` | allow | required | it moves project files (restorable from the snapshot taken first). |
+| `fs.mv.worktree` | ask | required | it moves (s.text), which holds (n) agent worktrees (names): each gets a snapshot of its own first, but taking every agent's working tree at once is the user's call. |
 | `fs.overwrite.catastrophic` | block | none | it would (verb) (describe(p)). |
 | `fs.perm.opaque` | ask | recommended | it recursively changes permissions of a path built from an unresolved variable. |
 | `fs.perm.outside` | ask | none | it recursively changes permissions outside the protected project. |
@@ -74,6 +113,7 @@ The verdict is the maximum over all findings; snapshot need is the maximum over 
 | `fs.rm.outside` | ask | none | it would (verb) (t.text) outside the protected project, where no snapshot can restore it. |
 | `fs.rm.project` | allow | required | it deletes project files (restorable from the snapshot taken first). |
 | `fs.rm.project-root` | allow, ask | required | it deletes the whole project folder (restorable from the snapshot taken first). |
+| `fs.rm.worktree` | ask | required | it would (verb) (t.text), which holds (n) agent worktrees (names): each gets a snapshot of its own first, but taking every agent's working tree at once is the user's call. |
 | `fs.rsync.delete.remote` | ask | none | it deletes files on a remote machine that are missing locally. |
 | `fs.trash.empty` | block | none | it empties the Trash permanently. |
 | `fs.truncate.opaque` | ask | recommended | it empties a file whose path depends on an unresolved variable. |
@@ -102,8 +142,8 @@ The verdict is the maximum over all findings; snapshot need is the maximum over 
 | `git.stash.drop` | ask | recommended | it permanently drops stashed changes, which are not in the working tree and not in snapshots. |
 | `git.submodule.deinit` | ask | recommended | it force-removes submodule working trees. |
 | `git.update-ref.delete` | ask | recommended | it deletes a git ref directly. |
-| `git.worktree.remove` | ask | recommended | it force-removes a worktree including uncommitted changes. |
-| `interp.delete` | ask | recommended | it deletes files or runs commands from inline (name) code that Airbag cannot analyze. |
+| `git.worktree.remove` | ask | required, recommended | it force-removes a worktree including uncommitted changes. |
+| `interp.delete` | ask | recommended, required | it deletes files or runs commands from inline (name) code that Airbag cannot analyze. |
 | `interp.delete.catastrophic` | block | none | its inline (name) code deletes or runs commands against (describe(p)). |
 | `interp.delete.project` | allow | required | it deletes files from inline (name) code inside the project (snapshot taken first). |
 | `net.pipe.shell` | ask | recommended | it pipes a downloaded script straight into (name). |
@@ -129,7 +169,9 @@ The verdict is the maximum over all findings; snapshot need is the maximum over 
 Agent-facing text is English and ends with the way forward: blocked commands say "Do not retry this command or
 work around it with another tool; choose a safer, narrower command or ask the user"; asks name the risk. When the
 agent cannot ask the user natively, the hook turns `ask` into a deny that tells the model the user can approve the
-command in Airbag (doc 11 §4.6).
+command in Airbag (doc 11 §4.6). An ask names the snapshot that can undo the finding that decided it: that of the root
+the finding targets, or the session folder's for one that names no root; none for a finding no snapshot undoes
+(`snapshot: none`) or when a snapshot the command needed is missing.
 
 ## Known limits (honest)
 

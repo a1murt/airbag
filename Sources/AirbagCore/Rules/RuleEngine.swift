@@ -26,8 +26,10 @@ public struct GuardFinding: Sendable, Codable, Equatable {
     public let reason: String
     /// The part of the command the rule matched.
     public let matched: String
-    /// For a finding that needs a snapshot (`snapshot: required`), the protected roots its targets lie in: each needs a
-    /// usable snapshot of its own before the command runs. Empty when no target lies in a protected root.
+    /// For a finding that wants a snapshot, the roots its targets lie in: protected roots, the agent worktrees in them
+    /// (each a root of its own, which the project's snapshots skip) and a worktree `git worktree remove --force` takes.
+    /// With `snapshot: required` each needs a usable snapshot of its own before the command runs; with `recommended`
+    /// the hook takes one where it can. Empty when no target lies in a root.
     public var roots: [String] = []
 }
 
@@ -82,16 +84,16 @@ enum PathClass: Equatable {
     case catastrophic(String)   // home, system, user data folders, or a parent of a protected root
     case airbag                 // Airbag's own data
     case gitInternals(String)   // .git of a protected root (history is not in snapshots)
-    case projectRoot(String)    // a protected root itself
-    case insideProject(String)  // inside a protected root
+    case projectRoot(String)    // a protected root itself, or an agent worktree in one (a root of its own)
+    case insideProject(String)  // inside a protected root or one of its agent worktrees
     case regenerable            // inside an excluded directory (node_modules, dist, …) of a protected root
     case temporary
     case device
     case outside
     case unknown                // opaque: unresolved variable or substitution
 
-    /// The protected root whose snapshots hold this path, as `GuardFinding.roots` lists it (none outside a project, in
-    /// .git or in an excluded folder).
+    /// The root whose snapshots hold this path (an agent worktree's for a path in one), as `GuardFinding.roots` lists it
+    /// (none outside a project, in .git or in an excluded folder).
     var roots: [String] {
         switch self {
         case .projectRoot(let r), .insideProject(let r): return [r]
@@ -292,15 +294,11 @@ struct Analyzer {
             if ab.hasPrefix(p + "/") { return .catastrophic(p) }
         }
         if criticalPaths.contains(p) { return .catastrophic(p) }
-        for root in context.roots where root.hasPrefix(p + "/") { return .catastrophic(p) } // a parent of a protected root
-        for root in context.roots.sorted(by: { $0.count > $1.count }) {
-            if p == root { return r.contents ? .insideProject(root) : .projectRoot(root) } // `*` skips dotfiles such as .git
-            if p.hasPrefix(root + "/") {
-                let comps = p.dropFirst(root.count + 1).split(separator: "/").map(String.init)
-                if comps.first == ".git" { return .gitInternals(root) }
-                if comps.contains(where: { Analyzer.excludedNames.contains($0) }) { return .regenerable }
-                return .insideProject(root)
-            }
+        // A parent of a protected root, unless that root is an agent worktree of another root `p` lies in: what deletes
+        // or moves `p` then names the worktrees below it (`worktrees(below:)`), each with a snapshot of its own.
+        for root in context.roots where root.hasPrefix(p + "/") && !isAgentWorktree(root, within: p) { return .catastrophic(p) }
+        for root in context.roots.sorted(by: { $0.count > $1.count }) where p == root || p.hasPrefix(root + "/") {
+            return classify(r, in: root)
         }
         let home = context.home
         for c in [home + "/.cache", home + "/Library/Caches", home + "/.npm/_cacache", home + "/Library/Developer/Xcode/DerivedData",
@@ -311,6 +309,123 @@ struct Analyzer {
             if p.hasPrefix(tt + "/") { return .temporary }
         }
         return .outside
+    }
+
+    /// A path at or below the protected `root`. An agent worktree in it is a root of its own: the root's snapshots skip
+    /// it, its own snapshots hold it.
+    func classify(_ r: Resolved, in root: String) -> PathClass {
+        let p = r.path
+        if p == root { return r.contents ? .insideProject(root) : .projectRoot(root) } // `*` skips dotfiles such as .git
+        let comps = p.dropFirst(root.count + 1).split(separator: "/").map(String.init)
+        if comps.first == ".git" { return .gitInternals(root) }
+        switch agentWorktree(comps, in: root) {
+        case .worktree(let w)?: return classify(r, in: w)
+        case .absent?: return .regenerable // nothing there to lose
+        case nil: break
+        }
+        let rel = comps.joined(separator: "/")
+        if comps.contains(where: { Analyzer.excludedNames.contains($0) })
+            || Exclusions.defaultRelativePaths.contains(where: { rel == $0 || rel.hasPrefix($0 + "/") }) { return .regenerable }
+        return .insideProject(root)
+    }
+
+    // MARK: agent worktrees
+
+    /// `.claude/worktrees` and `.codex/worktrees`, as path components below a root.
+    static let worktreeFolders: [[String]] = Exclusions.worktreeFolders.sorted().map { $0.split(separator: "/").map(String.init) }
+
+    enum WorktreeMatch: Equatable { case worktree(String), absent }
+
+    /// The agent worktree of `root` that a path below it (`comps`) lies in: `.claude/worktrees/<name>`, or for Codex's
+    /// `.codex/worktrees/<id>/<repo>` the folder with the `.git`. `.absent` when nothing there could be lost; nil when the
+    /// path is not in a worktree folder, or is a folder holding several worktrees (`<id>`).
+    func agentWorktree(_ comps: [String], in root: String) -> WorktreeMatch? {
+        for folder in Analyzer.worktreeFolders where comps.count > folder.count && comps.starts(with: folder) {
+            let entry = root + "/" + (folder + [comps[folder.count]]).joined(separator: "/")
+            guard context.useFileSystem else { return .worktree(entry) }
+            let found = worktrees(inEntry: entry)
+            if found.isEmpty { return .absent }
+            if found == [entry] { return .worktree(entry) }
+            if comps.count > folder.count + 1, let w = found.first(where: { $0 == entry + "/" + comps[folder.count + 1] }) { return .worktree(w) }
+            return comps.count == folder.count + 1 ? nil : .worktree(entry)
+        }
+        return nil
+    }
+
+    /// The worktrees an entry of a worktree folder stands for: itself, or the folders in it with a `.git` when it has
+    /// none of its own (Codex's `<id>/<repo>`). None when it is missing, not a folder, or empty.
+    func worktrees(inEntry entry: String) -> [String] {
+        var st = stat()
+        guard lstat(entry, &st) == 0, (st.st_mode & S_IFMT) == S_IFDIR,
+              let names = try? FileManager.default.contentsOfDirectory(atPath: entry), names.contains(where: { $0 != ".DS_Store" }) else { return [] }
+        if names.contains(".git") { return [entry] }
+        let repos = names.sorted().map { entry + "/" + $0 }.filter { lstat($0, &st) == 0 && (st.st_mode & S_IFMT) == S_IFDIR && hasGitEntry($0) }
+        return repos.isEmpty ? [entry] : repos
+    }
+
+    /// Whether the protected root `x` is an agent worktree of another protected root that `p` is in or is.
+    func isAgentWorktree(_ x: String, within p: String) -> Bool {
+        context.roots.contains { r in
+            r != x && (p == r || p.hasPrefix(r + "/"))
+                && Analyzer.worktreeFolders.contains { x.hasPrefix(r + "/" + $0.joined(separator: "/") + "/") }
+        }
+    }
+
+    /// The agent worktrees that deleting or moving `t` takes with it, each a root of its own. A glob (`dir/.*`) reaches
+    /// those whose first folder below `dir` it matches.
+    func worktrees(below t: ShellWord) -> [String]? {
+        guard let r = resolve(t) else { return [] }
+        var pattern: String?
+        if r.contents, let g = t.text.firstIndex(where: { "*?[".contains($0) }) {
+            let start = t.text[..<g].lastIndex(of: "/").map { t.text.index(after: $0) } ?? t.text.startIndex
+            pattern = String(t.text[start...].prefix { $0 != "/" })
+        }
+        return worktrees(below: r.path, matching: pattern)
+    }
+
+    /// The agent worktrees strictly below `p`, nested ones included. nil when the path holds a worktree folder but there
+    /// is no file system to list it (fixtures); the project root itself then counts as holding none.
+    func worktrees(below p: String, matching pattern: String? = nil) -> [String]? {
+        var out: [String] = []
+        var unknown = false
+        func reaches(_ w: String) -> Bool {
+            guard w.hasPrefix(p + "/") else { return false }
+            guard let pattern else { return true }
+            return fnmatch(pattern, String(w.dropFirst(p.count + 1).prefix { $0 != "/" }), FNM_PERIOD) == 0
+        }
+        func collect(_ w: String, depth: Int) {
+            if !out.contains(w) { out.append(w) }
+            visit(w, depth: depth + 1)
+        }
+        func visit(_ root: String, depth: Int) {
+            guard depth < 4 else { return }
+            for folder in Analyzer.worktreeFolders {
+                let base = root + "/" + folder.joined(separator: "/")
+                guard base == p || reaches(base) || p.hasPrefix(base + "/") else { continue }
+                guard context.useFileSystem else {
+                    if root != p, !p.hasPrefix(base + "/") { unknown = true }
+                    continue
+                }
+                let names = (try? FileManager.default.contentsOfDirectory(atPath: base)) ?? []
+                for w in names.sorted().flatMap({ worktrees(inEntry: base + "/" + $0) }) {
+                    if reaches(w) { collect(w, depth: depth) } else if p == w || p.hasPrefix(w + "/") { visit(w, depth: depth + 1) }
+                }
+            }
+        }
+        for root in context.roots where p == root || p.hasPrefix(root + "/") { visit(root, depth: 0) }
+        for x in context.roots where reaches(x) && isAgentWorktree(x, within: p) && !out.contains(x) { out.append(x) }
+        return unknown && out.isEmpty ? nil : out
+    }
+
+    /// The end of a reason for deleting or moving a folder that holds agent worktrees.
+    func holdsWorktreesReason(_ held: [String]?) -> String {
+        guard let held, !held.isEmpty else {
+            return "which holds agent worktrees: each is a snapshot root of its own, and taking every agent's working tree at once is the user's call."
+        }
+        var names = held.prefix(3).map { ($0 as NSString).lastPathComponent }.joined(separator: ", ")
+        if held.count > 3 { names += ", …" }
+        let what = held.count == 1 ? "an agent worktree" : "\(held.count) agent worktrees"
+        return "which holds \(what) (\(names)): each gets a snapshot of its own first, but taking every agent's working tree at once is the user's call."
     }
 
     // MARK: per-command analysis
@@ -905,15 +1020,21 @@ struct Analyzer {
                 add("self.hooks", .ask, .none, "it removes a folder with an agent's hook configuration, which switches Airbag's protection off.", t.text)
             }
             let cls = classify(resolve(t))
+            // Agent worktrees inside what goes are roots of their own: each needs its own snapshot.
+            let held = recursive || t.hasGlob ? worktrees(below: t) : []
             switch cls {
             case .catastrophic(let p):
                 if recursive || t.hasGlob { add("fs.rm.catastrophic", .block, .none, "it would \(verb) \(describe(p)), which no snapshot covers.", t.text) }
                 else { add("fs.rm.outside", .ask, .none, "it would \(verb) \(t.text) outside the protected project.", t.text) }
             case .airbag: add("self.airbag", .block, .none, "it would \(verb) Airbag's own data, which protects this project.", t.text)
             case .gitInternals: add("git.internals.delete", .ask, .recommended, "it would \(verb) git internals (.git), and git history is not part of Airbag snapshots.", t.text)
+            case .projectRoot(let r) where hasGitDirectory(r):
+                add("fs.rm.project-root", .ask, .required, "it would \(verb) the whole project including its git history, which snapshots do not cover.", t.text, roots: [r] + (held ?? []))
+            case .projectRoot where held != [], .insideProject where held != [], .regenerable where held != []:
+                add("fs.rm.worktree", .ask, .required, "it would \(verb) \(t.text), \(holdsWorktreesReason(held))", t.text, roots: cls.roots + (held ?? []))
             case .projectRoot(let r):
-                if hasGitDirectory(r) {
-                    add("fs.rm.project-root", .ask, .required, "it would \(verb) the whole project including its git history, which snapshots do not cover.", t.text, roots: [r])
+                if hasGitEntry(r) {
+                    add("fs.rm.project-root", .allow, .required, "it deletes the whole worktree folder (restorable from the snapshot taken first; the git history its .git file points to is not touched).", t.text, roots: [r])
                 } else {
                     add("fs.rm.project-root", .allow, .required, "it deletes the whole project folder (restorable from the snapshot taken first).", t.text, roots: [r])
                 }
@@ -938,10 +1059,16 @@ struct Analyzer {
         return nil
     }
 
+    /// A `.git` directory holds the repository's history; the `.git` file of a linked worktree or submodule only points to it.
     func hasGitDirectory(_ root: String) -> Bool {
         guard context.useFileSystem else { return true }
         var st = stat()
-        return lstat(root + "/.git", &st) == 0
+        return lstat(root + "/.git", &st) == 0 && (st.st_mode & S_IFMT) == S_IFDIR
+    }
+
+    func hasGitEntry(_ dir: String) -> Bool {
+        var st = stat()
+        return lstat(dir + "/.git", &st) == 0
     }
 
     func describe(_ p: String) -> String {
@@ -1049,7 +1176,11 @@ struct Analyzer {
                 if filtered { add("fs.find.delete.broad", .ask, .none, "it deletes matching files anywhere under \(describe(p)), outside what snapshots cover.", b.text) }
                 else { add("fs.rm.catastrophic", .block, .none, "it would delete everything under \(describe(p)).", b.text) }
             case .projectRoot:
-                if filtered { add("fs.find.delete.project", .allow, .required, "it deletes matching project files (restorable from the snapshot taken first).", b.text, roots: cls.roots) }
+                if filtered {
+                    // find descends into agent worktrees too, each a root of its own.
+                    add("fs.find.delete.project", .allow, .required, "it deletes matching project files (restorable from the snapshot taken first).", b.text,
+                        roots: cls.roots + (worktrees(below: b) ?? []))
+                }
                 else { classifyDeletion([b], recursive: true, verb: "delete everything in", whole: whole) }
             default:
                 classifyDeletion([b], recursive: true, verb: "delete files under", whole: whole)
@@ -1097,12 +1228,15 @@ struct Analyzer {
                 add("self.hooks", .ask, .none, "it moves a folder with an agent's hook configuration away, which switches Airbag's protection off.", s.text)
             }
             let cls = classify(resolve(s))
+            let held = worktrees(below: s)
             switch cls {
             case .catastrophic(let p): add("fs.mv.catastrophic", .block, .none, "it would move \(describe(p)) away, breaking the system or your files.", s.text)
             case .airbag: add("self.airbag", .block, .none, "it would move Airbag's own data.", s.text)
             case .outside: add("fs.mv.outside", .ask, .none, "it moves \(s.text), which is outside the protected project.", s.text)
             case .unknown: add("fs.mv.opaque", .ask, .recommended, "it moves a path built from an unresolved variable.", s.text)
             case .gitInternals: add("git.internals.delete", .ask, .recommended, "it moves git internals (.git), which snapshots do not cover.", s.text)
+            case .projectRoot where held != [], .insideProject where held != [], .regenerable where held != []:
+                add("fs.mv.worktree", .ask, .required, "it moves \(s.text), \(holdsWorktreesReason(held))", s.text, roots: cls.roots + (held ?? []))
             case .projectRoot, .insideProject: add("fs.mv.project", .allow, .required, "it moves project files (restorable from the snapshot taken first).", s.text, roots: cls.roots)
             default: break
             }
@@ -1121,7 +1255,9 @@ struct Analyzer {
         var critical: String?
         if case .catastrophic(let p) = cls { critical = p }
         let existingDirectory = context.useFileSystem && isDirectory(resolvedDest.path)
-        guard intoDirectory || relative || critical != nil || (existingDirectory && cls == .outside) else {
+        // Outside the snapshots (another folder, a worktree folder holding agent worktrees) only the names written matter.
+        let uncovered = cls == .outside || (cls == .regenerable && worktrees(below: resolvedDest.path)?.isEmpty == false)
+        guard intoDirectory || relative || critical != nil || (existingDirectory && uncovered) else {
             writeCheck(dest, truncates: truncates || replacesExistingFile(resolvedDest.path), whole: whole)
             return
         }
@@ -1226,14 +1362,15 @@ struct Analyzer {
             add("self.hooks", .ask, .none, "it edits an agent's hook configuration, which can switch Airbag's protection off.", target.text)
             return
         }
-        switch classify(resolved) {
+        let cls = classify(resolved)
+        switch cls {
         case .catastrophic(let p): add("fs.overwrite.catastrophic", .block, .none, "it would overwrite \(describe(p)).", target.text)
         case .airbag: add("self.airbag", .block, .none, "it modifies Airbag's own data, which protects this project.", target.text)
         case .device: add("fs.device.write", .block, .none, "it writes to a device.", target.text)
         case .outside where truncates && replacesOrUnknown(resolved?.path):
             add("fs.write.outside", .ask, .recommended, "it overwrites \(target.text) outside the protected project, where no snapshot can restore it.", target.text)
         case .gitInternals: add("git.internals.write", .ask, .recommended, "it overwrites a file inside .git, which snapshots do not cover.", target.text)
-        case .insideProject, .projectRoot: add("fs.write.project", .allow, .recommended, "it edits project files (a snapshot is taken first).", target.text)
+        case .insideProject, .projectRoot: add("fs.write.project", .allow, .recommended, "it edits project files (a snapshot is taken first).", target.text, roots: cls.roots)
         default: break
         }
     }
@@ -1330,7 +1467,10 @@ struct Analyzer {
             if has("--hard") || has("--merge") || has("--keep") { mayWrite("git \(sub)"); addGit(treeRoot, effectiveTree, "git.reset.hard", .allow, .required, "it discards uncommitted changes (restorable from the snapshot taken first).", whole) }
         case "clean":
             if rest.contains(where: { $0 == "-n" || $0 == "--dry-run" || ($0.hasPrefix("-") && !$0.hasPrefix("--") && $0.contains("n")) }) { mutatesWorktree = false; return }
-            addGit(treeRoot, effectiveTree, "git.clean", .allow, .required, "it deletes untracked\(rest.contains { $0.contains("x") } ? " and ignored" : "") files (restorable from the snapshot taken first, except dependency and build folders).", whole)
+            // `-f` given twice also removes nested repositories, linked worktrees among them: each needs its own snapshot.
+            let force = rest.reduce(0) { n, a in a == "--force" ? n + 1 : a.hasPrefix("-") && !a.hasPrefix("--") ? n + a.filter { $0 == "f" }.count : n }
+            let nested = force >= 2 ? (effectiveTree.flatMap { worktrees(below: $0) } ?? []) : []
+            addGit(treeRoot, effectiveTree, "git.clean", .allow, .required, "it deletes untracked\(rest.contains { $0.contains("x") } ? " and ignored" : "") files (restorable from the snapshot taken first, except dependency and build folders).", whole, also: nested)
         case "checkout":
             if has("--") || has(".") || has("-f") || has("--force") || has("-p") || has("--theirs") || has("--ours") {
                 addGit(treeRoot, effectiveTree, "git.checkout.discard", .allow, .required, "it overwrites working-tree files (restorable from the snapshot taken first).", whole)
@@ -1369,7 +1509,20 @@ struct Analyzer {
         case "update-ref":
             if has("-d") { add("git.update-ref.delete", .ask, .recommended, "it deletes a git ref directly.", whole) }
         case "worktree":
-            if has("remove") && (has("--force") || has("-f")) { mayWrite("git \(sub)"); add("git.worktree.remove", .ask, .recommended, "it force-removes a worktree including uncommitted changes.", whole) }
+            if has("remove") && (has("--force") || has("-f")) {
+                mayWrite("git \(sub)")
+                // What goes is the worktree's uncommitted work: the worktree needs a snapshot of its own.
+                let operand = rest.drop { $0 != "remove" }.dropFirst().first { !$0.hasPrefix("-") }
+                let saved = cwd
+                cwd = gitCwd
+                let removed = operand.flatMap { removedWorktree($0, tree: effectiveTree) }
+                cwd = saved
+                let roots: [String] = removed.map { w in
+                    let cls = classify(Resolved(path: w, contents: false))
+                    return [.outside, .temporary, .regenerable].contains(cls) ? [w] : cls.roots
+                } ?? []
+                add("git.worktree.remove", .ask, roots.isEmpty ? .recommended : .required, "it force-removes a worktree including uncommitted changes.", whole, roots: roots)
+            }
             else if has("remove") || has("prune") { mayWrite("git \(sub)") }
         case "rm":
             if has("--cached") { mutatesWorktree = false; return }
@@ -1380,9 +1533,30 @@ struct Analyzer {
         }
     }
 
-    /// Destructive git subcommands are recoverable only when the working tree is a protected root.
-    mutating func addGit(_ treeRoot: String?, _ tree: String?, _ id: String, _ decision: GuardDecision, _ snapshot: SnapshotNeed, _ reason: String, _ matched: String) {
-        if let treeRoot { add(id, decision, snapshot, reason, matched, roots: [treeRoot]); return }
+    /// The worktree `git worktree remove` names: its path, or the last components of a registered worktree's path
+    /// (`git worktree remove wt` for `.claude/worktrees/wt`), as git accepts. nil when it is neither.
+    func removedWorktree(_ operand: String, tree: String?) -> String? {
+        guard let r = resolve(ShellWord(operand)) else { return nil }
+        if !context.useFileSystem || isDirectory(r.path) { return r.path }
+        // <common dir>/worktrees/<name>/gitdir holds "<worktree>/.git".
+        guard let tree, let top = gitTopLevel(tree), let common = GitLayout.inspect(root: top, home: context.home).commonDir,
+              let names = try? FileManager.default.contentsOfDirectory(atPath: common + "/worktrees") else { return nil }
+        let suffix = "/" + operand.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        let matches = names.compactMap { name -> String? in
+            guard let text = try? String(contentsOfFile: common + "/worktrees/" + name + "/gitdir", encoding: .utf8) else { return nil }
+            let gitdir = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard gitdir.hasSuffix("/.git") else { return nil }
+            let path = String(gitdir.dropLast(5))
+            return path.hasSuffix(suffix) ? FileSystem.canonicalPath(path) ?? path : nil
+        }
+        return matches.count == 1 ? matches[0] : nil
+    }
+
+    /// Destructive git subcommands are recoverable only when the working tree is a protected root. `also`: further roots
+    /// the command reaches (the worktrees `git clean -ff` removes).
+    mutating func addGit(_ treeRoot: String?, _ tree: String?, _ id: String, _ decision: GuardDecision, _ snapshot: SnapshotNeed, _ reason: String, _ matched: String,
+                         also: [String] = []) {
+        if let treeRoot { add(id, decision, snapshot, reason, matched, roots: [treeRoot] + also); return }
         let whereText = tree.map { describe($0) } ?? "a directory Airbag cannot resolve"
         add("git.outside-root", .ask, .recommended, "it runs a destructive git command (\(id.replacingOccurrences(of: "git.", with: ""))) in \(whereText), outside the protected project, so no snapshot covers it.", matched)
     }
@@ -1429,16 +1603,20 @@ struct Analyzer {
                         "rm_rf", "rm_r", "shutil.move", "send2trash", "truncate(", "deletesync", "fs.promises.rm", "removesync",
                         "deno.remove", "remove_dir_all", "fs::remove", "os.removeall", "dir.delete", "unlink_missing", ".unlink(", "pathlib"]
         guard deleting.contains(where: { lowered.contains($0) }) else { return }
-        let classes = extractPaths(code).map { classify(resolve(ShellWord($0))) }
+        let paths = extractPaths(code)
+        let classes = paths.map { classify(resolve(ShellWord($0))) }
         if let bad = classes.first(where: { if case .catastrophic = $0 { return true }; return false }), case .catastrophic(let p) = bad {
             add("interp.delete.catastrophic", .block, .none, "its inline \(name) code deletes \(describe(p)).", whole)
             return
         }
-        if !classes.isEmpty, classes.allSatisfy({ if case .insideProject = $0 { return true }; if case .regenerable = $0 { return true }; if case .temporary = $0 { return true }; return false }) {
+        // Agent worktrees in a folder it deletes, and any root it names, get snapshots of their own.
+        let held = paths.flatMap { worktrees(below: ShellWord($0)) ?? [] }
+        let roots = classes.flatMap(\.roots) + held
+        if !classes.isEmpty, held.isEmpty, classes.allSatisfy({ if case .insideProject = $0 { return true }; if case .regenerable = $0 { return true }; if case .temporary = $0 { return true }; return false }) {
             add("interp.delete.project", .allow, .required, "it deletes files from inline \(name) code inside the project (snapshot taken first).", whole,
-                roots: classes.flatMap(\.roots))
+                roots: roots)
         } else {
-            add("interp.delete", .ask, .recommended, "it deletes files from inline \(name) code that Airbag cannot fully analyze.", whole)
+            add("interp.delete", .ask, roots.isEmpty ? .recommended : .required, "it deletes files from inline \(name) code that Airbag cannot fully analyze.", whole, roots: roots)
         }
     }
 

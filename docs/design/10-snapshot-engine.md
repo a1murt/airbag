@@ -142,8 +142,9 @@ swept at the next prune. A crash before commit loses only that snapshot.
 
 ### 4.6 Deadlines and the first snapshot
 
-The hook gives every snapshot a soft deadline of 1500 ms (`HookBridgeConfig.snapshotDeadlineMs`; the bounded size
-check of §5 shares it) and waits at most 800 ms for the store lock. When the store is missing, the hook takes the
+The hook gives the snapshots it takes for one command a soft deadline of 1500 ms (`HookBridgeConfig.snapshotDeadlineMs`;
+the bounded size check of §5 shares it), one deadline for every root it snapshots (below), and waits at most 800 ms for
+a store lock, never past that deadline. When the store is missing, the hook takes the
 first snapshot itself, as an `initial` snapshot (no hashing) under that deadline. A small project finishes inline:
 on a 5,000-file, 50 MB project the first hook, initial snapshot included, took 566–729 ms in three runs
 ([BENCHMARKS](../BENCHMARKS.md)). A large one does not: the first snapshot of a 50k-file root takes 9.3 s (§11).
@@ -166,17 +167,23 @@ agent writes into a new empty folder needs no approval. A folder the user stoppe
 Settings or the popover) gets no snapshot and needs none (`snapshot_skipped = "not_protected"`); Guard's blocks still
 apply there. A walk cut short still counts as `incomplete`.
 
-Snapshots count per root. A `required` finding names the protected roots its targets lie in (`GuardFinding.roots`),
-and each of them needs a usable snapshot of its own (or one of the two skip reasons above): the session folder's
-snapshot does not cover `rm ../notes.txt` run from a nested repository inside the agent's launch folder, nor
-`git -C <main checkout> reset --hard` run from a worktree next to it (one inside its main checkout makes the checkout
-the parent of a protected root, which the rules ask about anyway). After the session folder and the folders the
-command `cd`s into, the hook snapshots each such root (the launch folder, the main checkout), each with its own
-deadline, and only when a finding targets it, so a command that stays in the session folder takes no extra snapshot.
-When one of them gets no usable snapshot, the command is escalated with that root's skip reason. A finding whose
-targets lie in no root (a dependency folder, a temporary file) is judged on the snapshots taken. The post-command
-snapshot covers the same roots; the event links to the session folder's snapshot, and to another root's only when
-the session folder has none (an empty folder).
+Snapshots count per root. A finding that wants a snapshot names the roots its targets lie in (`GuardFinding.roots`):
+protected roots, the agent worktrees in them, which their project's snapshots skip (§5; doc 12 "Agent worktrees"),
+and a worktree that `git worktree remove --force` removes. For a `required` finding each of them needs a usable snapshot
+of its own (or one of the two skip reasons above): the session folder's snapshot does not cover `rm ../notes.txt` run
+from a nested repository inside the agent's launch folder, `git -C <main checkout> reset --hard` run from a worktree,
+nor `rm -rf .claude/worktrees/x` run in the main checkout. After the session folder and the folders the command `cd`s
+into, the hook snapshots each such root (the launch folder, the main checkout, a worktree), and only when a finding
+targets it, so a command that stays in the session folder takes no extra snapshot and one that only reads a worktree
+(`git -C .claude/worktrees/x diff`) takes none of it; a `recommended` finding's roots (`sed -i` on a file in the launch
+folder or a worktree) get one where it can be taken. Each must be a folder Airbag can snapshot (§5). All of a command's
+roots share the one deadline, so several stay within the hook's own 4 s: a root the deadline leaves no time for is
+skipped with `timeout`. When a `required` root gets no usable snapshot, the command is escalated with that root's skip
+reason. A finding whose targets lie in no root (a dependency folder, a temporary file) is judged on the snapshots taken.
+An agent worktree of a folder the user stopped protecting gets no store from that folder's commands (`not_protected`).
+The post-command snapshot covers the same roots. The event links to the session folder's snapshot, unless the
+`required` findings target only other roots, then to the first of those (the worktree `rm -rf .claude/worktrees/x`
+deletes), and to another root's whenever the one it would link has none (an empty folder).
 
 Whole-root restore to an incomplete snapshot never removes files (§6).
 
@@ -188,7 +195,7 @@ Whole-root restore to an incomplete snapshot never removes files (§6).
   `.pytest_cache`, `.mypy_cache`, `.ruff_cache`, `.tox`, `.cache`, `coverage`, `.nyc_output`, `.terraform`,
   `.serverless`, `.vercel`, `.netlify`, `.expo`, `.dart_tool`, `.wrangler`, `.docusaurus`, and folders whose name
   starts with `.airbag-`. Excluded root-relative paths: `.idea/caches`, `.claude/worktrees` and `.codex/worktrees`
-  (each worktree is its own root).
+  (each worktree is its own root, which the hook snapshots when a command targets it, §4.6).
 - Excluded file names: `.DS_Store` only (editor swap files are short-lived and cheap to capture), plus Airbag's own
   `.airbag-tmp-*` restore temporaries.
 - The project's `.gitignore` is deliberately **not** honoured: `.env`, local databases and other ignored-but-precious

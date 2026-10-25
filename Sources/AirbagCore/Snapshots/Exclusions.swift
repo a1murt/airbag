@@ -10,8 +10,11 @@ public struct Exclusions: Sendable {
         ".cache", "coverage", ".nyc_output", ".terraform", ".serverless", ".vercel", ".netlify",
         ".expo", ".dart_tool", ".wrangler", ".docusaurus",
     ]
+    /// Root-relative folders where agents keep their git worktrees. Each worktree is a snapshot root of its own, so the
+    /// project's snapshots skip them; a hook snapshots a worktree before a command touches it (doc 12).
+    public static let worktreeFolders: Set<String> = [".claude/worktrees", ".codex/worktrees"]
     /// Root-relative directory paths (multi-component) that are skipped.
-    public static let defaultRelativePaths: Set<String> = [".claude/worktrees", ".idea/caches", ".codex/worktrees"]
+    public static let defaultRelativePaths: Set<String> = worktreeFolders.union([".idea/caches"])
     public static let defaultFileNames: Set<String> = [".DS_Store"]
 
     public var directoryNames: Set<String>

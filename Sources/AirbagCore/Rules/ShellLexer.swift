@@ -118,7 +118,7 @@ public struct ShellLexer {
                 if op == "<<" || op == "<<-" {
                     // delimiter word follows
                     while i < c.count && (c[i] == " " || c[i] == "\t") { i += 1 }
-                    let (word, next) = readWord(c, i)
+                    let (word, next, _) = readWord(c, i)
                     i = next
                     tokens.append(.op(op))
                     pendingHeredocs.append((word.text, op == "<<-", word.quoted, tokens.count))
@@ -153,10 +153,20 @@ public struct ShellLexer {
                 tokens.append(.word(ShellWord("<(…)", opaque: true)))
                 continue
             }
-            let (word, next) = readWord(c, i)
+            let (word, next, marks) = readWord(c, i)
             i = next
-            tokens.append(.word(word))
-            if afterRedirect { afterRedirect = false } else { segment.append(word) }
+            let op: String? = { if afterRedirect, case .op(let o)? = tokens.last { return o }; return nil }()
+            let words = op == "<<<" ? [word] : ShellLexer.expandBraces(word, marks) // a here-string is not brace-expanded
+            if afterRedirect {
+                // `> {a,b}`: zsh writes to both files (bash refuses the line), so each is a redirect target.
+                for (k, w) in words.enumerated() {
+                    if k > 0, let op { tokens.append(.op(op)) }
+                    tokens.append(.word(w))
+                }
+                afterRedirect = false
+            } else {
+                for w in words { tokens.append(.word(w)); segment.append(w) }
+            }
         }
         return tokens
     }
@@ -192,12 +202,14 @@ public struct ShellLexer {
         " \t\n\r;&|()<>".contains(ch)
     }
 
-    /// Reads one word starting at `i`, applying quoting rules and expansions.
-    mutating func readWord(_ c: [Character], _ start: Int) -> (ShellWord, Int) {
+    /// Reads one word starting at `i`, applying quoting rules and expansions. `marks` are the unquoted `{`, `,`, `}` and
+    /// glob characters of the result, by position, for brace expansion.
+    mutating func readWord(_ c: [Character], _ start: Int) -> (ShellWord, Int, marks: [Int: Character]) {
         var i = start
         var out = ""
         var opaque = false, glob = false, quoted = false
         var assignmentName: String?
+        var marks: [Int: Character] = [:]
         let atStart = { (pos: Int) in pos == start }
         while i < c.count {
             let ch = c[i]
@@ -268,17 +280,113 @@ public struct ShellLexer {
                 i = j
             case "*", "?", "[":
                 glob = true
+                marks[out.count] = ch
                 out.append(ch); i += 1
             case "=" where assignmentName == nil && !quoted && !opaque && !out.isEmpty
                 && out.first.map({ $0.isLetter || $0 == "_" }) == true
                 && out.allSatisfy({ $0.isLetter || $0.isNumber || $0 == "_" }):
                 assignmentName = out
                 out.append(ch); i += 1
+            case "{", ",", "}":
+                marks[out.count] = ch
+                out.append(ch); i += 1
             default:
                 out.append(ch); i += 1
             }
         }
-        return (ShellWord(out, opaque: opaque, hasGlob: glob, quoted: quoted, assignmentName: assignmentName), i)
+        return (ShellWord(out, opaque: opaque, hasGlob: glob, quoted: quoted, assignmentName: assignmentName), i, marks)
+    }
+
+    /// Brace expansion, which bash and zsh apply to unquoted braces before anything else: `x/{a,b}` is `x/a x/b`, `{1..3}`
+    /// is `1 2 3` (also `{01..10..2}`, `{a..e}`). A brace without a comma or a sequence (`{}`, `@{u}`) stays as it is; an
+    /// assignment is not expanded. More than 256 words make the word opaque.
+    static func expandBraces(_ word: ShellWord, _ marks: [Int: Character]) -> [ShellWord] {
+        guard word.assignmentName == nil, marks.values.contains("{"), marks.values.contains("}") else { return [word] }
+        enum Part: Equatable { case char(Character), open, comma, close, glob(Character) }
+        let parts: [Part] = word.text.enumerated().map { k, ch in
+            switch marks[k] {
+            case "{"?: return .open
+            case ","?: return .comma
+            case "}"?: return .close
+            case let g?: return .glob(g)
+            case nil: return .char(ch)
+            }
+        }
+        let limit = 256
+        var results: [[Part]] = []
+        var overflow = false
+        /// The words of a sequence body (`1..5`, `a..e`, with an optional `..step`); nil when it is not one.
+        func sequence(_ body: [Part]) -> [String]? {
+            guard body.allSatisfy({ if case .char = $0 { return true }; return false }) else { return nil }
+            let text = String(body.map { if case .char(let ch) = $0 { return ch }; return " " })
+            let ends = text.components(separatedBy: "..")
+            guard ends.count == 2 || ends.count == 3 else { return nil }
+            let step = ends.count == 3 ? Int(ends[2]).map(abs) : 1
+            guard let step, step > 0 else { return nil }
+            if let a = Int(ends[0]), let b = Int(ends[1]) {
+                guard abs(b - a) / step < limit else { overflow = true; return [] }
+                let width = ends[0...1].contains { $0.hasPrefix("0") && $0.count > 1 || $0.hasPrefix("-0") } ? max(ends[0].count, ends[1].count) : 0
+                return stride(from: a, through: b, by: a <= b ? step : -step).map { n in
+                    let digits = String(abs(n))
+                    let padded = String(repeating: "0", count: max(0, width - digits.count - (n < 0 ? 1 : 0))) + digits
+                    return (n < 0 ? "-" : "") + padded
+                }
+            }
+            guard let a = ends[0].unicodeScalars.first, let b = ends[1].unicodeScalars.first, ends[0].count == 1, ends[1].count == 1,
+                  a.isASCII, b.isASCII, CharacterSet.letters.contains(a), CharacterSet.letters.contains(b) else { return nil }
+            return stride(from: Int(a.value), through: Int(b.value), by: a.value <= b.value ? step : -step)
+                .compactMap { Unicode.Scalar(UInt32($0)).map { String(Character($0)) } }
+        }
+        func expand(_ p: [Part]) {
+            guard !overflow else { return }
+            var i = 0
+            while i < p.count {
+                if p[i] == .open {
+                    var depth = 0, commas: [Int] = [], close: Int?
+                    scan: for k in i..<p.count {
+                        switch p[k] {
+                        case .open: depth += 1
+                        case .close:
+                            depth -= 1
+                            if depth == 0 { close = k; break scan }
+                        case .comma where depth == 1: commas.append(k)
+                        default: break
+                        }
+                    }
+                    if let close {
+                        var alternatives: [[Part]]?
+                        if !commas.isEmpty {
+                            var start = i + 1
+                            alternatives = (commas + [close]).map { c in defer { start = c + 1 }; return Array(p[start..<c]) }
+                        } else if let seq = sequence(Array(p[(i + 1)..<close])) {
+                            alternatives = seq.map { $0.map { Part.char($0) } }
+                        }
+                        if let alternatives {
+                            for a in alternatives { expand(Array(p[..<i]) + a + Array(p[(close + 1)...])) }
+                            return
+                        }
+                    }
+                }
+                i += 1
+            }
+            if results.count >= limit { overflow = true; return }
+            results.append(p)
+        }
+        expand(parts)
+        if overflow { var w = word; w.opaque = true; return [w] }
+        return results.map { p in
+            var w = word
+            w.text = String(p.map { part -> Character in
+                switch part {
+                case .char(let ch), .glob(let ch): return ch
+                case .open: return "{"
+                case .comma: return ","
+                case .close: return "}"
+                }
+            })
+            w.hasGlob = p.contains { if case .glob = $0 { return true }; return false }
+            return w
+        }
     }
 
     /// Handles `$NAME`, `${...}`, `$(...)`, `$((...))` and special parameters at `c[i] == "$"`.

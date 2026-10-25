@@ -45,7 +45,8 @@ security boundary against a hostile agent, a malicious plugin, or malware runnin
   project, `git reset --hard`, `git clean`, …) when Airbag could not take a usable one. A command for which a
   snapshot is only recommended (`sed -i`, a script, `cp` onto a project file) still runs if its snapshot fails. Each
   protected folder such a command deletes or resets in needs its own snapshot: the folder the agent was started in,
-  or a worktree's main checkout, is snapshotted when a command targets it. A folder with no files, or one you stopped
+  a worktree's main checkout, or an agent worktree in `.claude/worktrees` or `.codex/worktrees` (which the project's
+  own snapshots skip), is snapshotted when a command targets it. A folder with no files, or one you stopped
   protecting (Stop Protecting…), needs none.
 - **Data at rest.** Snapshots are copies of project files, including `.env` and other secrets. They live in
   `~/Library/Application Support/Airbag` with 0700/0600 permissions and are excluded from Time Machine and
