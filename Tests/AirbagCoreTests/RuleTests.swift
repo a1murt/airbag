@@ -85,6 +85,26 @@ struct RuleFixture: Decodable {
         #expect(deps.findings.map(\.ruleId) == ["interp.delete.project"] && deps.findings[0].roots.isEmpty)
     }
 
+    /// A worktree the command `cd`s into joins the protected roots. Its main checkout, `.claude` and `.claude/worktrees`
+    /// hold it, which used to make them "parents of a protected root" and block `rm -rf ./*` in the main checkout.
+    @Test func anAgentWorktreeRootDoesNotMakeItsProjectCatastrophic() {
+        let worktree = "/p/.claude/worktrees/wt"
+        let context = GuardContext(cwd: "/p", home: "/Users/u", roots: ["/p", worktree], useFileSystem: false)
+        let engine = RuleEngine()
+        let all = engine.evaluate("rm \(worktree)/draft.md && rm -rf ./*", context: context)
+        #expect(all.decision == .allow && all.findings.map(\.ruleId) == ["fs.rm.project", "fs.rm.project"], "\(all)")
+        #expect(all.findings.map(\.roots) == [[worktree], ["/p"]])
+        let claude = engine.evaluate("rm -rf .claude/worktrees/wt && rm -rf .claude", context: context)
+        #expect(claude.decision == .ask && claude.findings.map(\.ruleId) == ["fs.rm.project-root", "fs.rm.worktree"], "\(claude)")
+        #expect(claude.findings.first { $0.ruleId == "fs.rm.worktree" }?.roots == ["/p", worktree])
+        let reset = engine.evaluate("rm -rf .claude/worktrees/wt/src/legacy && git reset --hard", context: context)
+        #expect(reset.decision == .allow && reset.findings.first { $0.ruleId == "git.reset.hard" }?.roots == ["/p"], "\(reset)")
+        #expect(engine.evaluate("rm -rf ..", context: context).decision == .block) // the main checkout's parent still is
+        // Any other root inside a root keeps the rule: what holds it is more than the project.
+        let nested = GuardContext(cwd: "/p", home: "/Users/u", roots: ["/p", "/p/sub"], useFileSystem: false)
+        #expect(engine.evaluate("rm -rf ./*", context: nested).decision == .block)
+    }
+
     @Test func agentMessageNamesTheRiskAndTheWayOut() {
         let ctx = RuleFixture.shared.context
         let context = GuardContext(cwd: ctx.cwd, home: ctx.home, roots: ctx.roots, airbagHome: ctx.airbagHome, useFileSystem: false)
@@ -109,6 +129,20 @@ struct RuleFixture: Decodable {
         #expect(parse("cat <<EOF\nrm -rf /\nEOF\nls") == [["cat"], ["ls"]])
         #expect(parse("ls 2>/dev/null >out.txt") == [["ls"]])
         #expect(parse("echo `pwd` $(pwd)") == [["echo", "/p", "/p"]])
+    }
+
+    @Test func braceExpansion() {
+        #expect(parse("rm -rf .claude/worktrees/{a,b}") == [["rm", "-rf", ".claude/worktrees/a", ".claude/worktrees/b"]])
+        #expect(parse("ls {1..3} x{01..10..4} {c..a} {a,b{1,2}}c") == [["ls", "1", "2", "3", "x01", "x05", "x09", "c", "b", "a", "ac", "b1c", "b2c"]])
+        #expect(parse("echo {} @{u} '{a,b}' \\{a,b\\} {a} {1..x} x={a,b}") == [["echo", "{}", "@{u}", "{a,b}", "{a,b}", "{a}", "{1..x}", "x={a,b}"]])
+        #expect(parse("{rm,-rf,x}") == [["rm", "-rf", "x"]]) // the shell runs that
+        #expect(parse("find . -exec rm {} +; echo ${HOME}") == [["find", ".", "-exec", "rm", "{}", "+"], ["echo", "/Users/u"]])
+        var l = ShellLexer(environment: [:], home: "/Users/u")
+        let cmd = l.parse("cat x > {a,b}.txt {*.md,y}")[0]
+        #expect(cmd.redirects.map(\.target.text) == ["a.txt", "b.txt"])
+        #expect(cmd.words.map(\.hasGlob) == [false, false, true, false])
+        #expect(l.parse("rm {1..1000}{a,b}")[0].words[1].opaque)
+        #expect(l.parse("bash <<< {a,b}")[0].redirects.map(\.target.text) == ["{a,b}"])
     }
 
     @Test func assignmentsAfterKeywordsAndCasePatterns() {

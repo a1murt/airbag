@@ -109,8 +109,9 @@ record a fingerprint; uninstall removes only Airbag entries. Codex hooks additio
   A folder with no files counts as captured only when the walk saw all of it, found no files, skipped none for size
   and hit no errors (`snapshot_skipped = "empty"`); a folder the user stopped protecting (`not_protected`) needs no
   snapshot either. A walk cut short is incomplete. All of this is per root: each root a `required` finding targets
-  (the launch folder or a worktree's main checkout included) needs its own snapshot, which the hook takes only for a
-  command that targets it.
+  (the launch folder, a worktree's main checkout, an agent worktree in `.claude/worktrees` that the project's snapshots
+  skip) needs its own snapshot, which the hook takes only for a command that targets it. A command that deletes or
+  moves a folder holding agent worktrees names each worktree in it. One deadline covers all of a command's roots.
 - Where an ask is recorded instead of asked (ADR-030), `snapshot.unavailable` and every `self.*` finding still
   stop the agent until the user approves (ADR-035). While Airbag is paused nothing waits; blocks still apply.
 - Restore never deletes: anything in its way goes to `aside/` inside the store, covered by retention.

@@ -189,4 +189,12 @@ count per root. Each root a destructive finding targets needs its own, so the ho
 folder or the main checkout of its worktree when a finding targets it (and only then), and the command waits for the
 user when that snapshot fails. 0.1.1 shipped a narrower guard: an empty session folder did not cover another
 protected root, but a snapshotted one did, so `rm ../notes.txt` from a nested repository in the launch folder ran
-without a snapshot of the launch folder and the file could not be restored.
+without a snapshot of the launch folder and the file could not be restored. Amended after 0.1.2: agent worktrees
+(`.claude/worktrees/<name>`, Codex's `.codex/worktrees/<id>/<repo>`) are such roots. Their project's snapshots skip
+them, yet the rules counted their paths as the project's, so `rm -rf .claude/worktrees/x` ran as "restorable" with
+nothing of it in any snapshot. A path in one now targets the worktree, and a command that deletes or moves a folder
+holding them (`.claude`, `.claude/worktrees`), reaches into them (`find . -delete`, `git clean -ffdx`) or
+force-removes one (`git worktree remove --force`) names every worktree it takes: each is snapshotted first, also where
+asks are only recorded, and deleting or moving such a folder asks. A worktree among the protected roots no longer makes
+its main checkout "the parent of a protected root", which blocked `rm -rf ./*` there. All the roots of one command
+share one snapshot deadline, so several cannot outlast the hook's own.

@@ -38,6 +38,27 @@ struct HookSandbox {
     }
 }
 
+extension HookSandbox {
+    /// A git worktree of the project in `.claude/worktrees/<name>`, with an uncommitted file; its canonical path.
+    func agentWorktree(_ name: String) -> String {
+        _ = sh("git worktree add -q .claude/worktrees/\(name) -b \(name)", cwd: root)
+        sb.write(".claude/worktrees/\(name)/draft.md", "\(name): not committed\n")
+        return FileSystem.canonicalPath(root + "/.claude/worktrees/" + name)!
+    }
+
+    func latest(_ root: String) -> SnapshotInfo? {
+        (try? SnapshotStore.open(root: root, paths: paths, create: false)).flatMap { try? $0.latest() }
+    }
+
+    /// A file as the latest snapshot of `root` holds it.
+    func exported(_ root: String, _ file: String) -> String? {
+        guard let store = try? SnapshotStore.open(root: root, paths: paths, create: false), let snap = try? store.latest() else { return nil }
+        let dir = sb.tmp.sub("exported-\(ULID.make())")
+        _ = try? store.export(snap.id, to: dir)
+        return try? String(contentsOfFile: dir + "/" + file, encoding: .utf8)
+    }
+}
+
 func decode(_ s: String?) -> [String: Any] {
     guard let s, let d = s.data(using: .utf8), let o = try? JSONSerialization.jsonObject(with: d) as? [String: Any] else { return [:] }
     return o
@@ -365,43 +386,197 @@ func decode(_ s: String?) -> [String: Any] {
         #expect(out.finalDecision == "deny_fallback")
     }
 
-    /// An agent worktree (`.claude/worktrees/<name>`) is a snapshot root of its own, which the project's snapshots skip.
-    /// Deleting it from the main checkout used to be allowed as "restorable" with nothing of it in any snapshot.
+    // MARK: agent worktrees (`.claude/worktrees/<name>`): roots of their own, which the project's snapshots skip
+
+    /// Deleting a worktree from the main checkout used to be allowed as "restorable" with nothing of it in any snapshot.
     @Test func agentWorktreeIsSnapshottedBeforeItIsDeleted() throws {
         let h = HookSandbox(); defer { h.cleanup() }
-        _ = sh("git worktree add -q .claude/worktrees/wt -b wt", cwd: h.root)
-        h.sb.write(".claude/worktrees/wt/draft.md", "not committed\n")
-        let worktree = try #require(FileSystem.canonicalPath(h.root + "/.claude/worktrees/wt"))
+        let wt = h.agentWorktree("wt")
         let out = h.run(.claudeCode, h.claudePre("rm -rf .claude/worktrees/wt"))
         #expect(out.finalDecision == "allow")
         #expect(out.verdict?.primary?.ruleId == "fs.rm.project-root")
-        // The worktree's own snapshot holds the uncommitted file and the .git link back to the main checkout.
-        let store = try SnapshotStore.open(root: worktree, paths: h.paths, create: false)
-        let snap = try #require(try store.latest())
-        let exported = h.sb.tmp.sub("exported")
-        _ = try store.export(snap.id, to: exported)
-        #expect((try? String(contentsOfFile: exported + "/draft.md", encoding: .utf8)) == "not committed\n")
-        #expect(FileManager.default.fileExists(atPath: exported + "/.git"))
-        // Every worktree at once: the user decides.
+        #expect(out.verdict?.primary?.roots == [wt])
+        // The worktree's own snapshot holds the uncommitted file and the .git link back to the main checkout; the event
+        // links it, not the main checkout's.
+        let snap = try #require(h.latest(wt))
+        #expect(h.exported(wt, "draft.md") == "wt: not committed\n")
+        #expect(h.exported(wt, ".git")?.hasPrefix("gitdir: ") == true)
+        #expect(out.snapshot?.id == snap.id)
+        #expect(try h.registry().db.scalarText("SELECT snapshot_id FROM events WHERE kind = 'pre_shell'") == snap.id)
+        // Every worktree at once: each gets its own snapshot, and the user decides.
         let all = h.run(.claudeCode, h.claudePre("rm -rf .claude/worktrees"))
         #expect(all.finalDecision == "ask")
         #expect(all.verdict?.primary?.ruleId == "fs.rm.worktree")
+        #expect(all.verdict?.primary?.roots == [wt])
     }
 
-    @Test func agentWorktreeThatCannotBeSnapshottedWaitsForTheUser() throws {
+    /// A worktree in the protected roots made its main checkout, `.claude` and `.claude/worktrees` "parents of a
+    /// protected root": `rm -rf ./*` in the main checkout was blocked, `git reset --hard` there asked as outside the project.
+    @Test func touchingAWorktreeKeepsTheMainCheckoutsRules() throws {
         let h = HookSandbox(); defer { h.cleanup() }
-        _ = sh("git worktree add -q .claude/worktrees/wt -b wt", cwd: h.root)
-        let store = try SnapshotStore.open(root: h.root + "/.claude/worktrees/wt", paths: h.paths)
+        let wt = h.agentWorktree("wt")
+        let both = h.run(.claudeCode, h.claudePre("rm .claude/worktrees/wt/draft.md && rm -rf ./*"))
+        #expect(both.finalDecision == "allow")
+        #expect(both.verdict?.findings.map(\.roots) == [[wt], [h.root]])
+        #expect(h.latest(wt) != nil && h.latest(h.root) != nil)
+        // Through `cd`, the worktree is one of the protected roots for the rest of the command.
+        let visited = h.run(.claudeCode, h.claudePre("cd .claude/worktrees/wt && rm draft.md && cd ../../.. && rm -rf ./*"))
+        #expect(visited.finalDecision == "allow")
+        #expect(!(visited.verdict?.findings.contains { $0.ruleId == "fs.rm.catastrophic" } ?? true))
+        let claude = h.run(.claudeCode, h.claudePre("rm -rf .claude/worktrees/wt && rm -rf .claude"))
+        #expect(claude.finalDecision == "ask")
+        #expect(claude.verdict?.primary?.ruleId == "fs.rm.worktree")
+        #expect(claude.verdict?.primary?.roots == [h.root, wt])
+        let reset = h.run(.claudeCode, h.claudePre("rm -rf .claude/worktrees/wt/src/legacy && git reset --hard"))
+        #expect(reset.finalDecision == "allow")
+        #expect(reset.verdict?.findings.map(\.ruleId) == ["fs.rm.project", "git.reset.hard"])
+    }
+
+    /// Reading a worktree takes no snapshot of it; the main checkout's still covers `git reset --hard` there, also where
+    /// asks are only recorded.
+    @Test func readingAWorktreeDoesNotSnapshotIt() throws {
+        let h = HookSandbox(); defer { h.cleanup() }
+        let wt = h.agentWorktree("wt")
+        let out = h.run(.claudeCode, h.claudePre("git -C .claude/worktrees/wt status && git reset --hard", mode: "bypassPermissions"))
+        #expect(out.finalDecision == "allow")
+        #expect(out.verdict?.primary?.ruleId == "git.reset.hard")
+        #expect(h.latest(h.root) != nil)
+        let diff = h.run(.claudeCode, h.claudePre("git -C .claude/worktrees/wt diff > review.patch"))
+        #expect(diff.finalDecision == "allow")
+        #expect(!SnapshotStore.storeExists(root: wt, paths: h.paths))
+        // A write into the worktree does snapshot it, though it does not need to wait for one.
+        let edit = h.run(.claudeCode, h.claudePre("sed -i '' s/legacy/kept/ .claude/worktrees/wt/src/legacy/old.ts"))
+        #expect(edit.finalDecision == "allow")
+        #expect(h.exported(wt, "src/legacy/old.ts") == "// legacy\nexport const old = true;\n")
+    }
+
+    /// `rm -rf .claude/worktrees`, `rm -rf .claude` and a find in the worktree folder named no worktree, so where asks are
+    /// only recorded they ran with no snapshot of any.
+    @Test func deletingEveryWorktreeSnapshotsEachOneFirst() throws {
+        let h = HookSandbox(); defer { h.cleanup() }
+        let a = h.agentWorktree("a"), b = h.agentWorktree("b")
+        let cases = [("rm -rf .claude/worktrees", [a, b]), ("rm -rf .claude", [h.root, a, b]),
+                     ("find .claude/worktrees -name '*.md' -delete", [a, b]), ("mv .claude/worktrees /tmp/old-worktrees", [a, b])]
+        for (command, roots) in cases {
+            let out = h.run(.claudeCode, h.claudePre(command, mode: "bypassPermissions"))
+            #expect(out.finalDecision == "allow_fallback", "\(command)")
+            #expect(out.verdict?.primary?.ruleId.hasSuffix(".worktree") == true, "\(command)")
+            #expect(out.verdict?.primary?.roots == roots, "\(command)")
+        }
+        // Brace expansion: each worktree named is a root of its own (the word used to name a path that does not exist).
+        let braces = h.run(.claudeCode, h.claudePre("rm -rf .claude/worktrees/{a,b}"))
+        #expect(braces.finalDecision == "allow")
+        #expect(braces.verdict?.findings.map(\.roots) == [[a], [b]])
+        #expect(h.exported(a, "draft.md") == "a: not committed\n")
+        #expect(h.exported(b, "draft.md") == "b: not committed\n")
+    }
+
+    @Test func aWorktreeThatCannotBeSnapshottedWaitsForTheUser() throws {
+        let h = HookSandbox(); defer { h.cleanup() }
+        let a = h.agentWorktree("a")
+        _ = h.agentWorktree("b")
+        let store = try SnapshotStore.open(root: a, paths: h.paths)
         _ = store.snapshot(SnapshotRequest(trigger: .initial))
         #expect(store.lock.acquire(waitMs: 0))
         defer { store.lock.release() }
         var cfg = HookBridgeConfig(paths: h.paths, environment: [:])
         cfg.spawnBackground = false; cfg.home = h.userHome; cfg.lockWaitMs = 50
+        for command in ["rm -rf .claude/worktrees/a/src", "rm -rf .claude/worktrees", "git worktree remove --force a"] {
+            let data = try JSONSerialization.data(withJSONObject: h.claudePre(command, mode: "bypassPermissions"))
+            let out = HookBridge(config: cfg).handle(payload: data, declared: .claudeCode, eventHint: nil)
+            #expect(out.finalDecision == "deny_fallback", "\(command)")
+            #expect(out.verdict?.findings.contains { $0.ruleId == "snapshot.unavailable" && $0.reason.contains("busy") } == true, "\(command)")
+        }
+    }
+
+    /// `git worktree remove --force` never looked at its worktree: nothing of it was snapshotted, and the question said a
+    /// snapshot had been taken.
+    @Test func forceRemovingAWorktreeSnapshotsItFirst() throws {
+        let h = HookSandbox(); defer { h.cleanup() }
+        let wt = h.agentWorktree("wt")
+        let recorded = h.run(.claudeCode, h.claudePre("git worktree remove --force wt", mode: "bypassPermissions"))
+        #expect(recorded.finalDecision == "allow_fallback")
+        #expect(recorded.verdict?.primary?.ruleId == "git.worktree.remove")
+        #expect(recorded.verdict?.primary?.roots == [wt])
+        #expect(h.exported(wt, "draft.md") == "wt: not committed\n")
+        h.sb.write(".claude/worktrees/wt/draft.md", "changed\n")
+        let asked = h.run(.claudeCode, h.claudePre("git worktree remove -f .claude/worktrees/wt"))
+        #expect(asked.finalDecision == "ask")
+        let snap = try #require(h.latest(wt))
+        #expect(snap.id != h.latest(h.root)?.id)
+        let reason = (decode(asked.output)["hookSpecificOutput"] as? [String: Any])?["permissionDecisionReason"] as? String
+        #expect(reason?.contains("A snapshot (\(snap.id))") == true)
+        // A worktree git cannot find: git refuses, so there is nothing to snapshot and nothing to wait for.
+        let unknown = h.run(.claudeCode, h.claudePre("git worktree remove --force nowhere", mode: "bypassPermissions"))
+        #expect(unknown.finalDecision == "allow_fallback")
+        #expect(unknown.verdict?.primary?.roots == [] && unknown.verdict?.primary?.snapshot == .recommended)
+    }
+
+    /// From the main checkout, `git clean -ffd` (nested repositories too) and `find . -delete` reach into the worktrees.
+    @Test func commandsThatReachIntoWorktreesSnapshotThem() throws {
+        let h = HookSandbox(); defer { h.cleanup() }
+        let wt = h.agentWorktree("wt")
+        let once = h.run(.claudeCode, h.claudePre("git clean -fdx"))
+        #expect(once.verdict?.primary?.roots == [h.root])
+        #expect(!SnapshotStore.storeExists(root: wt, paths: h.paths)) // a single -f leaves nested repositories alone
+        let clean = h.run(.claudeCode, h.claudePre("git clean -ffdx"))
+        #expect(clean.finalDecision == "allow")
+        #expect(clean.verdict?.primary?.roots == [h.root, wt])
+        #expect(h.exported(wt, "draft.md") == "wt: not committed\n")
+        let find = h.run(.claudeCode, h.claudePre("find . -name '*.md' -delete"))
+        #expect(find.finalDecision == "allow")
+        #expect(find.verdict?.primary?.roots == [h.root, wt])
+        let python = h.run(.claudeCode, h.claudePre("python3 -c \"import shutil; shutil.rmtree('.claude')\""))
+        #expect(python.finalDecision == "ask")
+        #expect(python.verdict?.primary?.roots == [h.root, wt])
+    }
+
+    @Test func worktreesOfAFolderTheUserStoppedProtectingGetNoStore() throws {
+        let h = HookSandbox(); defer { h.cleanup() }
+        let wt = h.agentWorktree("wt")
+        try IgnoredRoots.set(h.root, ignored: true, paths: h.paths)
+        let out = h.run(.claudeCode, h.claudePre("rm -rf .claude/worktrees/wt/src", mode: "bypassPermissions"))
+        #expect(out.finalDecision == "allow")
+        #expect(out.snapshotSkipped == "not_protected")
+        #expect(!SnapshotStore.storeExists(root: wt, paths: h.paths))
+    }
+
+    /// Each root used to get the full snapshot deadline, so several could outlast the hook's own 4 s.
+    @Test func theRootsOfACommandShareOneSnapshotDeadline() throws {
+        let h = HookSandbox(); defer { h.cleanup() }
+        let wt = h.agentWorktree("wt")
+        let main = try SnapshotStore.open(root: h.root, paths: h.paths)
+        _ = main.snapshot(SnapshotRequest(trigger: .initial))
+        #expect(main.lock.acquire(waitMs: 0))
+        defer { main.lock.release() }
+        var cfg = HookBridgeConfig(paths: h.paths, environment: [:])
+        cfg.spawnBackground = false; cfg.home = h.userHome; cfg.snapshotDeadlineMs = 200; cfg.lockWaitMs = 1000
         let data = try JSONSerialization.data(withJSONObject: h.claudePre("rm -rf .claude/worktrees/wt/src", mode: "bypassPermissions"))
+        let t0 = Clock.monotonicNs()
         let out = HookBridge(config: cfg).handle(payload: data, declared: .claudeCode, eventHint: nil)
-        #expect(out.snapshotSkipped == "busy")
+        #expect(Clock.monotonicNs() - t0 < 900_000_000)
+        // The main checkout's busy store used up the budget: the worktree gets no snapshot and the user decides.
         #expect(out.finalDecision == "deny_fallback")
-        #expect(out.verdict?.findings.contains { $0.ruleId == "snapshot.unavailable" } == true)
+        #expect(out.verdict?.findings.contains { $0.ruleId == "snapshot.unavailable" && $0.reason.contains("timeout") } == true)
+        #expect(!SnapshotStore.storeExists(root: wt, paths: h.paths))
+    }
+
+    /// From a session in the worktree, its main checkout is a protected root like any other, not "the parent of" one.
+    @Test func aSessionInAWorktreeJudgesItsMainCheckoutAsAProject() throws {
+        let h = HookSandbox(); defer { h.cleanup() }
+        let wt = h.agentWorktree("wt")
+        var reset = h.claudePre("git -C ../../.. reset --hard")
+        reset["cwd"] = wt
+        let out = h.run(.claudeCode, reset)
+        #expect(out.finalDecision == "allow")
+        #expect(out.verdict?.primary?.ruleId == "git.reset.hard")
+        #expect(out.verdict?.primary?.roots == [h.root])
+        #expect(h.latest(h.root) != nil)
+        var parent = h.claudePre("rm -rf ../../../.claude")
+        parent["cwd"] = wt
+        let claude = h.run(.claudeCode, parent)
+        #expect(claude.finalDecision == "ask")
+        #expect(claude.verdict?.primary?.roots == [h.root, wt])
     }
 
     @Test func postCommandSnapshotRecordsWhatChanged() throws {
