@@ -2828,24 +2828,25 @@
    "cmd": "rm -rf .claude/worktrees/bright-running-fox",
    "expect": {
     "decision": "ask",
-    "snapshot": "recommended"
+    "snapshot": "required"
    },
-   "rule": "fs.rm.worktree",
-   "why": "an agent worktree is a snapshot root of its own, which the project's snapshots skip; a hook snapshots it first and then allows"
+   "rule": "fs.rm.project-root",
+   "why": "an agent worktree is a snapshot root of its own (the project's snapshots skip it), so the finding names it and the hook snapshots it first; without a file system its .git may be a directory, so this asks (a linked worktree's .git file: allowed, HookTests)"
   },
   {
    "cmd": "rm -f .claude/worktrees/bright-running-fox/src/app.ts",
    "expect": {
-    "decision": "ask",
-    "snapshot": "recommended"
+    "decision": "allow",
+    "snapshot": "required"
    },
-   "rule": "fs.rm.worktree"
+   "rule": "fs.rm.project",
+   "why": "restorable from the worktree's own snapshot"
   },
   {
    "cmd": "rm -rf .claude/worktrees/*",
    "expect": {
     "decision": "ask",
-    "snapshot": "recommended"
+    "snapshot": "required"
    },
    "rule": "fs.rm.worktree"
   },
@@ -2853,72 +2854,111 @@
    "cmd": "rm -rf .claude/worktrees",
    "expect": {
     "decision": "ask",
-    "snapshot": "recommended"
+    "snapshot": "required"
    },
    "rule": "fs.rm.worktree",
-   "why": "deletes every worktree at once: asks rather than snapshotting each"
+   "why": "every agent's working tree at once: each worktree gets its own snapshot and the user decides"
   },
   {
    "cmd": "rm -rf .claude",
    "expect": {
     "decision": "ask",
-    "snapshot": "recommended"
+    "snapshot": "required"
    },
    "rule": "fs.rm.worktree",
    "why": "holds .claude/worktrees"
   },
   {
-   "cmd": "rm -rf ../proj/.codex/worktrees/3f9a/proj",
+   "cmd": "rm -rf .codex",
    "expect": {
     "decision": "ask",
-    "snapshot": "recommended"
+    "snapshot": "required"
    },
    "rule": "fs.rm.worktree"
+  },
+  {
+   "cmd": "find .claude/worktrees -name '*.md' -delete",
+   "expect": {
+    "decision": "ask",
+    "snapshot": "required"
+   },
+   "rule": "fs.rm.worktree",
+   "why": "find reaches into every worktree"
+  },
+  {
+   "cmd": "mv .claude ../claude-old",
+   "expect": {
+    "decision": "ask",
+    "snapshot": "required"
+   },
+   "rule": "fs.mv.worktree"
+  },
+  {
+   "cmd": "rm -rf ../proj/.codex/worktrees/3f9a/proj",
+   "expect": {
+    "decision": "allow",
+    "snapshot": "required"
+   },
+   "rule": "fs.rm.project",
+   "why": "Codex nests <id>/<repo>; without a file system the <id> folder stands for the worktree"
   },
   {
    "cmd": "find .claude/worktrees/bright-running-fox -name '*.orig' -delete",
    "expect": {
-    "decision": "ask"
+    "decision": "allow",
+    "snapshot": "required"
    },
-   "rule": "fs.rm.worktree"
+   "rule": "fs.find.delete.project"
   },
   {
    "cmd": "cd .claude/worktrees/bright-running-fox && rm -rf src",
    "expect": {
-    "decision": "ask"
+    "decision": "allow",
+    "snapshot": "required"
    },
-   "rule": "fs.rm.worktree"
+   "rule": "fs.rm.project"
   },
   {
    "cmd": "rm -rf .claude/worktrees/build/src",
    "expect": {
-    "decision": "ask"
+    "decision": "allow",
+    "snapshot": "required"
    },
-   "rule": "fs.rm.worktree",
+   "rule": "fs.rm.project",
    "why": "a worktree named like a build folder is still a worktree"
   },
   {
    "cmd": "mv .claude/worktrees/bright-running-fox ../keep",
    "expect": {
-    "decision": "ask",
-    "snapshot": "recommended"
+    "decision": "allow",
+    "snapshot": "required"
    },
-   "rule": "fs.mv.worktree"
+   "rule": "fs.mv.project"
   },
   {
    "cmd": "echo done > .claude/worktrees/bright-running-fox/NOTES.md",
    "expect": {
-    "decision": "ask",
-    "snapshot": "recommended"
+    "decision": "allow",
+    "snapshot": "required"
    },
-   "rule": "fs.write.worktree"
+   "rule": "fs.truncate.project"
   },
   {
    "cmd": "truncate -s 0 .claude/worktrees/bright-running-fox/app.log",
    "expect": {
-    "decision": "ask"
+    "decision": "allow",
+    "snapshot": "required"
    },
-   "rule": "fs.write.worktree"
+   "rule": "fs.truncate.project"
+  },
+  {
+   "cmd": "sed -i '' s/a/b/ .claude/worktrees/bright-running-fox/src/app.ts",
+   "expect": {
+    "decision": "allow",
+    "snapshot": "recommended"
+   },
+   "rule": "fs.write.project",
+   "why": "the finding names the worktree, which the hook snapshots too"
   },
   {
    "cmd": "echo done >> .claude/worktrees/bright-running-fox/NOTES.md",
@@ -2959,6 +2999,129 @@
     "snapshot": "recommended"
    },
    "why": "IDE caches are excluded from snapshots and rebuild themselves"
+  },
+  {
+   "cmd": "git -C .claude/worktrees/bright-running-fox reset --hard",
+   "expect": {
+    "decision": "allow",
+    "snapshot": "required"
+   },
+   "rule": "git.reset.hard",
+   "why": "the worktree is the protected root of its working tree"
+  },
+  {
+   "cmd": "git -C .claude/worktrees/bright-running-fox diff > review.patch",
+   "expect": {
+    "decision": "allow",
+    "snapshot": "required"
+   },
+   "rule": "fs.truncate.project",
+   "why": "only the patch file is written; the worktree is only read"
+  },
+  {
+   "cmd": "git worktree remove --force .claude/worktrees/bright-running-fox",
+   "expect": {
+    "decision": "ask",
+    "snapshot": "required"
+   },
+   "rule": "git.worktree.remove",
+   "why": "the worktree's uncommitted work goes: it needs a snapshot of its own"
+  },
+  {
+   "cmd": "git worktree remove .claude/worktrees/bright-running-fox",
+   "expect": {
+    "decision": "allow",
+    "snapshot": "recommended"
+   },
+   "why": "without --force git refuses to remove a worktree with changes"
+  },
+  {
+   "cmd": "git clean -ffdx",
+   "expect": {
+    "decision": "allow",
+    "snapshot": "required"
+   },
+   "rule": "git.clean"
+  },
+  {
+   "cmd": "rm -rf .claude/worktrees/{a,b}",
+   "expect": {
+    "decision": "ask",
+    "snapshot": "required"
+   },
+   "rule": "fs.rm.project-root",
+   "why": "brace expansion: two worktrees"
+  },
+  {
+   "cmd": "rm -rf .claude/worktrees/wt{1..3}/src",
+   "expect": {
+    "decision": "allow",
+    "snapshot": "required"
+   },
+   "rule": "fs.rm.project"
+  },
+  {
+   "cmd": "rm -rf ~/{Documents,Desktop}",
+   "expect": {
+    "decision": "block"
+   },
+   "rule": "fs.rm.catastrophic",
+   "why": "brace expansion reaches the home folder's own folders"
+  },
+  {
+   "cmd": "rm -rf {src,lib}/legacy",
+   "expect": {
+    "decision": "allow",
+    "snapshot": "required"
+   },
+   "rule": "fs.rm.project"
+  },
+  {
+   "cmd": "rm -rf {/,x}",
+   "expect": {
+    "decision": "block"
+   },
+   "rule": "fs.rm.catastrophic"
+  },
+  {
+   "cmd": "echo hi > {a,b}.txt",
+   "expect": {
+    "decision": "allow",
+    "snapshot": "required"
+   },
+   "rule": "fs.truncate.project",
+   "why": "zsh writes to every file of a brace expansion"
+  },
+  {
+   "cmd": "echo {a,b} {1..3}",
+   "expect": {
+    "decision": "allow",
+    "snapshot": "none"
+   }
+  },
+  {
+   "cmd": "git reset --hard HEAD@{1}",
+   "expect": {
+    "decision": "allow",
+    "snapshot": "required"
+   },
+   "rule": "git.reset.hard",
+   "why": "no comma or sequence: the braces stay"
+  },
+  {
+   "cmd": "find . -name '*.orig' -exec rm {} +",
+   "expect": {
+    "decision": "allow",
+    "snapshot": "required"
+   }
+  },
+  {
+   "cmd": "rm -rf x{1..100000}",
+   "expect": {
+    "decision": "ask"
+   },
+   "rule": "fs.rm.opaque",
+   "why": "too many words to expand: unknown"
   }
  ]
 }

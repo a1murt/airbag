@@ -88,29 +88,40 @@ public struct HookBridge {
     /// protecting it.
     static let nothingToCapture: Set<String> = ["empty", "not_protected"]
 
-    /// Protected roots besides the session folder and the visited ones (`taken`) that a finding needing a snapshot
-    /// targets: the agent's launch folder or the main checkout of its worktree, as in `rm ../notes.txt` from a nested
-    /// repository. Only such a command snapshots them.
-    static func targetedRoots(_ verdict: GuardVerdict, in roots: [String], besides taken: [String]) -> [String] {
-        let targeted = Set(verdict.findings.filter { $0.snapshot == .required }.flatMap(\.roots))
-        return roots.filter { targeted.contains($0) && !taken.contains($0) }
+    /// Roots besides the session folder and the visited ones (`taken`) that a finding wanting a snapshot targets, in the
+    /// order the findings name them: the agent's launch folder or the main checkout of its worktree, as in `rm
+    /// ../notes.txt` from a nested repository, or an agent worktree, which its project's snapshots skip (`rm -rf
+    /// .claude/worktrees/x`). Only such a command snapshots them; each must be a folder Airbag can snapshot.
+    static func targetedRoots(_ verdict: GuardVerdict, besides taken: [String], paths: AirbagPaths) -> [String] {
+        var out: [String] = []
+        for r in verdict.findings.filter({ $0.snapshot != .none }).flatMap(\.roots) where !taken.contains(r) && !out.contains(r) {
+            if (try? SnapshotStore.validateRoot(r, paths: paths)) == r { out.append(r) }
+        }
+        return out
     }
 
-    /// Folders besides the session's that the command works in, each snapshotted as a root of its own (validated; never
-    /// the home folder): projects it `cd`s into, then agent worktrees it names inside a protected project
-    /// (`rm -rf .claude/worktrees/x`), which that project's snapshots skip.
+    /// Projects other than the session's that the command `cd`s into (validated; never the home folder).
     public static func visitedRoots(_ command: String, context: GuardContext, paths: AirbagPaths) -> [String] {
         var out: [String] = []
-        func add(_ root: String) {
-            guard let valid = try? SnapshotStore.validateRoot(root, paths: paths), !context.roots.contains(valid), !out.contains(valid) else { return }
+        for dir in RuleEngine().visitedDirectories(command, context: context) {
+            let root = RootResolver.resolve(cwd: dir)
+            guard let valid = try? SnapshotStore.validateRoot(root, paths: paths), !context.roots.contains(valid), !out.contains(valid) else { continue }
             out.append(valid)
         }
-        let engine = RuleEngine()
-        for dir in engine.visitedDirectories(command, context: context) { add(RootResolver.resolve(cwd: dir)) }
-        var visited = context
-        visited.roots += out
-        for worktree in engine.worktreeRoots(command, context: visited) { add(worktree) }
         return out
+    }
+
+    /// The protected folders an agent worktree lies in (`<main>/.claude/worktrees/<name>` → `<main>`), innermost first.
+    static func worktreeHolders(_ root: String) -> [String] {
+        var out: [String] = []
+        for folder in Exclusions.worktreeFolders {
+            var rest = Substring(root)
+            while let r = rest.range(of: "/" + folder + "/", options: .backwards) {
+                rest = rest[..<r.lowerBound]
+                out.append(String(rest))
+            }
+        }
+        return out.sorted { $0.count > $1.count }
     }
     public let config: HookBridgeConfig
     public init(config: HookBridgeConfig) { self.config = config }
@@ -197,26 +208,42 @@ public struct HookBridge {
             return r == launch || lstat(r + "/.git", &st) == 0 ? nil : config.folderLimits
         }
 
+        /// The root whose snapshot the event links to: the session folder's, unless the findings that need a snapshot
+        /// target only other roots (`rm -rf .claude/worktrees/x` from the main checkout links the worktree's).
+        var linkRoot = snapshotRoot
+        /// The snapshots this event took or found unchanged, by root.
+        var taken: [String: SnapshotInfo] = [:]
+        /// One deadline for every root a command snapshots, so that several of them stay within the hook's own.
+        var budgetNs: UInt64?
+
         func takeSnapshot(_ trigger: SnapshotTrigger, label: String?, root: String? = nil) -> (SnapshotInfo?, String?) {
             guard let r = root ?? snapshotRoot else { return (nil, "no_root") }
-            // The event links to the session's own snapshot; another root's snapshot only when there is none.
-            let links = root == nil || record.snapshot == nil
+            // The event links to `linkRoot`'s snapshot, or to another root's while it has none.
+            let links = r == linkRoot || record.snapshot == nil
             if duplicate { return (nil, "duplicate_route") }
             if IgnoredRoots.contains(r, paths: config.paths) { return (nil, "not_protected") }
             let exists = SnapshotStore.storeExists(root: r, paths: config.paths)
+            // An agent worktree of a folder the user stopped protecting gets no store from that folder's commands.
+            if !exists, root != nil, HookBridge.worktreeHolders(r).contains(where: { IgnoredRoots.contains($0, paths: config.paths) }) {
+                return (nil, "not_protected")
+            }
             let cap = limits(for: r)
-            let deadline = Clock.monotonicNs() + UInt64(config.snapshotDeadlineMs) * 1_000_000
+            let now = Clock.monotonicNs()
+            let deadline = budgetNs ?? now + UInt64(config.snapshotDeadlineMs) * 1_000_000
+            let leftMs = deadline > now ? Int((deadline - now) / 1_000_000) : 0
+            guard leftMs > 0 else { return (nil, "timeout") }
             // A folder that is too large never gets a store (an existing store checks its own limits on every snapshot).
             if !exists, let cap, SnapshotStore.exceeds(cap, root: r, deadlineNs: deadline) { return (nil, "too_large") }
             guard let store = try? SnapshotStore.open(root: r, paths: config.paths, limits: cap,
-                                                      busyTimeoutMs: Int32(min(config.snapshotDeadlineMs, 1000))) else { return (nil, "store_error") }
+                                                      busyTimeoutMs: Int32(max(1, min(leftMs, 1000)))) else { return (nil, "store_error") }
             if r == launch, store.limits != nil { try? store.setLimits(nil) } // the agent's own folder is never capped
             let outcome = store.snapshot(SnapshotRequest(trigger: exists ? trigger : .initial, label: label, sessionKey: sessionKey,
-                                                         deadlineNs: deadline, lockWaitMs: config.lockWaitMs))
+                                                         deadlineNs: deadline, lockWaitMs: min(config.lockWaitMs, leftMs)))
             switch outcome {
             case .created(let s, let st):
                 timing["snapshot_files"] = st.walked
                 if !s.complete { spawnBackgroundSnapshot(r) }
+                taken[r] = s
                 if links { record.snapshot = .init(id: s.id, rootID: store.rootID, rootPath: r, seq: s.seq, trigger: s.trigger.rawValue,
                                         fileCount: s.fileCount, changedCount: s.changedCount, bytesAdded: s.bytesAdded,
                                         durationMs: st.durationMs, complete: s.complete, label: s.label) }
@@ -230,6 +257,7 @@ public struct HookBridge {
                     return (nil, "incomplete")
                 }
                 if !l.complete { spawnBackgroundSnapshot(r) }
+                taken[r] = l
                 if links {
                     // Nothing changed since `l`: the event points at it (restoring it = state right before this command).
                     record.snapshot = .init(id: l.id, rootID: store.rootID, rootPath: r, seq: l.seq, trigger: l.trigger.rawValue,
@@ -331,9 +359,12 @@ public struct HookBridge {
                 guard let r else { return }
                 if k == nil || needsNone(k) { covered.insert(r) } else { missed[r] = k }
             }
-            let otherRoots = visitedRoots + HookBridge.targetedRoots(verdict, in: roots, besides: [snapshotRoot].compactMap { $0 } + visitedRoots)
+            let otherRoots = visitedRoots + HookBridge.targetedRoots(verdict, besides: [snapshotRoot].compactMap { $0 } + visitedRoots, paths: config.paths)
+            let requiredRoots = verdict.findings.filter { $0.snapshot == .required }.flatMap(\.roots)
+            if let first = requiredRoots.first, !requiredRoots.contains(where: { $0 == snapshotRoot }) { linkRoot = first }
             if verdict.snapshot != .none || verdict.decision == .ask {
                 let label = "Before `\(String(Redactor.redact(command).prefix(80)))`"
+                budgetNs = Clock.monotonicNs() + UInt64(config.snapshotDeadlineMs) * 1_000_000
                 (snap, skipped) = takeSnapshot(.preCommand, label: label)
                 note(snapshotRoot, skipped)
                 if !otherRoots.isEmpty && skipped == "no_root" { skipped = nil } // the session folder itself is not a project
@@ -344,7 +375,7 @@ public struct HookBridge {
                     if skipped == nil || needsNone(skipped) { skipped = k ?? skipped }
                 }
                 if snap != nil && skipped == "empty" { skipped = nil }
-                outcome.snapshot = snap
+                outcome.snapshot = linkRoot.flatMap { taken[$0] } ?? snap
                 outcome.snapshotSkipped = skipped
                 record.snapshotSkipped = skipped
                 timing["snapshot"] = Clock.elapsedMs(since: t0)
@@ -361,6 +392,12 @@ public struct HookBridge {
                     verdict = unavailable(skipped ?? "unknown")
                 }
             }
+            /// The snapshot the question can point to: that of the root the deciding finding targets, or the session
+            /// folder's for one that names none. None for what no snapshot undoes, or when a snapshot it needs is missing.
+            func undoingSnapshot(_ v: GuardVerdict) -> String? {
+                guard let p = v.primary, p.snapshot != .none, !v.findings.contains(where: { $0.ruleId == "snapshot.unavailable" }) else { return nil }
+                return p.roots.isEmpty ? snap?.id : p.roots.first.flatMap { taken[$0]?.id }
+            }
             if verdict.decision == .ask {
                 if let reg = registry, let sid = env.sessionID, let hash = record.commandHash,
                    reg.consumeAllowToken(agent: env.agent.rawValue, agentSessionID: sid, commandHash: hash) {
@@ -374,7 +411,7 @@ public struct HookBridge {
                     record.decision = "allow_fallback"
                     record.guardEntry = guardRef("allow_fallback")
                 } else {
-                    let (r, decision) = askReply(verdict, snapshotID: snap?.id)
+                    let (r, decision) = askReply(verdict, snapshotID: undoingSnapshot(verdict))
                     reply = r
                     record.decision = decision
                     if case .ask(let reason, _) = r { record.reason = reason }
@@ -397,8 +434,11 @@ public struct HookBridge {
                 let verdict = RuleEngine().evaluate(command, context: context)
                 if verdict.snapshot != .none {
                     let label = "After `\(String(Redactor.redact(command).prefix(80)))`"
+                    let requiredRoots = verdict.findings.filter { $0.snapshot == .required }.flatMap(\.roots)
+                    if let first = requiredRoots.first, !requiredRoots.contains(where: { $0 == snapshotRoot }) { linkRoot = first }
+                    budgetNs = Clock.monotonicNs() + UInt64(config.snapshotDeadlineMs) * 1_000_000
                     let (snap, skipped) = takeSnapshot(.postCommand, label: label)
-                    let targeted = HookBridge.targetedRoots(verdict, in: roots, besides: [snapshotRoot].compactMap { $0 } + visitedRoots)
+                    let targeted = HookBridge.targetedRoots(verdict, besides: [snapshotRoot].compactMap { $0 } + visitedRoots, paths: config.paths)
                     for r in visitedRoots + targeted { _ = takeSnapshot(.postCommand, label: label, root: r) }
                     outcome.snapshot = snap; outcome.snapshotSkipped = skipped; record.snapshotSkipped = skipped
                 }
