@@ -27,6 +27,35 @@ final class Box<T>: @unchecked Sendable {
         #expect(fired.with { $0 }.flatMap { $0 }.contains("src/a.ts"))
     }
 
+    @Test func fileWatcherStartsWithManyDeepRootsUnderAnAppsFileLimit() throws {
+        // A Mac app gets 256 open files. Watching dozens of projects must not need a descriptor per folder on their paths.
+        let sb = Sandbox("many"); defer { sb.cleanup() }
+        let roots = (0..<60).map { i -> String in
+            let p = sb.tmp.sub("r\(i)/" + (0..<10).map { "d\($0)" }.joined(separator: "/"))
+            try! FileManager.default.createDirectory(atPath: p, withIntermediateDirectories: true)
+            return p
+        }
+        var saved = rlimit()
+        getrlimit(RLIMIT_NOFILE, &saved)
+        var low = saved
+        low.rlim_cur = 256
+        setrlimit(RLIMIT_NOFILE, &low)
+        let w = FileWatcher(roots: roots, queue: DispatchQueue(label: "test.many")) { _, _ in }
+        w.start()
+        setrlimit(RLIMIT_NOFILE, &saved)
+        defer { w.stop() }
+        #expect(w.isRunning)
+    }
+
+    @Test func standardInputIsReopenedWhenSomethingClosedIt() {
+        let saved = dup(0)
+        defer { dup2(saved, 0); close(saved) }
+        close(0)
+        #expect(fcntl(0, F_GETFD) == -1)
+        FileWatcher.reopenStandardInputIfClosed()
+        #expect(fcntl(0, F_GETFD) != -1)
+    }
+
     @Test func pauseKeepsBlocksButSkipsSnapshots() throws {
         let h = HookSandbox(); defer { h.cleanup() }
         try h.registry().pause(untilMs: Clock.nowMsInt() + 60_000)

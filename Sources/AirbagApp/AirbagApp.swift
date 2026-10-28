@@ -53,8 +53,18 @@ extension AppModel {
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var windowObservers: [NSObjectProtocol] = []
 
+    /// A Mac app starts with a soft limit of 256 open files. With many projects (a store and its database each,
+    /// retention walking them all) that is close; the hard limit allows far more.
+    static func raiseOpenFileLimit() {
+        var limit = rlimit()
+        guard getrlimit(RLIMIT_NOFILE, &limit) == 0 else { return }
+        let wanted = min(limit.rlim_max, rlim_t(OPEN_MAX), 8192)
+        if limit.rlim_cur < wanted { limit.rlim_cur = wanted; _ = setrlimit(RLIMIT_NOFILE, &limit) }
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
+        AppDelegate.raiseOpenFileLimit()
         if let i = CommandLine.arguments.firstIndex(of: "--render-previews") {
             let dir = i + 1 < CommandLine.arguments.count ? CommandLine.arguments[i + 1] : NSTemporaryDirectory()
             MainActor.assumeIsolated { PreviewRenderer.renderAll(to: dir) }

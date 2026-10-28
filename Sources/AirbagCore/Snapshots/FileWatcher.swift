@@ -11,6 +11,7 @@ public final class FileWatcher {
     let queue: DispatchQueue
     let onSettled: (String, [String]) -> Void
     private var stream: FSEventStreamRef?
+    public var isRunning: Bool { stream != nil }
     private var pending: [String: (first: Date, last: Date, paths: [String])] = [:]
     private var timer: DispatchSourceTimer?
 
@@ -30,7 +31,10 @@ public final class FileWatcher {
     public func start() {
         guard stream == nil, !roots.isEmpty else { return }
         var ctx = FSEventStreamContext(version: 0, info: Unmanaged.passUnretained(self).toOpaque(), retain: nil, release: nil, copyDescription: nil)
-        let flags = UInt32(kFSEventStreamCreateFlagFileEvents | kFSEventStreamCreateFlagNoDefer | kFSEventStreamCreateFlagWatchRoot | kFSEventStreamCreateFlagUseCFTypes)
+        // No kFSEventStreamCreateFlagWatchRoot: it opens a descriptor for every folder on the way to every root, and with a
+        // few dozen projects that passes the 256 a Mac app gets by default, so the stream is never created. A moved or
+        // deleted root shows up on the next project refresh instead.
+        let flags = UInt32(kFSEventStreamCreateFlagFileEvents | kFSEventStreamCreateFlagNoDefer | kFSEventStreamCreateFlagUseCFTypes)
         let callback: FSEventStreamCallback = { _, info, count, paths, flags, _ in
             guard let info else { return }
             let me = Unmanaged<FileWatcher>.fromOpaque(info).takeUnretainedValue()
@@ -38,7 +42,11 @@ public final class FileWatcher {
             me.received(Array(arr.prefix(count)), flags: (0..<count).map { flags[$0] })
         }
         guard let s = FSEventStreamCreate(kCFAllocatorDefault, callback, &ctx, roots as CFArray,
-                                          FSEventStreamEventId(kFSEventStreamEventIdSinceNow), 0.5, flags) else { return }
+                                          FSEventStreamEventId(kFSEventStreamEventIdSinceNow), 0.5, flags) else {
+            FileWatcher.reopenStandardInputIfClosed()
+            Log.shared.warn("FSEvents: could not watch \(roots.count) folders")
+            return
+        }
         FSEventStreamSetDispatchQueue(s, queue)
         FSEventStreamStart(s)
         stream = s
@@ -47,6 +55,14 @@ public final class FileWatcher {
         t.setEventHandler { [weak self] in self?.tick() }
         t.resume()
         timer = t
+    }
+
+    /// When FSEventStreamCreate fails, its cleanup closes descriptor 0 (macOS 27). Put /dev/null back there, so the next
+    /// descriptor something opens and guards can't land on 0 and be closed by a later failure (an EXC_GUARD crash).
+    static func reopenStandardInputIfClosed() {
+        guard fcntl(0, F_GETFD) == -1 else { return }
+        let fd = open("/dev/null", O_RDONLY)
+        if fd > 0 { dup2(fd, 0); close(fd) }
     }
 
     public func stop() {
