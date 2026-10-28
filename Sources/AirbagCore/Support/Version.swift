@@ -3,7 +3,7 @@ import Foundation
 /// Version information shared by the CLI and the app.
 public enum AirbagVersion {
     /// Marketing version. Scripts/build-app.sh writes the same value into Info.plist.
-    public static let marketing = "0.1.2"
+    public static let marketing = "0.1.3"
     /// Hook protocol version; bumped when the stdin/stdout contract with agents changes.
     public static let hookProtocol = 1
 
