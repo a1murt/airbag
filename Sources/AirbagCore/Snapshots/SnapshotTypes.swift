@@ -54,6 +54,8 @@ public struct SnapshotStats: Sendable, Equatable, Codable {
     public var deduplicated = 0      // changed stat, identical content
     public var tombstones = 0
     public var skippedLarge = 0
+    /// The files skipped for their size, relative to the root: no snapshot holds them.
+    public var skippedLargePaths: [String] = []
     public var errors = 0
     public var durationMs = 0
     public var complete = false     // the walk saw everything: no deadline, no unreadable folders

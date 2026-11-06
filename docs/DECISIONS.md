@@ -211,3 +211,15 @@ scratchpad or next to those folders (`/private/tmp/claude-501/sidebar-test`) sti
 are left on disk: they are not opened, watched, snapshotted, pruned or counted against the budget, and `airbag
 usage` lists each with its size and directory for the user to delete. That now holds after the folder is gone too
 (macOS empties `/tmp` on restart): before, the store came back as a missing project, listed and counted again.
+
+**ADR-037 A file too large for snapshots is not deleted as "restorable".** Snapshots skip files over 100 MB (1 MB on
+a nearly full disk) and still count as complete, since such a file is never recorded as deleted. The rules, however,
+let `rm` of one run as "restorable from the snapshot taken first": on 2026-11-06 restoring a snapshot brought back
+everything but the 101 MB file just deleted, and said "restored 1 file(s), failed 0". A finding that deletes, empties
+or overwrites project files now carries the paths it targets (`GuardFinding.paths`; a folder stands for everything
+in it), the snapshot reports the files it skipped for size (`SnapshotStats.skippedLargePaths`), and when a target is
+or holds one of them the hook adds `snapshot.unavailable` naming the file: the command waits for the user like any
+command whose snapshot is missing (ADR-035), also where asks are only recorded. This covers `rm`, `find -delete`,
+emptying and overwriting, inline interpreter deletes, destructive SQL on a local database file, and `git clean -x`/`-X`,
+which also deletes the ignored files where large data usually lives; `git clean` without them keeps ignored files and
+is not checked, nor are `mv` and `git reset`. Restoring still does not list the files a snapshot skipped.

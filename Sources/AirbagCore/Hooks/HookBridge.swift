@@ -213,6 +213,8 @@ public struct HookBridge {
         var linkRoot = snapshotRoot
         /// The snapshots this event took or found unchanged, by root.
         var taken: [String: SnapshotInfo] = [:]
+        /// Files a snapshot skipped for their size, by root (absolute paths): no snapshot holds them.
+        var tooLarge: [String: [String]] = [:]
         /// One deadline for every root a command snapshots, so that several of them stay within the hook's own.
         var budgetNs: UInt64?
 
@@ -244,6 +246,7 @@ public struct HookBridge {
                 timing["snapshot_files"] = st.walked
                 if !s.complete { spawnBackgroundSnapshot(r) }
                 taken[r] = s
+                tooLarge[r] = st.skippedLargePaths.map { r + "/" + $0 }
                 if links { record.snapshot = .init(id: s.id, rootID: store.rootID, rootPath: r, seq: s.seq, trigger: s.trigger.rawValue,
                                         fileCount: s.fileCount, changedCount: s.changedCount, bytesAdded: s.bytesAdded,
                                         durationMs: st.durationMs, complete: s.complete, label: s.label) }
@@ -258,6 +261,7 @@ public struct HookBridge {
                 }
                 if !l.complete { spawnBackgroundSnapshot(r) }
                 taken[r] = l
+                tooLarge[r] = st.skippedLargePaths.map { r + "/" + $0 }
                 if links {
                     // Nothing changed since `l`: the event points at it (restoring it = state right before this command).
                     record.snapshot = .init(id: l.id, rootID: store.rootID, rootPath: r, seq: l.seq, trigger: l.trigger.rawValue,
@@ -391,6 +395,20 @@ public struct HookBridge {
                 } else if required.contains(where: { $0.roots.isEmpty }) && !needsNone(skipped) && (skipped != nil || snap == nil) {
                     verdict = unavailable(skipped ?? "unknown")
                 }
+            }
+            // A file over the size limit is in no snapshot: a command that deletes, empties or overwrites it cannot be
+            // undone, whatever the snapshot of its folder says. Ask first, naming the file.
+            let skippedFiles = tooLarge.values.joined()
+            if !verdict.findings.contains(where: { $0.ruleId == "snapshot.unavailable" }),
+               let big = verdict.findings.flatMap(\.paths).lazy.compactMap({ t in skippedFiles.first { $0 == t || $0.hasPrefix(t + "/") } }).first {
+                let root = tooLarge.first { $0.value.contains(big) }?.key
+                let name = root.map { String(big.dropFirst($0.count + 1)) } ?? big
+                var st = stat()
+                let size = lstat(big, &st) == 0 ? " (\(ByteCountFormatter.string(fromByteCount: Int64(st.st_size), countStyle: .file)))" : ""
+                let finding = GuardFinding(ruleId: "snapshot.unavailable", decision: .ask, snapshot: .required,
+                                           reason: "it deletes, empties or overwrites \(name)\(size), a file too large for Airbag's snapshots, so it could not be restored.",
+                                           matched: primary?.matched ?? command)
+                verdict = GuardVerdict(decision: .ask, snapshot: .required, findings: verdict.findings + [finding])
             }
             /// The snapshot the question can point to: that of the root the deciding finding targets, or the session
             /// folder's for one that names none. None for what no snapshot undoes, or when a snapshot it needs is missing.

@@ -369,6 +369,7 @@ public final class SnapshotStore {
         let unreadablePrefixes = walk.unreadableDirs.map { $0 + "/" }
         stats.walked = walk.entries.count
         stats.skippedLarge = walk.skippedLarge.count
+        stats.skippedLargePaths = walk.skippedLarge
         stats.errors = walk.errors
 
         var newItems: [ItemRow] = []
