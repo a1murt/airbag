@@ -198,3 +198,16 @@ force-removes one (`git worktree remove --force`) names every worktree it takes:
 asks are only recorded, and deleting or moving such a folder asks. A worktree among the protected roots no longer makes
 its main checkout "the parent of a protected root", which blocked `rm -rf ./*` there. All the roots of one command
 share one snapshot deadline, so several cannot outlast the hook's own.
+
+**ADR-036 Claude Code's temporary folder is not a project, and a refused folder stays refused when it is gone.** On
+2026-11-05 one Mac held 13 stores of Claude Code's temporary folder: `/private/tmp/claude-501` itself (4.9 GB on disk,
+a snapshot for every file change the watcher saw), its per-session folders, scratchpads and task-output folders
+(0.5 GB). They became roots because an agent worked there, and the app watches every store's root, so each scratch
+file, task log and build an agent wrote made a snapshot. With the global budget split across stores by size (`Retention.run`), the next
+gigabyte of that churn would have cut the snapshots of the real projects. The temporary folder, a project's folder
+in it (`-Users-me-app`), a session's (`<uuid>`), the folders directly in a session (`scratchpad`, `tasks`) and the
+unpacked skills (`bundled-skills`) are now never a root, as `/private/var` is; a folder an agent makes inside a
+scratchpad or next to those folders (`/private/tmp/claude-501/sidebar-test`) still can be. As in ADR-032 the old stores
+are left on disk: they are not opened, watched, snapshotted, pruned or counted against the budget, and `airbag
+usage` lists each with its size and directory for the user to delete. That now holds after the folder is gone too
+(macOS empties `/tmp` on restart): before, the store came back as a missing project, listed and counted again.

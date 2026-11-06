@@ -152,9 +152,11 @@ enum SnapshotCommands {
         for loc in SnapshotStore.allStores() {
             var refused = false
             if loc.rootExists { do { _ = try SnapshotStore.validateRoot(loc.root) } catch SnapshotError.unsafeRoot { refused = true } catch {} }
+            else { refused = SnapshotStore.isSystemOrHomeFolder(FileSystem.resolvedPath(loc.root)) }
             if refused {
-                // Made before the folder was refused (ADR-032): never opened, snapshotted or pruned again.
-                rows.append(["root": loc.root, "rootExists": true, "refused": true, "store": loc.directory]); continue
+                // Made before the folder was refused (ADR-032, ADR-036): never opened, snapshotted or pruned again.
+                rows.append(["root": loc.root, "rootExists": loc.rootExists, "refused": true, "store": loc.directory,
+                             "storeBytes": directoryBytes(loc.directory)]); continue
             }
             guard loc.rootExists, let s = try? SnapshotStore.open(root: loc.root, create: false), let u = try? s.usage() else {
                 rows.append(["root": loc.root, "rootExists": loc.rootExists]); continue
@@ -165,11 +167,23 @@ enum SnapshotCommands {
         if a.has("json") { Out.json(rows); return 0 }
         for r in rows {
             let root = r["root"] as? String ?? "?"
+            if r["refused"] as? Bool == true {
+                print("\(root)  (not a project folder; Airbag no longer snapshots it — its store, \(Out.bytes(r["storeBytes"] as? Int64 ?? 0)), can be deleted: \(r["store"] ?? ""))")
+                continue
+            }
             if r["rootExists"] as? Bool == false { print("\(root)  (folder missing — restorable with `airbag restore <id> --root \"\(root)\"`)"); continue }
-            if r["refused"] as? Bool == true { print("\(root)  (not a project folder; Airbag no longer snapshots it — its store can be deleted: \(r["store"] ?? ""))"); continue }
             print("\(root)  \(r["snapshots"] ?? 0) snapshots · \(r["trackedFiles"] ?? 0) files · \(Out.bytes(r["objectBytes"] as? Int64 ?? 0))")
         }
         return 0
+    }
+
+    /// Bytes a directory takes on disk (a refused store the user may delete).
+    static func directoryBytes(_ path: String) -> Int64 {
+        let key = URLResourceKey.totalFileAllocatedSizeKey
+        guard let en = FileManager.default.enumerator(at: URL(fileURLWithPath: path), includingPropertiesForKeys: [key]) else { return 0 }
+        var total: Int64 = 0
+        for case let url as URL in en { total += Int64((try? url.resourceValues(forKeys: [key]).totalFileAllocatedSize) ?? 0) }
+        return total
     }
 
     static func symbol(_ s: ChangeStatus) -> String {
