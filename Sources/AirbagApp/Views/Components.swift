@@ -299,8 +299,9 @@ struct PortLink: View {
     var font: Font = .caption
     var body: some View {
         let portText = String(port)
+        // Fixed size: a port squeezed by its neighbours must not wrap digit by digit.
         Button { NSWorkspace.shared.open(URL(string: "http://localhost:\(portText)")!) } label: { Text(verbatim: ":" + portText) }
-            .buttonStyle(.link).font(font.monospacedDigit())
+            .buttonStyle(.link).font(font.monospacedDigit()).fixedSize()
             .help(Text("Open localhost:\(portText) in Browser"))
     }
 }

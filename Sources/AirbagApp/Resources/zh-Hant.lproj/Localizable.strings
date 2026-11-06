@@ -127,6 +127,7 @@
 "Disk budget for all projects" = "所有專案的磁碟空間上限";
 "Dismiss" = "忽略";
 "Dismissed" = "已忽略";
+"Docker / Lima" = "Docker / Lima";
 "Docker or Lima manages it; stop the container instead" = "它由 Docker 或 Lima 管理；請改為停止容器";
 "Done" = "完成";
 "Downloaded script" = "下載的腳本";
@@ -163,6 +164,7 @@
 "it's a system process" = "它是系統處理程序";
 "it's Airbag or the app that started it" = "它是 Airbag 或啟動 Airbag 的 App";
 "it's an agent, editor or terminal" = "它是代理程式、編輯器或終端機";
+"it's part of a Lima VM (Colima); stop the container, or the VM with colima stop or limactl stop" = "它屬於 Lima（Colima）虛擬機器；請停止容器，或用 colima stop 或 limactl stop 停止虛擬機器";
 "Its snapshots are deleted. Add the folder again to protect it." = "它的快照將被刪除。若要再次保護，請重新加入該檔案夾。";
 "just now" = "剛剛";
 "Keep Running" = "保持執行";

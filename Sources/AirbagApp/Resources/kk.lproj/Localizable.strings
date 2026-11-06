@@ -127,6 +127,7 @@
 "Disk budget for all projects" = "Барлық жобаларға диск лимиті";
 "Dismiss" = "Жасыру";
 "Dismissed" = "Жасырылды";
+"Docker / Lima" = "Docker / Lima";
 "Docker or Lima manages it; stop the container instead" = "оны Docker немесе Lima басқарады; оның орнына контейнерді тоқтатыңыз";
 "Done" = "Дайын";
 "Downloaded script" = "Жүктеп алынған скрипт";
@@ -163,6 +164,7 @@
 "it's a system process" = "бұл — жүйелік процесс";
 "it's Airbag or the app that started it" = "бұл — Airbag немесе оны іске қосқан қолданба";
 "it's an agent, editor or terminal" = "бұл — агент, редактор немесе терминал";
+"it's part of a Lima VM (Colima); stop the container, or the VM with colima stop or limactl stop" = "бұл — Lima (Colima) виртуалды машинасының бөлігі; контейнерді немесе VM-ді colima stop не limactl stop арқылы тоқтатыңыз";
 "Its snapshots are deleted. Add the folder again to protect it." = "Оның снапшоттары жойылады. Қайта қорғау үшін қалтаны қайтадан қосыңыз.";
 "just now" = "жаңа ғана";
 "Keep Running" = "Қосулы қалдыру";

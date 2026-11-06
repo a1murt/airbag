@@ -127,6 +127,7 @@
 "Disk budget for all projects" = "Limite di spazio per tutti i progetti";
 "Dismiss" = "Ignora";
 "Dismissed" = "Ignorato";
+"Docker / Lima" = "Docker / Lima";
 "Docker or Lima manages it; stop the container instead" = "è gestito da Docker o Lima; arresta invece il container";
 "Done" = "Fine";
 "Downloaded script" = "Script scaricato";
@@ -163,6 +164,7 @@
 "it's a system process" = "è un processo di sistema";
 "it's Airbag or the app that started it" = "è Airbag o l'app che l'ha avviato";
 "it's an agent, editor or terminal" = "è un agente, un editor o un terminale";
+"it's part of a Lima VM (Colima); stop the container, or the VM with colima stop or limactl stop" = "fa parte di una VM Lima (Colima); arresta il container, oppure la VM con colima stop o limactl stop";
 "Its snapshots are deleted. Add the folder again to protect it." = "I suoi snapshot verranno eliminati. Aggiungi di nuovo la cartella per proteggerla.";
 "just now" = "poco fa";
 "Keep Running" = "Mantieni in esecuzione";

@@ -127,6 +127,7 @@
 "Disk budget for all projects" = "Maximale schijfruimte voor alle projecten";
 "Dismiss" = "Negeer";
 "Dismissed" = "Genegeerd";
+"Docker / Lima" = "Docker / Lima";
 "Docker or Lima manages it; stop the container instead" = "Docker of Lima beheert het; stop in plaats daarvan de container";
 "Done" = "Gereed";
 "Downloaded script" = "Gedownload script";
@@ -163,6 +164,7 @@
 "it's a system process" = "het is een systeemproces";
 "it's Airbag or the app that started it" = "het is Airbag zelf of de app die Airbag heeft gestart";
 "it's an agent, editor or terminal" = "het is een agent, editor of terminal";
+"it's part of a Lima VM (Colima); stop the container, or the VM with colima stop or limactl stop" = "het hoort bij een Lima-VM (Colima); stop de container, of de VM met colima stop of limactl stop";
 "Its snapshots are deleted. Add the folder again to protect it." = "De snapshots ervan worden verwijderd. Voeg de map opnieuw toe om hem weer te beschermen.";
 "just now" = "zojuist";
 "Keep Running" = "Laat draaien";

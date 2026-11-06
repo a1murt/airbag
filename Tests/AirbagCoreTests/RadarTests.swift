@@ -111,6 +111,48 @@ func listeningPid(_ snap: RadarSnapshot, port: Int) -> RadarProcess? {
         #expect(ProcessStopper.plan(ProcessIdentity(pid: 100, startUs: 1), table: t2, isProtected: { $0 == 103 ? "agent" : nil }) == .failure(.protectedDescendant("agent")))
     }
 
+    /// Colima started by an agent session: its processes carry the session's environment, but they are Lima's (seen on a
+    /// real Mac, 2026-11-03: the hostagent and usernet showed as left running, the ssh master holding the containers'
+    /// ports could be stopped).
+    @Test func limaVMProcessesAreRecognized() {
+        let colima = "/Users/me/.colima/_lima"
+        #expect(ProcessRadar.isLimaVM(comm: "limactl", exe: "/opt/homebrew/bin/limactl",
+                                      argv: ["/opt/homebrew/bin/limactl", "hostagent", "--pidfile", colima + "/colima/ha.pid", "colima"]))
+        #expect(ProcessRadar.isLimaVM(comm: "limactl", exe: "/opt/homebrew/bin/limactl",
+                                      argv: ["/opt/homebrew/bin/limactl", "usernet", "-p", colima + "/_networks/user-v2/usernet_user-v2.pid"]))
+        #expect(ProcessRadar.isLimaVM(comm: "colima", exe: "/opt/homebrew/bin/colima", argv: ["colima", "daemon", "start", "default"]))
+        // The ssh master renames itself; the rest of its argv is blanked.
+        #expect(ProcessRadar.isLimaVM(comm: "ssh", exe: "/usr/bin/ssh", argv: ["ssh: \(colima)/colima/ssh.sock [mux]", "", ""]))
+        #expect(ProcessRadar.isLimaVM(comm: "ssh", exe: "/usr/bin/ssh", argv: ["ssh: /Users/me/.lima/default/ssh.sock [mux]"]))
+        #expect(ProcessRadar.isLimaVM(comm: "qemu-system-aarc", exe: "/opt/homebrew/bin/qemu-system-aarch64",
+                                      argv: ["/opt/homebrew/bin/qemu-system-aarch64", "-pidfile", "/Users/me/.lima/default/qemu.pid"]))
+        // Tunnels people open, other ssh masters, and projects that happen to be called lima stay ordinary processes.
+        #expect(!ProcessRadar.isLimaVM(comm: "ssh", exe: "/usr/bin/ssh",
+                                       argv: ["ssh", "-F", "/Users/me/.lima/default/ssh.config", "-L", "8080:localhost:8080", "lima-default"]))
+        #expect(!ProcessRadar.isLimaVM(comm: "ssh", exe: "/usr/bin/ssh", argv: ["ssh", "-N", "-L", "5432:localhost:5432", "db.example.com"]))
+        #expect(!ProcessRadar.isLimaVM(comm: "ssh", exe: "/usr/bin/ssh", argv: ["ssh: /Users/me/.ssh/cm-git@github.com:22 [mux]"]))
+        #expect(!ProcessRadar.isLimaVM(comm: "node", exe: "/opt/homebrew/bin/node", argv: ["node", "/Users/me/code/lima/server.js"]))
+    }
+
+    @Test func dockerAndLimaProcessesAreNeverLeftRunning() {
+        func orphan(_ pid: Int32, _ name: String, protection: String?) -> RadarProcess {
+            RadarProcess(identity: ProcessIdentity(pid: pid, startUs: 1), ppid: 1, pgid: pid, name: name, exe: nil, argv: [name], cwd: nil,
+                         startedAtMs: 0, footprintBytes: nil, cpuTimeNs: nil,
+                         listeners: [Listener(port: 50_000 + Int(pid), family: "ipv4", address: "127.0.0.1", scope: .loopback)], processClass: .dev,
+                         attribution: Attribution(method: .envSession, confidence: .high, agent: .claudeCode, agentSessionID: "ended",
+                                                  sessionTitle: nil, sessionLive: false, projectRoot: nil),
+                         linkState: .orphan, protection: protection)
+        }
+        let snap = RadarSnapshot(capturedAtMs: 0, durationMs: 0, processes: [
+            orphan(1, "limactl", protection: ProcessRadar.limaVM),
+            orphan(2, "docker-proxy", protection: ProcessRadar.dockerManaged),
+            orphan(3, "vite", protection: nil),
+        ])
+        #expect(snap.processes.map(\.isManaged) == [true, true, false])
+        #expect(snap.orphans.map(\.name) == ["vite"])
+        #expect(snap.servers.count == 3)
+    }
+
     @Test func sessionEndsWhenAgentProcessIsGone() throws {
         let sb = Sandbox("radar"); defer { sb.cleanup() }
         let reg = try Registry(paths: sb.paths, role: .app)
