@@ -223,3 +223,11 @@ command whose snapshot is missing (ADR-035), also where asks are only recorded. 
 emptying and overwriting, inline interpreter deletes, destructive SQL on a local database file, and `git clean -x`/`-X`,
 which also deletes the ignored files where large data usually lives; `git clean` without them keeps ignored files and
 is not checked, nor are `mv` and `git reset`. Restoring still does not list the files a snapshot skipped.
+
+**ADR-038 Guard explains a finding by its rule, in the interface language.** The reasons the rules give are written
+for the agent: English, naming the command's paths, 147 wordings across 90 rules, too varied to translate as
+templates. The Guard screen shows one sentence per rule id in the user's language instead (`GuardRule.summaries`;
+rules about the same harm share one, 67 in all), with the agent's reason, paths included, in its tooltip; in
+English it shows the reason itself, which says more. Turned-off rules in Settings show the same sentence. A test
+fails when a rule id the rule engine or the hook can report has no sentence or a sentence belongs to no such rule,
+and `check-l10n.py` when a language lacks one. Agent-facing reasons stay English (ADR-031).

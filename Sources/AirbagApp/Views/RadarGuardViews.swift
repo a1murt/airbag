@@ -732,10 +732,11 @@ private struct GuardLogRow: View {
                 CommandText(command: entry.command, lines: 8, font: .callout)
             }
             VStack(alignment: .leading, spacing: 3) {
-                Text(verbatim: Self.readable(entry.reason))
+                Text(verbatim: GuardRule.explanation(entry.ruleID, reason: entry.reason))
                     .font(.callout)
                     .fixedSize(horizontal: false, vertical: true)
                     .textSelection(.enabled)
+                    .help(Text(verbatim: GuardRule.readable(entry.reason))) // what the agent was told, paths included
                 HStack(spacing: 4) {
                     Text(style.title)
                     if let category = GuardRule.category(entry.ruleID) {
@@ -796,41 +797,6 @@ private struct GuardLogRow: View {
 
     private var ruleIDText: some View {
         Text("Rule ID: \(entry.ruleID)").font(.caption).foregroundStyle(.tertiary).textSelection(.enabled)
-    }
-
-    /// The rule's reason is written for the agent ("it deletes …"); people read it as a sentence.
-    static func readable(_ reason: String) -> String {
-        var s = reason.trimmingCharacters(in: .whitespacesAndNewlines)
-        if s.lowercased().hasPrefix("it ") { s = String(s.dropFirst(3)) }
-        return s.prefix(1).uppercased() + s.dropFirst()
-    }
-}
-
-/// Guard rule ids as people read them (also for a list of rules that are turned off).
-enum GuardRule {
-    /// Rules that can block (RuleEngine: wiping home, a disk or system folders, the system itself, Airbag's own data
-    /// and hooks, emptying the Trash, deleting a GitHub repository). RuleEngine drops every finding of a disabled rule,
-    /// so the app never offers to turn these off.
-    static func canTurnOff(_ ruleID: String) -> Bool {
-        let parts = ruleID.split(separator: ".").map(String.init)
-        if ["sys", "disk", "self"].contains(parts.first ?? "") { return false }
-        if parts.contains("catastrophic") || parts.contains("device") || ruleID.hasPrefix("fs.rm.home") { return false }
-        return !["fs.trash.empty", "gh.repo.delete"].contains(ruleID)
-    }
-
-    /// What kind of harm the rule is about, from its id ("fs.rm.outside" → files outside the project).
-    static func category(_ ruleID: String) -> String? {
-        switch ruleID.split(separator: ".").first.map(String.init) ?? "" {
-        case "fs": return String(localized: "Files outside the project")
-        case "git": return String(localized: "Git history")
-        case "cloud": return String(localized: "Cloud resources")
-        case "sys", "disk": return String(localized: "System")
-        case "net": return String(localized: "Downloaded script")
-        case "shell": return String(localized: "Unclear command")
-        case "self": return String(localized: "Airbag's protection")
-        case "db": return String(localized: "Databases")
-        default: return nil
-        }
     }
 }
 
