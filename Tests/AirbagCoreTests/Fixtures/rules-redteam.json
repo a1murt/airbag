@@ -633,6 +633,305 @@
     "snapshot": "recommended"
    },
    "why": "GUARD: extracting an archive is allowed"
+  },
+  {
+   "cmd": "echo 'rm -rf ~' | sh",
+   "expect": {
+    "decision": "block"
+   },
+   "why": "BYPASS: text an echo pipes into a shell is that shell's script; only curl/wget | sh was checked.",
+   "rule": "fs.rm.catastrophic"
+  },
+  {
+   "cmd": "printf 'rm -rf ~/.ssh\\n' | bash",
+   "expect": {
+    "decision": "block"
+   },
+   "why": "BYPASS: printf piped into bash, same as echo.",
+   "rule": "fs.rm.catastrophic"
+  },
+  {
+   "cmd": "echo cm0gLXJmIH4K | base64 -d | sh",
+   "expect": {
+    "decision": "ask"
+   },
+   "why": "BYPASS: decoded text piped into sh cannot be checked.",
+   "rule": "shell.opaque"
+  },
+  {
+   "cmd": "echo \"$CMD\" | sh",
+   "expect": {
+    "decision": "ask"
+   },
+   "why": "BYPASS: echo of an unresolved variable piped into sh.",
+   "rule": "shell.opaque"
+  },
+  {
+   "cmd": "env -S 'rm -rf ${HOME}'",
+   "expect": {
+    "decision": "block"
+   },
+   "why": "BYPASS: env -S splits its string into the command it runs.",
+   "rule": "fs.rm.catastrophic"
+  },
+  {
+   "cmd": "env -S\"rm -rf $HOME/.ssh\"",
+   "expect": {
+    "decision": "block"
+   },
+   "why": "BYPASS: env -S with the string attached and partly quoted.",
+   "rule": "fs.rm.catastrophic"
+  },
+  {
+   "cmd": "awk 'BEGIN{system(\"rm -rf /Users/u\")}'",
+   "expect": {
+    "decision": "block"
+   },
+   "why": "BYPASS: awk system() runs a shell command.",
+   "rule": "fs.rm.catastrophic"
+  },
+  {
+   "cmd": "awk '{system(\"rm -rf \" $1)}' list.txt",
+   "expect": {
+    "decision": "ask"
+   },
+   "why": "BYPASS: awk builds the command from its input.",
+   "rule": "shell.opaque"
+  },
+  {
+   "cmd": "awk 'BEGIN{print \"rm -rf ~\" | \"sh\"}'",
+   "expect": {
+    "decision": "ask"
+   },
+   "why": "BYPASS: awk pipes text into sh.",
+   "rule": "shell.opaque"
+  },
+  {
+   "cmd": "git -c alias.x='!rm -rf ~' x",
+   "expect": {
+    "decision": "block"
+   },
+   "why": "BYPASS: git runs an alias starting with ! through the shell.",
+   "rule": "fs.rm.catastrophic"
+  },
+  {
+   "cmd": "git -c core.sshCommand='rm -rf ~/.ssh' fetch",
+   "expect": {
+    "decision": "block"
+   },
+   "why": "BYPASS: core.sshCommand runs through the shell on fetch.",
+   "rule": "fs.rm.catastrophic"
+  },
+  {
+   "cmd": "git config alias.cleanup '!rm -rf ~'",
+   "expect": {
+    "decision": "block"
+   },
+   "why": "BYPASS: stores a shell alias that deletes home for later.",
+   "rule": "fs.rm.catastrophic"
+  },
+  {
+   "cmd": "GIT_SSH_COMMAND='rm -rf ~' git fetch",
+   "expect": {
+    "decision": "block"
+   },
+   "why": "BYPASS: GIT_SSH_COMMAND runs through the shell.",
+   "rule": "fs.rm.catastrophic"
+  },
+  {
+   "cmd": "vim -c ':!rm -rf ~' -c ':q!'",
+   "expect": {
+    "decision": "block"
+   },
+   "why": "BYPASS: vim runs :! commands in the shell.",
+   "rule": "fs.rm.catastrophic"
+  },
+  {
+   "cmd": "vim -es -c 'call system(\"rm -rf ~/.ssh\")' -c q",
+   "expect": {
+    "decision": "block"
+   },
+   "why": "BYPASS: vim script system().",
+   "rule": "fs.rm.catastrophic"
+  },
+  {
+   "cmd": "security delete-keychain ~/Library/Keychains/login.keychain-db",
+   "expect": {
+    "decision": "block"
+   },
+   "why": "BYPASS: deletes the login keychain with every saved password.",
+   "rule": "sys.keychain.delete"
+  },
+  {
+   "cmd": "security delete-generic-password -s github.com",
+   "expect": {
+    "decision": "ask"
+   },
+   "why": "BYPASS: deletes a saved password.",
+   "rule": "sys.keychain.item.delete"
+  },
+  {
+   "cmd": "launchctl bootout gui/501",
+   "expect": {
+    "decision": "ask"
+   },
+   "why": "BYPASS: ends the whole login session.",
+   "rule": "sys.launchctl.session"
+  },
+  {
+   "cmd": "launchctl reboot userspace",
+   "expect": {
+    "decision": "block"
+   },
+   "why": "BYPASS: restarts userspace, ending every session.",
+   "rule": "sys.power"
+  },
+  {
+   "cmd": "npm unpublish my-pkg --force",
+   "expect": {
+    "decision": "ask"
+   },
+   "why": "BYPASS: removes a published package from the registry.",
+   "rule": "pkg.unpublish"
+  },
+  {
+   "cmd": "osascript -e 'quit app \"Airbag\"'",
+   "expect": {
+    "decision": "ask"
+   },
+   "why": "BYPASS: quits Airbag (killall Airbag already asks).",
+   "rule": "self.airbag"
+  },
+  {
+   "cmd": "psql -c 'DELETE FROM users WHERE true'",
+   "expect": {
+    "decision": "ask"
+   },
+   "why": "BYPASS: a WHERE clause that always holds deletes every row.",
+   "rule": "db.destructive"
+  },
+  {
+   "cmd": "psql -c 'DELETE FROM users WHERE 1=1' mydb",
+   "expect": {
+    "decision": "ask"
+   },
+   "why": "BYPASS: WHERE 1=1 deletes every row.",
+   "rule": "db.destructive"
+  },
+  {
+   "cmd": "tar -xf /tmp/evil.tar -C ~",
+   "expect": {
+    "decision": "ask"
+   },
+   "why": "BYPASS: extracting into home can replace dotfiles no snapshot covers.",
+   "rule": "fs.extract.overwrite"
+  },
+  {
+   "cmd": "unzip -o /tmp/evil.zip -d ~/.ssh",
+   "expect": {
+    "decision": "ask"
+   },
+   "why": "BYPASS: extracting into ~/.ssh can replace keys.",
+   "rule": "fs.extract.overwrite"
+  },
+  {
+   "cmd": "echo 'import shutil; shutil.rmtree(\"/Users/u\")' | python3",
+   "expect": {
+    "decision": "block"
+   },
+   "why": "BYPASS: code echoed into python.",
+   "rule": "interp.delete.catastrophic"
+  },
+  {
+   "cmd": "echo 'ls -la' | sh",
+   "expect": {
+    "decision": "allow"
+   },
+   "why": "GUARD: harmless text piped into sh"
+  },
+  {
+   "cmd": "cat install.sh | bash",
+   "expect": {
+    "decision": "allow"
+   },
+   "why": "GUARD: running a script file, like bash install.sh"
+  },
+  {
+   "cmd": "env -S 'echo hi'",
+   "expect": {
+    "decision": "allow"
+   },
+   "why": "GUARD: env -S with a harmless command"
+  },
+  {
+   "cmd": "awk -F, '/a|b/ {print $2}' data.csv",
+   "expect": {
+    "decision": "allow"
+   },
+   "why": "GUARD: a | in an awk regex is not a pipe"
+  },
+  {
+   "cmd": "git -c core.pager=cat log",
+   "expect": {
+    "decision": "allow"
+   },
+   "why": "GUARD: a harmless pager"
+  },
+  {
+   "cmd": "git -c core.editor=true commit --amend --no-edit",
+   "expect": {
+    "decision": "allow"
+   },
+   "why": "GUARD: the usual non-interactive commit"
+  },
+  {
+   "cmd": "git config core.editor 'code --wait'",
+   "expect": {
+    "decision": "allow"
+   },
+   "why": "GUARD: setting an editor"
+  },
+  {
+   "cmd": "vim -c ':wq' notes.md",
+   "expect": {
+    "decision": "allow"
+   },
+   "why": "GUARD: vim Ex commands that run nothing"
+  },
+  {
+   "cmd": "security find-generic-password -s github.com",
+   "expect": {
+    "decision": "allow"
+   },
+   "why": "GUARD: reading a keychain item"
+  },
+  {
+   "cmd": "launchctl bootout gui/501/com.example.agent",
+   "expect": {
+    "decision": "allow"
+   },
+   "why": "GUARD: stopping one service, not the session"
+  },
+  {
+   "cmd": "psql -c 'DELETE FROM users WHERE 1=1 AND id = 5'",
+   "expect": {
+    "decision": "allow"
+   },
+   "why": "GUARD: a query builder WHERE 1=1 with a real condition"
+  },
+  {
+   "cmd": "tar -xzf node.tgz -C ~/.local",
+   "expect": {
+    "decision": "allow"
+   },
+   "why": "GUARD: extracting a tool into ~/.local"
+  },
+  {
+   "cmd": "unzip -l a.zip",
+   "expect": {
+    "decision": "allow"
+   },
+   "why": "GUARD: listing an archive"
   }
  ]
 }
