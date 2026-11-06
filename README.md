@@ -211,7 +211,7 @@ Airbag.app (menu bar): timeline · restore · Guard · Radar · snapshots after 
 | Snapshot of an unchanged 5k-file project † | **9–11 ms** |
 | Snapshot of an unchanged 50k-file project † | **116–184 ms** |
 | Restoring 100 files, 5k / 50k-file project † | **60 / 410 ms** |
-| Guard test cases, including an adversarial red-team set | **578** |
+| Guard test cases, including an adversarial red-team set | **617** |
 | Automated tests, run in CI | **138** |
 
 <sub>Apple M4, release build. Replay and hook times: 0.1.1, 2026-10-24; method, scripts and full results in

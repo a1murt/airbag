@@ -97,6 +97,7 @@ snapshot root of its own (doc 10 §5). The rules treat it as one:
 | `docker.destructive` | ask | none | it deletes container volumes or images, which can hold local databases that file snapshots do not cover. |
 | `docker.mount.delete` | ask | recommended | it mounts host folders into a container and deletes files there, bypassing host-side checks. |
 | `fs.device.write` | block | none | it targets a device. |
+| `fs.extract.overwrite` | ask | recommended | it extracts an archive straight into (describe(p)), where it can replace files no snapshot covers. |
 | `fs.find.delete.broad` | ask | none | it deletes matching files anywhere under (describe(p)), outside what snapshots cover. |
 | `fs.find.delete.project` | allow | required | it deletes matching project files (restorable from the snapshot taken first). |
 | `fs.mv.catastrophic` | block | none | it would move (describe(p)) away, breaking the system or your files. |
@@ -147,6 +148,7 @@ snapshot root of its own (doc 10 §5). The rules treat it as one:
 | `interp.delete.catastrophic` | block | none | its inline (name) code deletes or runs commands against (describe(p)). |
 | `interp.delete.project` | allow | required | it deletes files from inline (name) code inside the project (snapshot taken first). |
 | `net.pipe.shell` | ask | recommended | it pipes a downloaded script straight into (name). |
+| `pkg.unpublish` | ask | none | it removes a published package from the registry, which no local snapshot can bring back. |
 | `remote.destructive` | ask | none | it runs a destructive command on a remote machine, outside anything Airbag can snapshot. |
 | `self.airbag` | ask, block | none | it removes Airbag's protection; only the user should do that. |
 | `self.hooks` | ask | none | it edits an agent's hook configuration, which can switch Airbag's protection off. |
@@ -155,8 +157,11 @@ snapshot root of its own (doc 10 §5). The rules treat it as one:
 | `sys.crontab.remove` | block | none | it deletes every cron job of the user without confirmation. |
 | `sys.defaults.delete` | ask | recommended | it deletes application preferences. |
 | `sys.disk.erase` | block | none | it can erase or repartition a disk. |
+| `sys.keychain.delete` | block | none | it deletes a keychain with every password, key and certificate in it. |
+| `sys.keychain.item.delete` | ask | none | it deletes saved passwords, keys or certificates from the keychain, which file snapshots cannot restore. |
 | `sys.kill.all` | block | none | it kills every process of the user, including the agent and all open apps. |
 | `sys.kill.broad` | ask | none | it kills every process matching a broad name, possibly including the agent itself, editors or other projects' servers. |
+| `sys.launchctl.session` | ask | none | it ends the user's login session: every app and agent quits and unsaved work is lost. |
 | `sys.launchctl.system` | block | none | it stops or removes system services. |
 | `sys.osascript` | ask | recommended | it runs an AppleScript that can delete or run commands outside the project. |
 | `sys.power` | block | none | it shuts down or restarts the Mac and every running session. |

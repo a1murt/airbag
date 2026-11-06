@@ -204,6 +204,40 @@ struct Analyzer {
         }
     }
 
+    /// The shell command a git setting holds, if git runs it through the shell: aliases and credential helpers starting
+    /// with `!`, `core.sshCommand`, pagers, editors, external diff and merge drivers, filters.
+    static func gitConfigCommand(key: String, value: String) -> String? {
+        let parts = key.lowercased().split(separator: ".").map(String.init)
+        guard let section = parts.first, let name = parts.last, parts.count >= 2 else { return nil }
+        if section == "alias" || (section == "credential" && name == "helper") { return value.hasPrefix("!") ? String(value.dropFirst()) : nil }
+        let flags: Set<String> = ["true", "false", "yes", "no", "on", "off", "1", "0", ""]
+        if section == "pager" || (section == "core" && name == "fsmonitor") { return flags.contains(value.lowercased()) ? nil : value }
+        let commands: Set<String> = ["core.sshcommand", "core.pager", "core.editor", "core.askpass", "sequence.editor", "diff.external",
+                                     "gpg.program", "uploadpack.packobjectshook", "interactive.difffilter", "diff.command", "diff.textconv",
+                                     "merge.driver", "filter.clean", "filter.smudge", "filter.process", "mergetool.cmd", "difftool.cmd",
+                                     "remote.uploadpack", "remote.receivepack"]
+        return commands.contains(section + "." + name) ? value : nil
+    }
+
+    /// The text an `echo` or a single-argument `printf` writes, with `\n` and `\t` escapes applied; nil for other commands
+    /// and for a printf format with conversions. Opaque when a word depends on unresolved variables.
+    static func printedText(_ cmd: ShellCommand) -> ShellWord? {
+        guard let first = cmd.words.first else { return nil }
+        var args = Array(cmd.words.dropFirst())
+        var escapes = false
+        switch (first.text as NSString).lastPathComponent {
+        case "echo":
+            while let f = args.first, ["-n", "-e", "-E", "-ne", "-en"].contains(f.text) { escapes = escapes || f.text.contains("e"); args.removeFirst() }
+        case "printf":
+            guard args.count == 1, !args[0].text.contains("%") else { return nil }
+            escapes = true
+        default: return nil
+        }
+        let text = args.map(\.text).joined(separator: " ")
+        let unescaped = escapes ? text.replacingOccurrences(of: "\\n", with: "\n").replacingOccurrences(of: "\\t", with: "\t") : text
+        return ShellWord(unescaped, opaque: args.contains(where: \.opaque))
+    }
+
     // MARK: path handling
 
     func normalize(_ path: String) -> String {
@@ -749,6 +783,19 @@ struct Analyzer {
             words.removeFirst()
             while let w = words.first {
                 if w.text == "--" { words.removeFirst(); break }
+                // `env -S 'rm -rf ${HOME}'` splits the string into a command and its arguments: judge that command line.
+                if name == "env", w.text.hasPrefix("-S") || w.text.hasPrefix("--split-string") { // quotes don't hide an option
+                    words.removeFirst()
+                    let inline = w.text.hasPrefix("--split-string=") ? String(w.text.dropFirst("--split-string=".count))
+                        : w.text.hasPrefix("-S") && w.text.count > 2 ? String(w.text.dropFirst(2)) : nil
+                    guard let split = inline.map({ ShellWord($0, opaque: w.opaque) }) ?? words.first else { return }
+                    if inline == nil { words.removeFirst() }
+                    let line = ([split.text] + words.map { $0.text.contains(" ") ? "'\($0.text)'" : $0.text }).joined(separator: " ")
+                    if sudo { add("sys.sudo", .ask, .recommended, "it runs with root privileges, outside what Airbag can snapshot or undo.", line) }
+                    if split.opaque { add("shell.opaque", .ask, .recommended, "it runs a command line built from unresolved variables.", line) }
+                    analyze(line, depth: depth + 1)
+                    return
+                }
                 if w.text.hasPrefix("-") && w.text.count > 1 && !w.quoted {
                     words.removeFirst()
                     if valueOptions[name]?.contains(w.text) == true, !words.isEmpty {
@@ -779,10 +826,19 @@ struct Analyzer {
         let whole = words.map(\.text).joined(separator: " ")
 
         if sudo { add("sys.sudo", .ask, .recommended, "it runs with root privileges, outside what Airbag can snapshot or undo.", whole) }
-        // A pipe into a shell or interpreter runs downloaded or generated code.
-        if cmdIn.connector == .pipe, Analyzer.shells.contains(name) || ["python", "python3", "node", "ruby", "perl"].contains(name), args.allSatisfy({ $0.text.hasPrefix("-") }) {
-            if let prev = previous, ["curl", "wget", "http", "xh", "fetch"].contains(((prev.words.first?.text ?? "") as NSString).lastPathComponent) {
-                add("net.pipe.shell", .ask, .recommended, "it pipes a downloaded script straight into \(name).", prev.argv.joined(separator: " ") + " | " + whole)
+        // A pipe into a shell or interpreter runs downloaded or generated code. Literal text an echo or printf writes is
+        // the script itself (judged like `-c`); `cat file | sh` runs a script file; anything else is code Airbag cannot see.
+        if cmdIn.connector == .pipe, Analyzer.shells.contains(name) || ["python", "python3", "node", "ruby", "perl"].contains(name), args.allSatisfy({ $0.text.hasPrefix("-") }),
+           let prev = previous {
+            let source = ((prev.words.first?.text ?? "") as NSString).lastPathComponent
+            let piped = prev.argv.joined(separator: " ") + " | " + whole
+            if ["curl", "wget", "http", "xh", "fetch"].contains(source) {
+                add("net.pipe.shell", .ask, .recommended, "it pipes a downloaded script straight into \(name).", piped)
+            } else if let code = Analyzer.printedText(prev), !code.opaque {
+                if Analyzer.shells.contains(name) { analyze(code.text, depth: depth + 1) } else { analyzeInterpreter(name, [ShellWord("-c"), code], whole: piped, depth: depth) }
+                return
+            } else if source != "cat" {
+                add("shell.opaque", .ask, .recommended, "it pipes text that \(source) produces into \(name) as code, which Airbag cannot check.", piped)
             }
         }
 
@@ -856,7 +912,18 @@ struct Analyzer {
         case "mv": analyzeMove(args, whole: whole)
         case "cp", "rsync", "ditto": analyzeCopy(name, args, whole: whole)
         case "truncate": analyzeTruncate(args, whole: whole)
+        case "unzip":
+            if !argv.contains(where: { ["-l", "-t", "-v", "-Z", "-p", "-c"].contains($0) }), let d = argv.firstIndex(of: "-d"), d + 1 < args.count {
+                extractionCheck(args[d + 1], whole: whole)
+            }
         case "tar", "bsdtar":
+            // `tar xzf a.tgz -C ~`: the first word may be an option bundle without its dash.
+            if argv.contains(where: { $0 == "--extract" || $0 == "--get" || $0 == "-x" }) || argv.first.map({ $0.range(of: #"^-?[A-Za-z]*x[A-Za-z]*$"#, options: .regularExpression) != nil }) == true {
+                if let c = argv.firstIndex(where: { $0 == "-C" || $0 == "--directory" }), c + 1 < args.count { extractionCheck(args[c + 1], whole: whole) }
+                else if let d = args.first(where: { $0.text.hasPrefix("--directory=") }) {
+                    extractionCheck(ShellWord(String(d.text.dropFirst("--directory=".count)), opaque: d.opaque), whole: whole)
+                }
+            }
             if argv.contains("--remove-files") {
                 var operands: [ShellWord] = []
                 var i = 0
@@ -906,9 +973,25 @@ struct Analyzer {
         case "tee":
             let append = args.contains { $0.text == "-a" || $0.text == "--append" }
             for t in args where !t.text.hasPrefix("-") { writeCheck(t, truncates: !append, whole: whole) }
+        case "awk", "gawk", "mawk", "nawk": analyzeAwk(args, whole: whole, depth: depth)
+        case "vim", "vi", "nvim", "ex", "view", "gvim", "mvim": analyzeVim(args, whole: whole, depth: depth)
         case "dd": analyzeDD(argv, whole: whole)
         case "chmod", "chown", "chgrp", "chflags", "xattr": analyzePermissions(name, args, whole: whole)
-        case "git": analyzeGit(argv, whole: whole)
+        case "git":
+            // Variables git runs as shell commands: `GIT_SSH_COMMAND='…' git fetch`.
+            for (key, value) in cmd.assignments where ["GIT_SSH_COMMAND", "GIT_SSH", "GIT_EDITOR", "GIT_SEQUENCE_EDITOR", "GIT_PAGER",
+                                                         "GIT_EXTERNAL_DIFF", "GIT_ASKPASS"].contains(key) {
+                analyze(value.text, depth: depth + 1)
+            }
+            analyzeGit(argv, whole: whole, depth: depth)
+        case "security":
+            switch argv.first {
+            case "delete-keychain":
+                add("sys.keychain.delete", .block, .none, "it deletes a keychain with every password, key and certificate in it.", whole)
+            case "delete-generic-password", "delete-internet-password", "delete-certificate", "delete-identity":
+                add("sys.keychain.item.delete", .ask, .none, "it deletes saved passwords, keys or certificates from the keychain, which file snapshots cannot restore.", whole)
+            default: break
+            }
         case "gh": analyzeGH(argv, whole: whole)
         case let n where n.hasPrefix("mkfs") || n.hasPrefix("newfs"):
             add("sys.disk.erase", .block, .none, "it formats a disk or partition.", whole)
@@ -921,6 +1004,13 @@ struct Analyzer {
         case "launchctl":
             if argv.contains(where: { $0.hasPrefix("system") || $0.contains("/System/") }) && argv.contains(where: { ["bootout", "unload", "remove", "disable"].contains($0) }) {
                 add("sys.launchctl.system", .block, .none, "it stops or removes system services.", whole)
+            }
+            if argv.first == "reboot" { add("sys.power", .block, .none, "it restarts the Mac or logs the user out, ending every running session.", whole) }
+            // `bootout gui/501` with no service: the whole login session.
+            let targets = argv.dropFirst().filter { !$0.hasPrefix("-") }
+            if argv.first == "bootout", targets.count == 1, let t = targets.first, t.split(separator: "/").count == 2,
+               ["gui", "user", "login"].contains(t.split(separator: "/")[0]) {
+                add("sys.launchctl.session", .ask, .none, "it ends the user's login session: every app and agent quits and unsaved work is lost.", whole)
             }
             if let sub = argv.first, ["submit", "asuser", "bsexec"].contains(sub) {
                 if let dd = argv.firstIndex(of: "--"), dd + 1 < args.count {
@@ -946,6 +1036,9 @@ struct Analyzer {
             let text = argv.joined(separator: " ").lowercased()
             if text.contains("empty trash") || text.contains("empty the trash") { add("fs.trash.empty", .block, .none, "it empties the Trash permanently.", whole) }
             else if text.contains("delete") || text.contains("do shell script") { add("sys.osascript", .ask, .recommended, "it runs an AppleScript that can delete or run commands outside the project.", whole) }
+            if text.contains("airbag"), text.contains("quit") {
+                add("self.airbag", .ask, .none, "it quits Airbag, which stops its snapshots of file changes; only the user should do that.", whole)
+            }
         case "php" where args.first?.text == "artisan":
             analyzeMigrationTool("artisan", Array(argv.dropFirst()), whole: whole)
         case "python" where args.first.map({ ($0.text as NSString).lastPathComponent == "manage.py" }) == true,
@@ -1422,7 +1515,7 @@ struct Analyzer {
         }
     }
 
-    mutating func analyzeGit(_ argv: [String], whole: String) {
+    mutating func analyzeGit(_ argv: [String], whole: String, depth: Int) {
         // Global options: git -C dir, -c k=v, --git-dir=…, --work-tree=…. -C and --work-tree move the working tree.
         var a = argv[...]
         var workTree: String?
@@ -1432,7 +1525,28 @@ struct Analyzer {
             if f == "-C", let v = a.first { gitCwd = resolve(ShellWord(v))?.path; a = a.dropFirst(); continue }
             if f == "--work-tree", let v = a.first { workTree = v; a = a.dropFirst(); continue }
             if f.hasPrefix("--work-tree=") { workTree = String(f.dropFirst("--work-tree=".count)); continue }
+            // `-c alias.x='!rm -rf ~'`, `-c core.sshCommand=…`: settings git runs as shell commands.
+            if f == "-c", let v = a.first, let eq = v.firstIndex(of: "="),
+               let command = Analyzer.gitConfigCommand(key: String(v[..<eq]), value: String(v[v.index(after: eq)...])) {
+                analyze(command, depth: depth + 1)
+            }
             if (f == "-c" || f == "--git-dir" || f == "--namespace"), !a.isEmpty { a = a.dropFirst() }
+        }
+        // `git config alias.x '!rm -rf ~'` stores such a command for later: judge it now.
+        if a.first == "config" {
+            var operands: [String] = []
+            var rest = a.dropFirst()
+            while let o = rest.first {
+                rest = rest.dropFirst()
+                if ["-f", "--file", "--blob", "--type", "--default", "--comment"].contains(o) { rest = rest.dropFirst(); continue }
+                if !o.hasPrefix("-") { operands.append(o) }
+            }
+            if operands.first == "set" { operands.removeFirst() }
+            if operands.count >= 2, let command = Analyzer.gitConfigCommand(key: operands[0], value: operands[1]) {
+                let saved = writers // stored, not run now: no snapshot for it
+                analyze(command, depth: depth + 1)
+                writers = saved
+            }
         }
         var effectiveTree = gitCwd
         if let wt = workTree {
@@ -1620,6 +1734,123 @@ struct Analyzer {
         }
     }
 
+    /// Extracting an archive replaces whatever files of the same name its destination holds: straight into the home
+    /// folder or another never-project folder (`~/.ssh`, `~/.config`), no snapshot can bring them back.
+    mutating func extractionCheck(_ dest: ShellWord, whole: String) {
+        if case .catastrophic(let p) = classify(resolve(dest)) {
+            add("fs.extract.overwrite", .ask, .recommended, "it extracts an archive straight into \(describe(p)), where it can replace files no snapshot covers.", whole)
+        }
+    }
+
+    /// awk runs shell commands with `system(…)`, `print … | "cmd"` and `"cmd" | getline`: the commands it spells out are
+    /// judged like `sh -c`; one built from awk data, or text piped into a shell, cannot be checked. gawk's `-i inplace`
+    /// rewrites its input files.
+    mutating func analyzeAwk(_ args: [ShellWord], whole: String, depth: Int) {
+        var rest = args[...]
+        var program: String?
+        var inplace = false
+        while let t = rest.first?.text, t.hasPrefix("-"), t.count > 1 {
+            rest = rest.dropFirst()
+            if t == "--" { break }
+            if t == "-f" || t == "--file" || t == "-E" || t == "--exec" { mayWrite(); return } // the program is in a file
+            if t == "-e" || t == "--source" { program = rest.first?.text; rest = rest.dropFirst(); continue }
+            if t == "-i" || t == "--include" { inplace = inplace || rest.first?.text == "inplace"; rest = rest.dropFirst(); continue }
+            if t == "-iinplace" || t == "--include=inplace" { inplace = true; continue }
+            if ["-F", "-v", "--field-separator", "--assign", "-l", "--load"].contains(t) { rest = rest.dropFirst() }
+        }
+        if program == nil { program = rest.first?.text; rest = rest.dropFirst() }
+        if inplace { for t in rest where !t.text.hasPrefix("-") { writeCheck(t, truncates: true, whole: whole) } }
+        guard let program else { return }
+        let commands = Analyzer.awkCommands(program)
+        if !commands.isEmpty { mayWrite() }
+        var opaque = false
+        for c in commands {
+            guard let c else { opaque = true; continue }
+            let words = c.split(separator: " ").map(String.init)
+            if let w = words.first, Analyzer.shells.contains(w), words.dropFirst().allSatisfy({ $0.hasPrefix("-") }) { opaque = true }
+            analyze(c, depth: depth + 1)
+        }
+        if opaque { add("shell.opaque", .ask, .recommended, "it runs shell commands that awk builds from its data, which Airbag cannot check.", whole) }
+    }
+
+    /// The shell commands an awk program runs: `system(…)` arguments and the strings it pipes to (`print … | "cmd"`) or
+    /// reads from (`"cmd" | getline`); nil for a command built from awk data.
+    static func awkCommands(_ program: String) -> [String?] {
+        let c = Array(program)
+        var out: [String?] = []
+        /// The string literal opening at `i` and the index after its closing quote.
+        func literal(_ i: Int) -> (text: String, end: Int)? {
+            var j = i + 1, s = ""
+            while j < c.count, c[j] != "\"" {
+                if c[j] == "\\", j + 1 < c.count { s.append(c[j + 1] == "n" ? "\n" : c[j + 1]); j += 2; continue }
+                s.append(c[j]); j += 1
+            }
+            return j < c.count ? (s, j + 1) : nil
+        }
+        func spaces(_ i: Int) -> Int { var i = i; while i < c.count, c[i] == " " || c[i] == "\t" { i += 1 }; return i }
+        var last: (text: String, end: Int)?
+        var i = 0
+        while i < c.count {
+            if c[i] == "\"" {
+                guard let l = literal(i) else { break }
+                last = l; i = l.end; continue
+            }
+            if c[i] == "|" {
+                if i + 1 < c.count, c[i + 1] == "|" { i += 2; continue } // logical or
+                var k = i + 1
+                if k < c.count, c[k] == "&" { k += 1 }
+                k = spaces(k)
+                if k < c.count, c[k] == "\"", let l = literal(k) { out.append(l.text); last = l; i = l.end; continue }
+                if let l = last, spaces(l.end) == i, String(c[k...]).hasPrefix("getline") { out.append(l.text) }
+                i = k; continue
+            }
+            if c[i] == "s", String(c[i...]).hasPrefix("system"), i == 0 || !(c[i - 1].isLetter || c[i - 1].isNumber || c[i - 1] == "_") {
+                var k = spaces(i + 6)
+                guard k < c.count, c[k] == "(" else { i += 6; continue }
+                // The argument runs to the matching parenthesis; strings may hold parentheses.
+                k += 1
+                let start = spaces(k)
+                var depth = 1
+                while k < c.count, depth > 0 {
+                    if c[k] == "\"", let l = literal(k) { k = l.end; continue }
+                    if c[k] == "(" { depth += 1 } else if c[k] == ")" { depth -= 1 }
+                    k += 1
+                }
+                if depth == 0, start < c.count, c[start] == "\"", let l = literal(start), spaces(l.end) == k - 1 { out.append(l.text) } else { out.append(nil) }
+                i = k; continue
+            }
+            i += 1
+        }
+        return out
+    }
+
+    /// vim's `-c`, `--cmd` and `+cmd` run Ex commands: `:!cmd`, `:r !cmd`, `:w !cmd`, `:terminal cmd` and `system('cmd')` run
+    /// shell commands.
+    mutating func analyzeVim(_ args: [ShellWord], whole: String, depth: Int) {
+        var ex: [String] = []
+        var i = 0
+        while i < args.count {
+            let t = args[i].text
+            if t == "-c" || t == "--cmd", i + 1 < args.count { ex.append(args[i + 1].text); i += 2; continue }
+            if t.hasPrefix("+"), t.count > 1 { ex.append(String(t.dropFirst())) }
+            i += 1
+        }
+        for x in ex {
+            var s = Substring(x).drop(while: { $0 == ":" || $0 == " " })
+            for p in ["silent!", "silent", "sil!", "sil"] where s.hasPrefix(p) { s = s.dropFirst(p.count).drop(while: { $0 == " " }); break }
+            s = s.drop(while: { "%.,$0123456789".contains($0) }) // a range before a filter: `%!sort`
+            var shell: Substring?
+            if s.hasPrefix("!") { shell = s.dropFirst() }
+            for p in ["r !", "r!", "read !", "read!", "w !", "write !", "terminal ", "term "] where s.hasPrefix(p) { shell = s.dropFirst(p.count); break }
+            if let shell { analyze(String(shell), depth: depth + 1); continue }
+            if ["system(", "systemlist(", "jobstart(", "termopen("].contains(where: { s.contains($0) }) {
+                let literals = stringLiterals(String(s))
+                for lit in literals { analyze(lit, depth: depth + 1) }
+                if literals.isEmpty { add("shell.opaque", .ask, .recommended, "it runs shell commands from vim script that Airbag cannot check.", whole) }
+            }
+        }
+    }
+
     /// Single- and double-quoted string literals in source code.
     func stringLiterals(_ code: String) -> [String] {
         var out: [String] = []
@@ -1682,7 +1913,11 @@ struct Analyzer {
                 }
             }
         }
-        if text.contains("DELETE FROM") && text.contains("WHERE") && !text.contains("DROP") && !text.contains("TRUNCATE") { return }
+        // A WHERE clause narrows a DELETE, unless it always holds (`WHERE 1=1`, `WHERE TRUE`).
+        let alwaysTrue = args.contains {
+            $0.text.uppercased().range(of: #"WHERE\s+(?:TRUE|1|(\d+)\s*=\s*\1|'([^']*)'\s*=\s*'\2')\s*(?:;|$)"#, options: .regularExpression) != nil
+        }
+        if text.contains("DELETE FROM") && text.contains("WHERE") && !alwaysTrue && !text.contains("DROP") && !text.contains("TRUNCATE") { return }
         add("db.destructive", .ask, .none, "it drops or wipes database data, which file snapshots cannot restore.", whole)
     }
 
@@ -1788,6 +2023,9 @@ struct Analyzer {
         mayWrite(name)
         var rest = args.drop(while: { $0.text.hasPrefix("-") })
         guard let first = rest.first else { return }
+        if ["npm", "pnpm", "yarn", "bun"].contains(name), first.text == "unpublish" || (first.text == "npm" && rest.dropFirst().first?.text == "unpublish") {
+            add("pkg.unpublish", .ask, .none, "it removes a published package from the registry, which no local snapshot can bring back.", whole)
+        }
         var inner: [ShellWord] = []
         var scriptName: String?
         switch name {
