@@ -204,4 +204,6 @@ struct AnyEncodable: Encodable {
 
 extension String {
     func leftPad(_ n: Int) -> String { count >= n ? self : String(repeating: " ", count: n - count) + self }
+    /// Pads a table column; a longer value stays whole (`padding(toLength:)` would cut it).
+    func rightPad(_ n: Int) -> String { count >= n ? self : self + String(repeating: " ", count: n - count) }
 }

@@ -410,8 +410,8 @@ extension RadarProcess {
     var portsText: String {
         portSet.sorted().map { ":\($0)" }.joined(separator: " ")
     }
-    var uptimeText: String {
-        let secs = max(0, Int(Date().timeIntervalSince1970) - Int(startedAtMs / 1000))
+    var uptimeText: String { Self.uptimeText(seconds: max(0, Int(Date().timeIntervalSince1970) - Int(startedAtMs / 1000))) }
+    static func uptimeText(seconds secs: Int) -> String {
         let f = DateComponentsFormatter()
         f.allowedUnits = secs >= 3600 ? [.day, .hour, .minute] : [.minute, .second]
         f.unitsStyle = .abbreviated

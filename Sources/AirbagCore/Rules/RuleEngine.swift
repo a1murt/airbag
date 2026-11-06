@@ -1731,7 +1731,8 @@ struct Analyzer {
         let deleting = ["rmtree", "os.remove", "os.unlink", "os.rmdir", "removedirs", "unlink(", "unlink ", "rmdir(", "rmdir ", "rmsync",
                         "rmdirsync", "unlinksync", "fs.rm(", ".rm(", "rimraf", "file::delete", "file.delete", ".delete(", "fileutils.rm",
                         "rm_rf", "rm_r", "shutil.move", "send2trash", "truncate(", "deletesync", "fs.promises.rm", "removesync",
-                        "deno.remove", "remove_dir_all", "fs::remove", "os.removeall", "dir.delete", "unlink_missing", ".unlink(", "pathlib"]
+                        "deno.remove", "remove_dir_all", "fs::remove", "os.removeall", "dir.delete", "unlink_missing", ".unlink(", "pathlib",
+                        "remove_tree", "remove_entry", "remove_dir"]
         guard deleting.contains(where: { lowered.contains($0) }) else { return }
         let paths = extractPaths(code)
         let classes = paths.map { classify(resolve(ShellWord($0))) }
@@ -1906,12 +1907,11 @@ struct Analyzer {
     mutating func analyzeDatabase(_ name: String, _ args: [ShellWord], whole: String) {
         let text = args.map(\.text).joined(separator: " ").uppercased()
         // SQL written into Airbag's own database (pausing it, rewriting the log) is the same as editing its files. A
-        // client opened without SQL reads from stdin, which can write too.
+        // client opened without SQL reads from stdin, which can write too. Reading it is fine: `select created_at …`
+        // is no CREATE (keywords are whole words, as for any sqlite3 that only reads).
         if ["sqlite3", "duckdb", "litecli"].contains(name), let i = args.firstIndex(where: { !$0.text.hasPrefix("-") }),
            case .airbag = classify(resolve(args[i])) {
-            let sql = args[(i + 1)...].map(\.text).joined(separator: " ").uppercased()
-            let writes = ["INSERT", "UPDATE", "DELETE", "REPLACE", "DROP", "CREATE", "ALTER", "ATTACH", "VACUUM", "PRAGMA", ".RESTORE", ".IMPORT"]
-            if sql.isEmpty || writes.contains(where: { sql.contains($0) }) {
+            if !Analyzer.sqliteReadsOnly(args.map(\.text), input: nil) {
                 add("self.airbag", .block, .none, "it changes Airbag's own data, which protects this project.", whole)
                 return
             }

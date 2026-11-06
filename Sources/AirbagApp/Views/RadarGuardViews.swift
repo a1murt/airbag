@@ -188,15 +188,15 @@ struct RadarScreen: View {
             .width(min: 80, ideal: 100, max: 160)
             // No maximum: the session title gets the width the short columns leave.
             TableColumn("Project · Session") { p in projectCell(p) }
-                .width(min: 140, ideal: 300)
+                .width(min: 140, ideal: Self.projectWidth)
             TableColumn("RAM", value: \.memorySortKey) { p in Text(verbatim: p.memoryText).monospacedDigit() }
                 .width(min: 50, ideal: 60, max: 70)
                 .alignment(.trailing)
             TableColumn("Uptime", value: \.uptimeSortKey) { p in Text(verbatim: p.uptimeText).monospacedDigit() }
-                .width(min: 54, ideal: 64, max: 76)
+                .width(min: 54, ideal: Self.uptimeWidth, max: Self.uptimeWidth + 30)
                 .alignment(.trailing)
             TableColumn("Status") { p in statusCell(p) }
-                .width(min: 100, ideal: 140, max: 260)
+                .width(min: 100, ideal: Self.statusWidth, max: 260)
         }
         .animation(.snappy, value: rows.map(\.id))
         .contextMenu(forSelectionType: ProcessIdentity.self) { ids in
@@ -205,6 +205,18 @@ struct RadarScreen: View {
         } primaryAction: { ids in
             for p in rows where ids.contains(p.identity) { if let port = p.uniquePorts.first { Self.open(port) } }
         }
+    }
+
+    /// Widths that fit the longest status and uptime in the user's language ("Сессия завершилась", "23 ч 59 мин"); the
+    /// project and session column gets what they leave of the default window (1040 pt) and grows with the window.
+    static let statusWidth = textWidth(["Live", "Session ended", "Kept", "Unknown", "System"].map { String(localized: String.LocalizationValue($0)) }) + 12
+    static let uptimeWidth = textWidth([3599, 86_399, 604_799].map { RadarProcess.uptimeText(seconds: $0) }, monospacedDigits: true)
+    static let projectWidth = max(160, 700 - (72 + 100 + 60 + uptimeWidth + statusWidth))
+
+    static func textWidth(_ texts: [String], monospacedDigits: Bool = false) -> CGFloat {
+        let size = NSFont.systemFontSize
+        let font = monospacedDigits ? NSFont.monospacedDigitSystemFont(ofSize: size, weight: .regular) : NSFont.systemFont(ofSize: size)
+        return ceil(texts.map { ($0 as NSString).size(withAttributes: [.font: font]).width }.max() ?? 0) + 4
     }
 
     /// The project, then the agent and session that started the server (when known), on one line so every row has the
