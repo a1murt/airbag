@@ -51,7 +51,20 @@ public final class SnapshotStore {
                                       home + "/Library/Application Support", home + "/Library/Mobile Documents", home + "/Library/CloudStorage"]
         if forbidden.contains(canonical) { return true }
         if deniedTrees(home: home).contains(where: { canonical == $0 || canonical.hasPrefix($0 + "/") }) { return true }
+        if isClaudeTemporaryFolder(canonical) { return true }
         return canonical.hasPrefix("/System/") && !canonical.hasPrefix("/System/Volumes/Data/")
+    }
+
+    /// Claude Code's temporary folder (`/private/tmp/claude-501`), the folders it keeps in it for each project, session and
+    /// purpose (`-Users-me-app/<session>/scratchpad`, `…/tasks`) and its unpacked skills. Agents rewrite them all day:
+    /// watched as roots they piled up gigabytes of snapshots (2026-11-05, ADR-036). A folder an agent makes inside a
+    /// scratchpad, or next to the project folders, can still be a project.
+    static func isClaudeTemporaryFolder(_ canonical: String) -> Bool {
+        guard canonical.hasPrefix("/private/tmp/claude-") else { return false }
+        let parts = canonical.dropFirst("/private/tmp/".count).split(separator: "/")
+        let uid = parts[0].dropFirst("claude-".count)
+        guard !uid.isEmpty, uid.allSatisfy(\.isNumber) else { return false }
+        return parts.count == 1 || (parts[1].hasPrefix("-") && parts.count <= 4) || parts[1] == "bundled-skills"
     }
 
     /// Trees that never hold a project: app bundles, system and per-user library data, caches, sandbox containers,
@@ -110,6 +123,8 @@ public final class SnapshotStore {
         if FileSystem.canonicalPath(root) == nil, allowMissingRoot, !recreateMissingRoot {
             // The project folder is gone; open its store as it is (for listing, pruning, diffs). Nothing is created.
             let resolved = FileSystem.resolvedPath(root)
+            // A refused folder's old store stays refused when the folder is gone (macOS empties /tmp on restart).
+            if isSystemOrHomeFolder(resolved) { throw SnapshotError.unsafeRoot(resolved) }
             let dir = storeDirectory(forCanonicalRoot: resolved, paths: paths)
             guard FileManager.default.fileExists(atPath: dir + "/manifest.sqlite") else { throw SnapshotError.rootMissing(root) }
             return try SnapshotStore(root: resolved, directory: dir, exclusions: exclusions ?? .standard, busyTimeoutMs: busyTimeoutMs)
@@ -121,6 +136,7 @@ public final class SnapshotStore {
             guard FileManager.default.fileExists(atPath: storeDirectory(forCanonicalRoot: resolved, paths: paths) + "/manifest.sqlite") else {
                 throw SnapshotError.rootMissing(root)
             }
+            if isSystemOrHomeFolder(resolved) { throw SnapshotError.unsafeRoot(resolved) } // before recreating it
             try FileSystem.ensureDirectory(resolved, mode: 0o755)
             canonical = try validateRoot(resolved, paths: paths)
         } else {

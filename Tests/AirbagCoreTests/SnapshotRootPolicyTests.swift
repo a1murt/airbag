@@ -15,7 +15,13 @@ import Testing
                       "/Users/u/.gnupg", "/Users/u/.aws", "/Users/u/.Trash/old", "/Users/u/Applications/Tool.app",
                       "/Applications/Safari.app", "/Applications/SafeConnect.app/Contents/MacOS", "/Library/Logs/DiagnosticReports",
                       "/private/var/folders", "/private/var/folders/j7/abc/T", "/private/var/folders/j7/abc/T/tmp.123",
-                      "/Users/u/Desktop", "/Users/u/Documents", "/Users/u/Downloads", "/usr/local/src/x", "/opt/homebrew/Library/Taps/a/b"])
+                      "/Users/u/Desktop", "/Users/u/Documents", "/Users/u/Downloads", "/usr/local/src/x", "/opt/homebrew/Library/Taps/a/b",
+                      // Claude Code's temporary folder and its per-project, per-session and per-purpose folders (ADR-036).
+                      "/private/tmp/claude-501", "/private/tmp/claude-501/-Users-u-Work-app",
+                      "/private/tmp/claude-501/-Users-u-Work-app/3f2a9c1e-7b4d-4e8f-9a0b-1c2d3e4f5a6b",
+                      "/private/tmp/claude-501/-Users-u-Work-app/3f2a9c1e-7b4d-4e8f-9a0b-1c2d3e4f5a6b/scratchpad",
+                      "/private/tmp/claude-501/-Users-u-Work-app/3f2a9c1e-7b4d-4e8f-9a0b-1c2d3e4f5a6b/tasks",
+                      "/private/tmp/claude-501/bundled-skills/3f2a/9c1e/dataviz"])
     func neverAProject(_ path: String) {
         #expect(SnapshotStore.isSystemOrHomeFolder(path, home: home))
     }
@@ -23,9 +29,22 @@ import Testing
     @Test(arguments: ["/Users/u/Work/app", "/Users/u/Documents/thesis", "/Users/u/Downloads/zhurekai", "/Users/u/Desktop/demo",
                       "/Users/u/Library/Application Support/Claude/scratch-workspaces/a/b/scratch-1",
                       "/Users/u/Library/Mobile Documents/com~apple~CloudDocs/site", "/Users/u/Library/CloudStorage/Dropbox/app",
-                      "/Users/u/.config/nvim", "/private/tmp/claude-501/sidebar-test", "/Volumes/External/project", "/opt/project"])
+                      "/Users/u/.config/nvim", "/private/tmp/claude-501/sidebar-test", "/Volumes/External/project", "/opt/project",
+                      "/private/tmp/claude-501/-Users-u-Work-app/3f2a9c1e-7b4d-4e8f-9a0b-1c2d3e4f5a6b/scratchpad/repo",
+                      "/private/tmp/claudette/app", "/private/tmp/claude-x/app"])
     func projectsBelowStandardFolders(_ path: String) {
         #expect(!SnapshotStore.isSystemOrHomeFolder(path, home: home))
+    }
+
+    /// A refused folder's old store is not opened, listed or pruned once the folder is gone (macOS empties /tmp on restart).
+    @Test func refusedFolderStaysRefusedWhenItIsGone() {
+        let sb = Sandbox(); defer { sb.cleanup() }
+        let gone = "/private/tmp/claude-\(getuid())/-Users-u-Work-app/\(ULID.make())"
+        do {
+            _ = try SnapshotStore.open(root: gone, paths: sb.paths, create: false, allowMissingRoot: true)
+            Issue.record("opened a store for \(gone)")
+        } catch SnapshotError.unsafeRoot {
+        } catch { Issue.record("\(error)") }
     }
 
     @Test func realDeniedFoldersAreRefused() {
