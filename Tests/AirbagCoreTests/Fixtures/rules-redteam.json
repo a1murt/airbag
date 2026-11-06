@@ -962,6 +962,44 @@
     "decision": "allow"
    },
    "why": "GUARD: --dry-run=true is a preview"
+  },
+  {
+   "cmd": "sqlite3 -readonly ~/Library/Application\\ Support/Airbag/registry.sqlite 'select created_at from projects'",
+   "expect": {
+    "decision": "allow"
+   },
+   "why": "GUARD: reading Airbag's database; CREATED_AT is no CREATE"
+  },
+  {
+   "cmd": "sqlite3 ~/Library/Application\\ Support/Airbag/registry.sqlite 'PRAGMA table_info(projects)'",
+   "expect": {
+    "decision": "allow"
+   },
+   "why": "GUARD: a PRAGMA that only reads"
+  },
+  {
+   "cmd": "sqlite3 ~/Library/Application\\ Support/Airbag/registry.sqlite 'PRAGMA user_version = 5'",
+   "expect": {
+    "decision": "block"
+   },
+   "why": "GUARD: a PRAGMA that writes Airbag's database",
+   "rule": "self.airbag"
+  },
+  {
+   "cmd": "sqlite3 ~/Library/Application\\ Support/Airbag/registry.sqlite '.shell rm -rf ~'",
+   "expect": {
+    "decision": "block"
+   },
+   "why": "GUARD: sqlite3 dot-commands that run a shell",
+   "rule": "self.airbag"
+  },
+  {
+   "cmd": "perl -MFile::Path=remove_tree -e 'remove_tree($ENV{HOME})'",
+   "expect": {
+    "decision": "ask"
+   },
+   "why": "BYPASS: File::Path remove_tree was not seen as a delete.",
+   "rule": "interp.delete"
   }
  ]
 }

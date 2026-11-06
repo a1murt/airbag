@@ -1599,6 +1599,9 @@ enum RelativeTime {
     private static let relative: RelativeDateTimeFormatter = {
         let f = RelativeDateTimeFormatter()
         f.unitsStyle = .abbreviated
+        // Russian and French write the abbreviated past with a minus ("-12 с"), which reads as a negative number; their
+        // short style says "12 сек. назад", "il y a 12 s".
+        if let first = f.localizedString(fromTimeInterval: -60).first, "-−".contains(first) { f.unitsStyle = .short }
         return f
     }()
 

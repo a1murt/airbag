@@ -26,7 +26,7 @@ enum RadarCommands {
             case .unknown: state = p.attribution?.projectRoot != nil ? "project" : "—"
             }
             let mem = p.footprintBytes.map { Out.bytes($0) } ?? "?"
-            print("\(String(p.identity.pid).leftPad(6))  \(ports.padding(toLength: 24, withPad: " ", startingAt: 0)) \(p.name.padding(toLength: 14, withPad: " ", startingAt: 0)) \(state.padding(toLength: 18, withPad: " ", startingAt: 0)) \(who)  \(mem)")
+            print("\(String(p.identity.pid).leftPad(6))  \(ports.rightPad(24)) \(p.name.rightPad(14)) \(state.rightPad(18)) \(who)  \(mem)")
             if let root = p.attribution?.projectRoot ?? p.cwd { print("        \(root)") }
         }
         print("\(rows.count) server(s), \(snap.orphans.count) orphan(s); scan \(snap.durationMs) ms")
