@@ -1078,7 +1078,11 @@ struct Analyzer {
         case "docker", "docker-compose", "podman", "podman-compose", "nerdctl", "colima", "orb", "orbctl": analyzeContainers(name, argv, whole: whole)
         case "curl", "wget", "http", "xh": analyzeDownload(cmdIn: cmd, previousConnector: cmdIn.connector, whole: whole)
         case "airbag":
-            let preview = argv.contains { ["--dry-run", "--help", "-h"].contains($0) }
+            // What the CLI treats as a preview: --help, -h and --dry-run (or --dry-run=true) before a `--`; after it they
+            // are operands and the command runs.
+            let preview = argv.prefix(while: { $0 != "--" }).contains {
+                ["--dry-run", "--help", "-h"].contains($0) || ["--dry-run=true", "--dry-run=yes", "--dry-run=on", "--dry-run=1"].contains($0.lowercased())
+            }
             if argv.contains("uninstall") && !preview {
                 add("self.airbag", .ask, .none, "it removes Airbag's protection; only the user should do that.", whole)
             }
