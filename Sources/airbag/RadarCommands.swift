@@ -4,7 +4,7 @@ import Foundation
 enum RadarCommands {
     /// airbag ports [--all] [--json] — listening dev servers with the agent session that started them.
     static func ports(_ argv: [String]) throws -> Int32 {
-        let a = try Args(argv, valueOptions: [])
+        let a = try Args(argv, valueOptions: [], flags: ["all", "json"])
         let registry = try? Registry(paths: .resolve(), role: .cli)
         let snap = ProcessRadar().scan(registry: registry)
         let rows = a.has("all") ? snap.processes.filter { !$0.listeners.isEmpty } : snap.servers
@@ -35,7 +35,7 @@ enum RadarCommands {
 
     /// airbag stop <pid> [--force]
     static func stop(_ argv: [String]) throws -> Int32 {
-        let a = try Args(argv, valueOptions: [])
+        let a = try Args(argv, valueOptions: [], flags: ["force"])
         guard let s = a.positionals.first, let pid = Int32(s) else { throw CLIError.usage("usage: airbag stop <pid> [--force]") }
         let registry = try? Registry(paths: .resolve(), role: .cli)
         let snap = ProcessRadar().scan(registry: registry, includeAll: true)

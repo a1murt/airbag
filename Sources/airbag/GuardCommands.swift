@@ -4,7 +4,7 @@ import Foundation
 enum GuardCommands {
     /// airbag check "<command>" [--cwd DIR] [--root DIR]... [--json]
     static func check(_ argv: [String]) throws -> Int32 {
-        let a = try Args(argv, valueOptions: ["cwd", "root"])
+        let a = try Args(argv, valueOptions: ["cwd", "root"], flags: ["json"])
         guard !a.positionals.isEmpty else { throw CLIError.usage("usage: airbag check \"<shell command>\" [--cwd DIR] [--root DIR] [--json]") }
         let command = a.positionals.joined(separator: " ")
         let cwd = FileSystem.resolvedPath(a.value("cwd") ?? FileManager.default.currentDirectoryPath)

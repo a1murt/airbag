@@ -1,12 +1,13 @@
 import Foundation
 
-/// Tiny argument parser: `--name value`, `--name=value`, repeated options, boolean flags, positionals.
+/// Tiny argument parser: `--name value`, `--name=value`, repeated options, boolean flags, positionals. An option the
+/// command does not take is an error: a typo (`--dryrun`) or `--dry-run=true` must not run the real thing.
 struct Args {
     var positionals: [String] = []
     var options: [String: [String]] = [:]
     var flags: Set<String> = []
 
-    init(_ argv: [String], valueOptions: Set<String>) throws {
+    init(_ argv: [String], valueOptions: Set<String>, flags known: Set<String>) throws {
         var i = 0
         while i < argv.count {
             let a = argv[i]
@@ -14,13 +15,26 @@ struct Args {
             if a.hasPrefix("--") {
                 let body = String(a.dropFirst(2))
                 if let eq = body.firstIndex(of: "=") {
-                    options[String(body[..<eq]), default: []].append(String(body[body.index(after: eq)...]))
+                    let name = String(body[..<eq]), value = String(body[body.index(after: eq)...])
+                    if valueOptions.contains(name) {
+                        options[name, default: []].append(value)
+                    } else if known.contains(name) {
+                        switch value.lowercased() {
+                        case "true", "yes", "on", "1": flags.insert(name)
+                        case "false", "no", "off", "0": break
+                        default: throw CLIError.usage("--\(name) is a flag: give it no value, or true or false")
+                        }
+                    } else {
+                        throw CLIError.usage("unknown option --\(name)")
+                    }
                 } else if valueOptions.contains(body) {
                     guard i + 1 < argv.count else { throw CLIError.usage("--\(body) needs a value") }
                     options[body, default: []].append(argv[i + 1])
                     i += 1
-                } else {
+                } else if known.contains(body) {
                     flags.insert(body)
+                } else {
+                    throw CLIError.usage("unknown option --\(body)")
                 }
             } else {
                 positionals.append(a)

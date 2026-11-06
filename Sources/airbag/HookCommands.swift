@@ -70,7 +70,8 @@ enum HookCommands {
     /// airbag hooks status|install|uninstall [agents…|--all] [--strict] [--dry-run] [--command PATH] [--json]
     static func hooks(_ argv: [String]) throws -> Int32 {
         guard let sub = argv.first else { throw CLIError.usage("usage: airbag hooks status|install|uninstall [agents…|--all]") }
-        let a = try Args(Array(argv.dropFirst()), valueOptions: ["command", "home"])
+        let a = try Args(Array(argv.dropFirst()), valueOptions: ["command", "home"],
+                         flags: ["json", "all", "dry-run", "strict", "remember", "remembered"])
         let home = a.value("home") ?? NSHomeDirectory()
         let installer = HookInstaller(home: home, command: a.value("command") ?? defaultCommandPath())
         let paths = AirbagPaths.resolve()
@@ -88,7 +89,7 @@ enum HookCommands {
             }
             return 0
         case "install", "uninstall":
-            if installer.command.contains("/.build/") && !a.has("command") {
+            if installer.command.contains("/.build/") && a.value("command") == nil {
                 Out.err("warning: hooks will point at a development build (\(installer.command)); pass --command to choose another path")
             }
             let selected = try agents(from: a, installer: installer, paths: paths, removing: sub == "uninstall")
@@ -122,7 +123,7 @@ enum HookCommands {
 
     /// airbag allow <guard-id> — let one command that waited for approval run once in its session (hard blocks never).
     static func allow(_ argv: [String]) throws -> Int32 {
-        let a = try Args(argv, valueOptions: [])
+        let a = try Args(argv, valueOptions: [], flags: [])
         guard let id = a.positionals.first else { throw CLIError.usage("usage: airbag allow <guard-entry-id>   (see `airbag guard`)") }
         let reg = try Registry(paths: .resolve(), role: .cli)
         guard try reg.allowOnce(guardID: id) else { throw CLIError.failed("no guard entry \(id) with a session") }
@@ -132,7 +133,7 @@ enum HookCommands {
 
     /// airbag guard [--limit N] [--json]
     static func guardLog(_ argv: [String]) throws -> Int32 {
-        let a = try Args(argv, valueOptions: ["limit"])
+        let a = try Args(argv, valueOptions: ["limit"], flags: ["json"])
         let reg = try Registry(paths: .resolve(), role: .cli)
         let rows = try reg.db.all("""
         SELECT id, ts, agent, rule_id, decision, command, coalesce(resolution, ''), reason FROM guard_log ORDER BY ts DESC LIMIT ?
@@ -149,7 +150,7 @@ enum HookCommands {
 
     /// airbag log [--limit N] [--json] — agent commands with their decision and the snapshot taken before them.
     static func log(_ argv: [String]) throws -> Int32 {
-        let a = try Args(argv, valueOptions: ["limit"])
+        let a = try Args(argv, valueOptions: ["limit"], flags: ["json"])
         let reg = try Registry(paths: .resolve(), role: .cli)
         let rows = try reg.db.all("""
         SELECT e.id, e.ts, e.agent, e.kind, coalesce(e.command, ''), coalesce(e.decision, ''),
@@ -171,7 +172,7 @@ enum HookCommands {
 
     /// airbag sessions [--all] [--json]
     static func sessions(_ argv: [String]) throws -> Int32 {
-        let a = try Args(argv, valueOptions: ["limit"])
+        let a = try Args(argv, valueOptions: ["limit"], flags: ["all", "json"])
         let reg = try Registry(paths: .resolve(), role: .cli)
         let rows = try reg.db.all("""
         SELECT s.agent, s.agent_session_id, s.surface, coalesce(p.display_name, ''), coalesce(w.path, s.cwd, ''), s.started_at, s.last_seen_at,

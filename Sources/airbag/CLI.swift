@@ -43,6 +43,13 @@ enum CLI {
                 printUsage()
                 return 64
             }
+            // `airbag hooks uninstall --all --help` only shows help (the circuit breaker lets such previews through).
+            // `check` takes a shell command that may carry its own -h, so there only a leading --help or -h counts.
+            let options = args.dropFirst().prefix(while: { $0 != "--" })
+            if command == "check" ? ["--help", "-h"].contains(options.first ?? "") : options.contains(where: { $0 == "--help" || $0 == "-h" }) {
+                print("usage: airbag \(c.name) — \(c.help)")
+                return 0
+            }
             do {
                 return try c.run(Array(args.dropFirst()))
             } catch let e as CLIError {

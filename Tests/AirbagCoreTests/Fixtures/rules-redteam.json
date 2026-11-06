@@ -932,6 +932,36 @@
     "decision": "allow"
    },
    "why": "GUARD: listing an archive"
+  },
+  {
+   "cmd": "airbag hooks uninstall --all -- --help",
+   "expect": {
+    "decision": "ask"
+   },
+   "why": "BYPASS: after -- the CLI takes --help as an operand and uninstalls every hook.",
+   "rule": "self.airbag"
+  },
+  {
+   "cmd": "airbag hooks uninstall --all --dry-run=false",
+   "expect": {
+    "decision": "ask"
+   },
+   "why": "BYPASS: --dry-run=false is no preview.",
+   "rule": "self.airbag"
+  },
+  {
+   "cmd": "airbag hooks uninstall --all --help",
+   "expect": {
+    "decision": "allow"
+   },
+   "why": "GUARD: the CLI only prints help"
+  },
+  {
+   "cmd": "airbag hooks uninstall --all --dry-run=true",
+   "expect": {
+    "decision": "allow"
+   },
+   "why": "GUARD: --dry-run=true is a preview"
   }
  ]
 }

@@ -11,7 +11,7 @@ enum SnapshotCommands {
     }
 
     static func snapshot(_ argv: [String]) throws -> Int32 {
-        let a = try Args(argv, valueOptions: valueOptions)
+        let a = try Args(argv, valueOptions: valueOptions, flags: ["initial", "capped", "force", "json"])
         if let marker = a.value("background-marker") {
             try? FileSystem.writeAtomically(Data("\(getpid())".utf8), to: marker, mode: 0o600)
             atexit_b { unlink(marker) }
@@ -48,7 +48,7 @@ enum SnapshotCommands {
     }
 
     static func list(_ argv: [String]) throws -> Int32 {
-        let a = try Args(argv, valueOptions: valueOptions)
+        let a = try Args(argv, valueOptions: valueOptions, flags: ["json"])
         let store = try openStore(a)
         let items = try store.list(limit: a.int("limit") ?? 30)
         if a.has("json") { Out.encodable(items); return 0 }
@@ -61,7 +61,7 @@ enum SnapshotCommands {
     }
 
     static func changes(_ argv: [String]) throws -> Int32 {
-        let a = try Args(argv, valueOptions: valueOptions)
+        let a = try Args(argv, valueOptions: valueOptions, flags: ["json"])
         guard let id = a.positionals.first else { throw CLIError.usage("usage: airbag changes <snapshot-id>") }
         let store = try openStore(a)
         let list = try store.changes(in: id)
@@ -71,7 +71,7 @@ enum SnapshotCommands {
     }
 
     static func diff(_ argv: [String]) throws -> Int32 {
-        let a = try Args(argv, valueOptions: valueOptions)
+        let a = try Args(argv, valueOptions: valueOptions, flags: ["json"])
         guard let from = a.positionals.first else { throw CLIError.usage("usage: airbag diff <from-id> [<to-id>] [--path FILE]") }
         let to = a.positionals.dropFirst().first
         let store = try openStore(a)
@@ -88,7 +88,7 @@ enum SnapshotCommands {
     }
 
     static func restore(_ argv: [String]) throws -> Int32 {
-        let a = try Args(argv, valueOptions: valueOptions)
+        let a = try Args(argv, valueOptions: valueOptions, flags: ["json"])
         guard let id = a.positionals.first else { throw CLIError.usage("usage: airbag restore <snapshot-id> [--path P ...]") }
         let store = try openStore(a, recreate: true)
         let paths = a.values("path").map { p -> String in
@@ -107,14 +107,14 @@ enum SnapshotCommands {
     }
 
     static func pin(_ argv: [String]) throws -> Int32 {
-        let a = try Args(argv, valueOptions: valueOptions)
+        let a = try Args(argv, valueOptions: valueOptions, flags: ["off"])
         guard let id = a.positionals.first else { throw CLIError.usage("usage: airbag pin <snapshot-id> [--off]") }
         try openStore(a).pin(id, !a.has("off"))
         return 0
     }
 
     static func prune(_ argv: [String]) throws -> Int32 {
-        let a = try Args(argv, valueOptions: valueOptions)
+        let a = try Args(argv, valueOptions: valueOptions, flags: ["all", "dry-run", "json"])
         let policy = RetentionPolicy(maxAgeDays: a.int("days") ?? 7, keepNewest: a.int("keep") ?? 20, maxSnapshots: a.int("max") ?? 200)
         let stores: [SnapshotStore]
         if a.has("all") {
@@ -135,7 +135,7 @@ enum SnapshotCommands {
     }
 
     static func export(_ argv: [String]) throws -> Int32 {
-        let a = try Args(argv, valueOptions: valueOptions)
+        let a = try Args(argv, valueOptions: valueOptions, flags: [])
         guard a.positionals.count == 2 else { throw CLIError.usage("usage: airbag export <snapshot-id> <dest-dir> [--path P ...]") }
         let dest = FileSystem.resolvedPath(a.positionals[1])
         if let items = try? FileManager.default.contentsOfDirectory(atPath: dest), !items.isEmpty {
@@ -147,7 +147,7 @@ enum SnapshotCommands {
     }
 
     static func usage(_ argv: [String]) throws -> Int32 {
-        let a = try Args(argv, valueOptions: valueOptions)
+        let a = try Args(argv, valueOptions: valueOptions, flags: ["json"])
         var rows: [[String: Any]] = []
         for loc in SnapshotStore.allStores() {
             var refused = false
