@@ -284,6 +284,32 @@ func decode(_ s: String?) -> [String: Any] {
         #expect(out.verdict?.findings.contains { $0.ruleId == "snapshot.unavailable" } == true)
     }
 
+    /// A file over the size limit is in no snapshot, though the snapshot of its folder is complete: deleting, emptying or
+    /// overwriting it waits for the user instead of running as "restorable" (2026-11-06: `rm` of a 101 MB file was allowed,
+    /// and restoring the snapshot brought back everything but that file).
+    @Test func aFileTooLargeForSnapshotsIsNotDeletedWithoutAsking() throws {
+        let h = HookSandbox(); defer { h.cleanup() }
+        h.sb.write("data/readme.txt", "small\n")
+        FileManager.default.createFile(atPath: h.root + "/data/model.bin", contents: nil)
+        let f = try #require(FileHandle(forWritingAtPath: h.root + "/data/model.bin"))
+        try f.truncate(atOffset: 150 << 20) // sparse, over the 100 MiB per-file limit
+        try f.close()
+        for command in ["rm data/model.bin", "rm -rf data", ": > data/model.bin", "truncate -s 0 data/model.bin", "rm -rf ./*"] {
+            let out = h.run(.claudeCode, h.claudePre(command))
+            #expect(out.finalDecision == "ask", "\(command)")
+            #expect(out.verdict?.findings.contains { $0.ruleId == "snapshot.unavailable" && $0.reason.contains("data/model.bin") } == true, "\(command)")
+        }
+        // `git clean -x` deletes ignored files, where such files usually are; without -x it keeps them.
+        h.sb.write(".gitignore", "data/\n")
+        let clean = h.run(.claudeCode, h.claudePre("git clean -fdx"))
+        #expect(clean.finalDecision == "ask" && clean.verdict?.findings.contains { $0.ruleId == "snapshot.unavailable" } == true)
+        // Other files of the same project are still deleted after a snapshot, without a question.
+        for command in ["rm data/readme.txt", "rm -rf src/legacy", "git clean -fd"] {
+            let out = h.run(.claudeCode, h.claudePre(command))
+            #expect(out.finalDecision == "allow", "\(command)")
+        }
+    }
+
     @Test func anEmptyFolderDoesNotCoverTheLaunchFolder() throws {
         // The agent was started in the project and works in an empty nested repository: deleting a project file from
         // there is not covered by the empty folder's "snapshot", so the project gets one of its own.
