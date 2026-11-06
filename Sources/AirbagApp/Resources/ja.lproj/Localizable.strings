@@ -127,6 +127,7 @@
 "Disk budget for all projects" = "全プロジェクトのディスク使用量の上限";
 "Dismiss" = "閉じる";
 "Dismissed" = "許可せずに閉じました";
+"Docker / Lima" = "Docker / Lima";
 "Docker or Lima manages it; stop the container instead" = "DockerまたはLimaが管理しています。代わりにコンテナを停止してください";
 "Done" = "完了";
 "Downloaded script" = "ダウンロードしたスクリプト";
@@ -163,6 +164,7 @@
 "it's a system process" = "システムプロセスです";
 "it's Airbag or the app that started it" = "Airbag自身、またはAirbagを起動したアプリです";
 "it's an agent, editor or terminal" = "エージェント、エディタ、またはターミナルです";
+"it's part of a Lima VM (Colima); stop the container, or the VM with colima stop or limactl stop" = "Lima（Colima）の仮想マシンの一部です。コンテナを停止するか、colima stop または limactl stop で仮想マシンを停止してください";
 "Its snapshots are deleted. Add the folder again to protect it." = "このプロジェクトのスナップショットは削除されます。再び保護するには、フォルダをもう一度追加してください。";
 "just now" = "たった今";
 "Keep Running" = "実行を続ける";

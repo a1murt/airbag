@@ -127,6 +127,7 @@
 "Disk budget for all projects" = "Лимит диска на все проекты";
 "Dismiss" = "Скрыть";
 "Dismissed" = "Скрыто";
+"Docker / Lima" = "Docker / Lima";
 "Docker or Lima manages it; stop the container instead" = "им управляет Docker или Lima — остановите контейнер";
 "Done" = "Готово";
 "Downloaded script" = "Скачанный скрипт";
@@ -163,6 +164,7 @@
 "it's a system process" = "это системный процесс";
 "it's Airbag or the app that started it" = "это Airbag или приложение, которое его запустило";
 "it's an agent, editor or terminal" = "это агент, редактор или терминал";
+"it's part of a Lima VM (Colima); stop the container, or the VM with colima stop or limactl stop" = "это часть виртуальной машины Lima (Colima) — остановите контейнер или саму VM командой colima stop или limactl stop";
 "Its snapshots are deleted. Add the folder again to protect it." = "Его снимки будут удалены. Чтобы снова защитить папку, добавьте её ещё раз.";
 "just now" = "только что";
 "Keep Running" = "Не останавливать";

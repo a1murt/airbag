@@ -165,10 +165,19 @@ struct RadarScreen: View {
 
     private var table: some View {
         Table(rows, selection: $selection, sortOrder: $sortOrder) {
+            // The lowest port and how many more (the tooltip and the context menu list them all): several five-digit ports
+            // don't fit the column.
             TableColumn("Port", value: \.portSortKey) { p in
-                HStack(spacing: 6) { ForEach(p.uniquePorts, id: \.self) { PortLink(port: $0, font: .body) } }
+                HStack(spacing: 4) {
+                    if let port = p.uniquePorts.first { PortLink(port: port, font: .body) }
+                    if p.uniquePorts.count > 1 {
+                        Text(verbatim: "+\(p.uniquePorts.count - 1)").monospacedDigit().foregroundStyle(.secondary)
+                            .help(Text(verbatim: p.portsText))
+                    }
+                }
+                .fixedSize()
             }
-            .width(min: 50, ideal: 56, max: 80)
+            .width(min: 56, ideal: 72, max: 96)
             TableColumn("Process", value: \.name) { p in
                 HStack(spacing: 4) {
                     Text(verbatim: p.name).lineLimit(1)
@@ -238,6 +247,7 @@ struct RadarScreen: View {
             switch p.linkState {
             case .attached: StatusDot(text: "Live", color: Theme.ok)
             case .detached: StatusDot(text: "Live", color: Theme.ok).help(Text("Started by an earlier run of a session that is running again"))
+            case _ where p.isManaged: StatusDot(text: "Docker / Lima", color: .secondary).help(Text(Self.refusal(p.protection ?? "")))
             case .orphan:
                 if model.keptProcesses.contains(p.identity) { StatusDot(text: "Kept", color: .secondary) }
                 else { StatusDot(text: "Session ended", color: Theme.warning) }
@@ -265,7 +275,7 @@ struct RadarScreen: View {
                 NSPasteboard.general.setString(String(p.identity.pid), forType: .string)
             }
         }
-        let keepable = procs.filter { $0.linkState == .orphan && !model.keptProcesses.contains($0.identity) }
+        let keepable = procs.filter { $0.linkState == .orphan && !$0.isManaged && !model.keptProcesses.contains($0.identity) }
         if !keepable.isEmpty {
             Divider()
             Button("Keep Running") { withAnimation(.snappy) { keepable.forEach(model.keep) } }
@@ -355,6 +365,7 @@ struct RadarScreen: View {
         case "running agent session": reason = String(localized: "it belongs to a running agent session")
         case "agent, editor or terminal": reason = String(localized: "it's an agent, editor or terminal")
         case "helper of a running agent session": reason = String(localized: "it helps a running agent session")
+        case ProcessRadar.limaVM: reason = String(localized: "it's part of a Lima VM (Colima); stop the container, or the VM with colima stop or limactl stop")
         case let r where r.hasPrefix("managed by Docker"): reason = String(localized: "Docker or Lima manages it; stop the container instead")
         default: reason = raw
         }

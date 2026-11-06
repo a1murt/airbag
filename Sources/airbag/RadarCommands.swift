@@ -21,6 +21,7 @@ enum RadarCommands {
             switch p.linkState {
             case .attached: state = "live"
             case .detached: state = "live (earlier run)"
+            case _ where p.isManaged: state = "docker/lima"
             case .orphan: state = "ORPHAN"
             case .unknown: state = p.attribution?.projectRoot != nil ? "project" : "—"
             }

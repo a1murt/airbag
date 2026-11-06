@@ -127,6 +127,7 @@
 "Disk budget for all projects" = "Batas disk untuk semua proyek";
 "Dismiss" = "Abaikan";
 "Dismissed" = "Diabaikan";
+"Docker / Lima" = "Docker / Lima";
 "Docker or Lima manages it; stop the container instead" = "dikelola oleh Docker atau Lima; hentikan kontainernya saja";
 "Done" = "Selesai";
 "Downloaded script" = "Skrip unduhan";
@@ -163,6 +164,7 @@
 "it's a system process" = "ini proses sistem";
 "it's Airbag or the app that started it" = "ini Airbag atau aplikasi yang memulainya";
 "it's an agent, editor or terminal" = "ini agen, editor, atau terminal";
+"it's part of a Lima VM (Colima); stop the container, or the VM with colima stop or limactl stop" = "ini bagian dari VM Lima (Colima); hentikan kontainernya, atau VM-nya dengan colima stop atau limactl stop";
 "Its snapshots are deleted. Add the folder again to protect it." = "Snapshot-nya akan dihapus. Tambahkan folder itu lagi untuk melindunginya.";
 "just now" = "baru saja";
 "Keep Running" = "Tetap Jalankan";

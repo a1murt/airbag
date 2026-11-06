@@ -127,6 +127,7 @@
 "Disk budget for all projects" = "Tổng dung lượng tối đa cho các dự án";
 "Dismiss" = "Bỏ qua";
 "Dismissed" = "Đã bỏ qua";
+"Docker / Lima" = "Docker / Lima";
 "Docker or Lima manages it; stop the container instead" = "do Docker hoặc Lima quản lý; hãy dừng container";
 "Done" = "Xong";
 "Downloaded script" = "Tập lệnh tải về";
@@ -163,6 +164,7 @@
 "it's a system process" = "đây là tiến trình hệ thống";
 "it's Airbag or the app that started it" = "đây là Airbag hoặc ứng dụng đã khởi chạy nó";
 "it's an agent, editor or terminal" = "đây là agent, trình soạn thảo hoặc terminal";
+"it's part of a Lima VM (Colima); stop the container, or the VM with colima stop or limactl stop" = "đây là một phần của máy ảo Lima (Colima); hãy dừng container, hoặc dừng máy ảo bằng colima stop hoặc limactl stop";
 "Its snapshots are deleted. Add the folder again to protect it." = "Các ảnh chụp nhanh của dự án sẽ bị xóa. Hãy thêm lại thư mục để bảo vệ.";
 "just now" = "vừa xong";
 "Keep Running" = "Tiếp tục chạy";

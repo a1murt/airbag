@@ -127,6 +127,7 @@
 "Disk budget for all projects" = "Tüm projeler için disk sınırı";
 "Dismiss" = "Yok Say";
 "Dismissed" = "Yok sayıldı";
+"Docker / Lima" = "Docker / Lima";
 "Docker or Lima manages it; stop the container instead" = "Docker veya Lima tarafından yönetiliyor; bunun yerine kapsayıcıyı durdurun";
 "Done" = "Bitti";
 "Downloaded script" = "İndirilen betik";
@@ -163,6 +164,7 @@
 "it's a system process" = "bir sistem işlemi";
 "it's Airbag or the app that started it" = "Airbag'in kendisi veya onu başlatan uygulama";
 "it's an agent, editor or terminal" = "bir ajan, düzenleyici veya terminal";
+"it's part of a Lima VM (Colima); stop the container, or the VM with colima stop or limactl stop" = "bir Lima sanal makinesinin (Colima) parçası; kapsayıcıyı ya da sanal makineyi colima stop veya limactl stop ile durdurun";
 "Its snapshots are deleted. Add the folder again to protect it." = "Anlık görüntüleri silinir. Yeniden korumak için klasörü tekrar ekleyin.";
 "just now" = "az önce";
 "Keep Running" = "Çalışır Bırak";

@@ -292,8 +292,9 @@ final class AppModel: ObservableObject {
     @Published private(set) var guardReviewedThrough: Int64 = 0
     @Published private(set) var loginItem: LoginItemState = .off
 
-    /// Servers whose agent session has ended (shown in Radar, with the kept ones marked).
-    var orphans: [RadarProcess] { servers.filter { $0.linkState == .orphan } }
+    /// Servers whose agent session has ended (shown in Radar, with the kept ones marked). Docker's and Lima's processes
+    /// are meant to outlive it and are not among them.
+    var orphans: [RadarProcess] { servers.filter { $0.linkState == .orphan && !$0.isManaged } }
     /// Ended-session servers the user has not chosen to keep: the ones Airbag asks about.
     var leftRunning: [RadarProcess] { orphans.filter { !keptProcesses.contains($0.identity) } }
     /// Commands an agent is waiting on: Airbag stopped it until the user approves (spec §6.2). Native asks are

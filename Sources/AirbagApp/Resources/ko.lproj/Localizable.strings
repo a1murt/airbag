@@ -127,6 +127,7 @@
 "Disk budget for all projects" = "전체 프로젝트 디스크 한도";
 "Dismiss" = "숨기기";
 "Dismissed" = "숨김";
+"Docker / Lima" = "Docker / Lima";
 "Docker or Lima manages it; stop the container instead" = "Docker 또는 Lima가 관리합니다. 대신 컨테이너를 중지하십시오";
 "Done" = "완료";
 "Downloaded script" = "다운로드한 스크립트";
@@ -163,6 +164,7 @@
 "it's a system process" = "시스템 프로세스입니다";
 "it's Airbag or the app that started it" = "Airbag 자체이거나 Airbag을 실행한 앱입니다";
 "it's an agent, editor or terminal" = "에이전트, 편집기 또는 터미널입니다";
+"it's part of a Lima VM (Colima); stop the container, or the VM with colima stop or limactl stop" = "Lima(Colima) 가상 머신의 일부입니다. 컨테이너를 중지하거나 colima stop 또는 limactl stop으로 가상 머신을 중지하십시오";
 "Its snapshots are deleted. Add the folder again to protect it." = "이 프로젝트의 스냅샷이 삭제됩니다. 다시 보호하려면 폴더를 다시 추가하십시오.";
 "just now" = "방금";
 "Keep Running" = "계속 실행";

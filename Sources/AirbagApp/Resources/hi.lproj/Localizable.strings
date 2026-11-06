@@ -127,6 +127,7 @@
 "Disk budget for all projects" = "सभी प्रोजेक्ट के लिए डिस्क सीमा";
 "Dismiss" = "छिपाएँ";
 "Dismissed" = "छिपाया गया";
+"Docker / Lima" = "Docker / Lima";
 "Docker or Lima manages it; stop the container instead" = "इसे Docker या Lima चलाता है; इसके बजाय कंटेनर रोकें";
 "Done" = "पूर्ण";
 "Downloaded script" = "डाउनलोड की गई स्क्रिप्ट";
@@ -163,6 +164,7 @@
 "it's a system process" = "यह सिस्टम प्रोसेस है";
 "it's Airbag or the app that started it" = "यह Airbag या उसे शुरू करने वाला ऐप है";
 "it's an agent, editor or terminal" = "यह एजेंट, एडिटर या टर्मिनल है";
+"it's part of a Lima VM (Colima); stop the container, or the VM with colima stop or limactl stop" = "यह Lima (Colima) VM का हिस्सा है; कंटेनर रोकें, या colima stop या limactl stop से VM रोकें";
 "Its snapshots are deleted. Add the folder again to protect it." = "इसके स्नैपशॉट हटा दिए जाएँगे। इसे सुरक्षित करने के लिए फ़ोल्डर फिर से जोड़ें।";
 "just now" = "अभी-अभी";
 "Keep Running" = "चलने दें";

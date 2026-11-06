@@ -48,6 +48,8 @@ public struct RadarProcess: Sendable, Codable, Identifiable, Equatable {
     /// Why this process must not be stopped, or nil when stoppable.
     public var protection: String?
     public var commandLine: String { argv.isEmpty ? name : argv.joined(separator: " ") }
+    /// Docker or a Lima VM runs it: it outlives the session that started it by design, so it is never "left running".
+    public var isManaged: Bool { protection == ProcessRadar.dockerManaged || protection == ProcessRadar.limaVM }
 
     public init(identity: ProcessIdentity, ppid: Int32, pgid: Int32, name: String, exe: String?, argv: [String], cwd: String?,
                 startedAtMs: Int64, footprintBytes: Int64?, cpuTimeNs: UInt64?, listeners: [Listener], processClass: ProcessClass,
@@ -64,7 +66,7 @@ public struct RadarSnapshot: Sendable, Codable {
     public let processes: [RadarProcess]
     /// Processes listening on a port, attributed or dev-class (what the Radar shows by default).
     public var servers: [RadarProcess] { processes.filter { !$0.listeners.isEmpty && ($0.processClass == .dev || $0.attribution != nil) } }
-    public var orphans: [RadarProcess] { processes.filter { $0.linkState == .orphan && !$0.listeners.isEmpty } }
+    public var orphans: [RadarProcess] { processes.filter { $0.linkState == .orphan && !$0.listeners.isEmpty && !$0.isManaged } }
 }
 
 /// A live agent process Airbag knows about (from hooks or from the agent's own session files).
@@ -92,7 +94,11 @@ public final class ProcessRadar {
                                         "next-server", "vite", "esbuild", "webpack", "tsc", "ngrok", "cloudflared", "ssh", "limactl", "colima",
                                         "docker-proxy", "com.docker.backend", "vpnkit", "containerd", "air", "nodemon", "turbo", "wrangler",
                                         "workerd", "miniflare", "hugo", "jekyll", "streamlit", "jupyter", "jupyter-lab", "ollama", "supabase"]
-    static let managedNames: Set<String> = ["limactl", "colima", "docker-proxy", "com.docker.backend", "vpnkit", "containerd"]
+    static let managedNames: Set<String> = ["docker-proxy", "com.docker.backend", "vpnkit", "containerd"]
+    public static let dockerManaged = "managed by Docker or Lima (stop the container instead)"
+    public static let limaVM = "part of a Lima VM (stop the container, or the VM with colima stop or limactl stop)"
+    /// Where Lima keeps its VMs: `~/.lima`, Colima's `~/.colima/_lima`, Rancher Desktop's `…/rancher-desktop/lima`.
+    static let limaDirs = ["/.lima/", "/_lima/", "/rancher-desktop/lima/"]
     static let hostAppNames: [String] = ["/Claude.app/", "/Codex.app/", "/ChatGPT.app/", "/Cursor.app/", "/Terminal.app/", "/iTerm.app/",
                                          "/Visual Studio Code.app/", "/Code.app/", "/WezTerm.app/", "/kitty.app/", "/Ghostty.app/",
                                          "/Alacritty.app/", "/Warp.app/", "/Zed.app/", "/Xcode.app/", "/Airbag.app/", "/Windsurf.app/",
@@ -227,8 +233,9 @@ public final class ProcessRadar {
             else if livePids[e.pid] != nil || protectedAgentChain.contains(e.pid) { protection = "running agent session" }
             else if cls == .system { protection = "system process" }
             else if cls == .terminal || cls == .agent { protection = "agent, editor or terminal" }
+            else if ProcessRadar.isLimaVM(comm: e.comm, exe: info.exe, argv: info.argv) { protection = ProcessRadar.limaVM }
             else if ProcessRadar.managedNames.contains(e.comm) || ProcessRadar.managedNames.contains((info.exe as NSString?)?.lastPathComponent ?? "") {
-                protection = "managed by Docker or Lima (stop the container instead)"
+                protection = ProcessRadar.dockerManaged
             } else if cls == .agentHelper && (attribution?.sessionLive ?? false) { protection = "helper of a running agent session" }
             let usage = ProcUsage.read(e.pid)
             out.append(RadarProcess(identity: e.identity, ppid: e.ppid, pgid: e.pgid, name: e.comm, exe: info.exe,
@@ -254,6 +261,18 @@ public final class ProcessRadar {
         if cache.count > 4096 { cache.removeAll() }
         cache[e.identity] = r
         return r
+    }
+
+    /// A process of a Lima VM (Colima runs on Lima): limactl and colima, Lima's QEMU, and the ssh master that holds the
+    /// VM's port forwards (`ssh: ~/.colima/_lima/colima/ssh.sock [mux]`), container ports included. A `colima start` an
+    /// agent ran leaves them running after its session ends, as it should.
+    static func isLimaVM(comm: String, exe: String?, argv: [String]) -> Bool {
+        let names = [comm, exe.map { ($0 as NSString).lastPathComponent } ?? comm]
+        if names.contains("limactl") || names.contains("colima") { return true }
+        let line = argv.joined(separator: " ")
+        guard limaDirs.contains(where: { line.contains($0) }) else { return false }
+        // A tunnel someone opened into the VM (`ssh -L 8080:localhost:8080 lima-default`) is not Lima's and stays stoppable.
+        return names.contains { $0.hasPrefix("qemu-system") } || (names.contains("ssh") && line.hasPrefix("ssh: ") && line.contains("[mux]"))
     }
 
     func classify(_ e: ProcEntry, exe: String?, markers: [String: String], cwd: String?, hasListener: Bool, roots: [String],
