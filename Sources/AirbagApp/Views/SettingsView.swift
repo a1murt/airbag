@@ -261,28 +261,14 @@ private struct DisabledRuleRow: View {
         LabeledContent {
             Button("Turn On") { model.setRule(ruleID, enabled: true) }
         } label: {
-            if let category = ruleCategory(ruleID) {
-                Text(verbatim: category)
+            // What commands of this rule do, in the user's language (the id alone says little); else its kind of harm.
+            if let about = GuardRule.summaries[ruleID] ?? GuardRule.category(ruleID) {
+                Text(verbatim: about)
                 Text(verbatim: ruleID).font(Theme.monoSmall).textSelection(.enabled)
             } else {
                 Text(verbatim: ruleID).font(Theme.mono).textSelection(.enabled)
             }
         }
-    }
-}
-
-/// What kind of harm a rule is about, from its id ("git.push.force" → Git history); the same words as the Guard view.
-private func ruleCategory(_ ruleID: String) -> String? {
-    switch ruleID.split(separator: ".").first.map(String.init) ?? "" {
-    case "fs": return String(localized: "Files outside the project")
-    case "git": return String(localized: "Git history")
-    case "cloud": return String(localized: "Cloud resources")
-    case "sys", "disk": return String(localized: "System")
-    case "net": return String(localized: "Downloaded script")
-    case "shell": return String(localized: "Unclear command")
-    case "self": return String(localized: "Airbag's protection")
-    case "db": return String(localized: "Databases")
-    default: return nil
     }
 }
 
