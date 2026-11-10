@@ -230,6 +230,9 @@ brew install --cask a1murt/airbag/airbag
 Open Airbag from Applications: the welcome window connects your agents and picks your projects in under a minute.
 Homebrew also puts the `airbag` command on your PATH, and `brew upgrade` keeps your agents connected.
 
+Releases are not notarized yet (there is no Apple Developer ID). Each one is built and ad-hoc signed from its tag by
+this repository's public [release workflow](.github/workflows/release.yml), and the cask pins the SHA-256 of that build.
+
 <details>
 <summary><b>Without Homebrew</b></summary>
 
@@ -336,6 +339,16 @@ snapshotted yet waits for that first snapshot: 566–729 ms for 5,000 files. In 
 files) the first snapshot takes longer than the hook's 1.5 s limit and finishes in the background; until it is done,
 commands that need a snapshot (`rm`, `mv`, `git reset --hard`…) wait for you. Replaying 2,578 distinct Claude Code
 shell commands from the author's Mac, 95.7 % were allowed, 4.2 % were flagged as risky, and 2 were blocked.
+</details>
+
+<details>
+<summary><b>How much disk do the snapshots use?</b></summary>
+
+Little, and it is capped. Snapshots are APFS clones, so a file that didn't change takes no extra space, and files over
+100 MiB are skipped (20 MiB for a project on another volume, 1 MiB when the disk is low). Snapshots older than 7 days
+are deleted, except each project's newest 20 and the ones you pin, and the oldest go first to keep the total under
+5 GB; both limits are in Settings → Snapshots. `airbag usage` shows what each folder takes, and the snapshots of a
+folder that has been gone for 30 days are deleted (3 days for temporary folders and agent worktrees).
 </details>
 
 <details>
