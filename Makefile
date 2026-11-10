@@ -1,4 +1,4 @@
-.PHONY: demo build test app universal run-app release previews e2e l10n icon clean
+.PHONY: demo build test app universal run-app release previews e2e fuzz l10n icon clean
 
 build:
 	swift build
@@ -35,6 +35,10 @@ demo: app
 
 e2e:
 	python3 -I Scripts/e2e-hooks.py
+
+fuzz:
+	swift build -c release --product airbag
+	python3 -I Scripts/guard-fuzz.py
 
 l10n:
 	python3 -I Scripts/check-l10n.py

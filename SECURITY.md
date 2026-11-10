@@ -13,7 +13,8 @@ security boundary against a hostile agent, a malicious plugin, or malware runnin
 - **Trust boundary.** Everything runs as the logged-in user: no root helper, no Full Disk Access, no network.
 - **Hooks.** The hook runs inside the agent's process tree before each shell command. Rules are evaluated before
   any I/O, so database or store failures never weaken a block. What happens when the hook itself fails (crash,
-  timeout, missing binary) is up to the agent. Claude Code, Codex and Cursor run the command anyway by default;
+  timeout, missing binary) is up to the agent, so CI feeds generated hostile commands to the parser on every push
+  (`Scripts/guard-fuzz.py`): a command must not be able to crash the hook on purpose. Claude Code, Codex and Cursor run the command anyway by default;
   strict mode makes Claude Code and Cursor block instead (Codex has no such switch). Cursor also blocks on a reply
   that is not valid JSON. GitHub Copilot CLI denies the shell command when the hook errors and runs it when the hook
   times out. Gemini CLI turns a non-zero exit other than 1 that prints text into a deny. So that deleting Airbag.app

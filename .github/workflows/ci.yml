@@ -18,3 +18,5 @@ jobs:
         run: Scripts/build-app.sh
       - name: Hook end-to-end (simulated agent against the release binary)
         run: python3 -I Scripts/e2e-hooks.py
+      - name: Guard fuzz (generated hostile commands never crash the parser)
+        run: python3 -I Scripts/guard-fuzz.py --count 2000

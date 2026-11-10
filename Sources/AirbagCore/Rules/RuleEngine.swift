@@ -110,7 +110,9 @@ public struct RuleEngine: Sendable {
 
     public func evaluate(_ command: String, context: GuardContext) -> GuardVerdict {
         var analyzer = Analyzer(context: context)
-        analyzer.analyze(command, depth: 0)
+        // bash drops NUL bytes from what it reads ("ignored null byte in input"), so `rm -rf ~<NUL> x` from a script
+        // runs as `rm -rf ~ x`; read the command the same way.
+        analyzer.analyze(command.contains("\u{0}") ? command.replacingOccurrences(of: "\u{0}", with: "") : command, depth: 0)
         // Turning a rule off relaxes what it asks about; what it blocks (wiping home, a disk, Airbag itself) stays blocked.
         var findings = analyzer.findings.filter { $0.decision == .block || !context.disabledRules.contains($0.ruleId) }
         // Read-only detection: when nothing matched and every command is known read-only, no snapshot is needed.

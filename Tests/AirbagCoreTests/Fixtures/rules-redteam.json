@@ -1000,6 +1000,29 @@
    },
    "why": "BYPASS: File::Path remove_tree was not seen as a delete.",
    "rule": "interp.delete"
+  },
+  {
+   "cmd": "rm -rf ~\u0000 x",
+   "expect": {
+    "decision": "block"
+   },
+   "rule": "fs.rm.catastrophic",
+   "why": "bash drops NUL bytes from script input, so this deletes the home folder"
+  },
+  {
+   "cmd": "rm -rf ~ ; echo {0..1..-9223372036854775808}",
+   "expect": {
+    "decision": "block"
+   },
+   "rule": "fs.rm.catastrophic",
+   "why": "a brace sequence at the end of Int crashed the hook (abs overflow), and a crashed hook lets the command run"
+  },
+  {
+   "cmd": "rm -rf ~/{-9223372036854775808..9223372036854775807}",
+   "expect": {
+    "decision": "ask"
+   },
+   "why": "too many words to expand: the target is opaque"
   }
  ]
 }

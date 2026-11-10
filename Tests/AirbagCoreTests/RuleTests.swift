@@ -142,6 +142,13 @@ struct RuleFixture: Decodable {
         #expect(cmd.redirects.map(\.target.text) == ["a.txt", "b.txt"])
         #expect(cmd.words.map(\.hasGlob) == [false, false, true, false])
         #expect(l.parse("rm {1..1000}{a,b}")[0].words[1].opaque)
+        // Sequences at the ends of Int never trap (a crashed hook lets the command run unchecked).
+        #expect(parse("echo {0..1..-9223372036854775808} {9223372036854775806..9223372036854775807} {-9223372036854775808..-9223372036854775807}")
+                == [["echo", "0", "9223372036854775806", "9223372036854775807", "-9223372036854775808", "-9223372036854775807"]])
+        #expect(parse("echo {-9223372036854775807..-9223372036854775808..9223372036854775807} {a..c..-9223372036854775808}")
+                == [["echo", "-9223372036854775807", "a"]]) // a step past the end gives the start only, as in bash
+        #expect(l.parse("rm {-9223372036854775808..9223372036854775807}")[0].words[1].opaque)
+        #expect(l.parse("rm {1..-9223372036854775808}")[0].words[1].opaque)
         #expect(l.parse("bash <<< {a,b}")[0].redirects.map(\.target.text) == ["{a,b}"])
     }
 

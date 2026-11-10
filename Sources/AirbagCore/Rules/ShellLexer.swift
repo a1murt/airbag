@@ -321,21 +321,31 @@ public struct ShellLexer {
             let text = String(body.map { if case .char(let ch) = $0 { return ch }; return " " })
             let ends = text.components(separatedBy: "..")
             guard ends.count == 2 || ends.count == 3 else { return nil }
-            let step = ends.count == 3 ? Int(ends[2]).map(abs) : 1
-            guard let step, step > 0 else { return nil }
+            // Magnitudes and wrapping arithmetic only: `{1..-9223372036854775808}` or `{0..1..-9223372036854775808}`
+            // trapped in abs() and crashed the hook, and a crashed hook lets the whole command run unchecked.
+            guard let step = ends.count == 3 ? Int(ends[2])?.magnitude : 1, step > 0 else { return nil }
+            /// The values from `a` toward `b`, `step` apart; nil past `limit`. Each lies between `a` and `b`, so the
+            /// wrapping sum is exact.
+            func walk(_ a: Int, _ b: Int) -> [Int]? {
+                let span = a <= b ? UInt(bitPattern: b &- a) : UInt(bitPattern: a &- b)
+                guard span / step < UInt(limit) else { return nil }
+                return (0...(span / step)).map { k in
+                    let offset = Int(bitPattern: k * step)
+                    return a <= b ? a &+ offset : a &- offset
+                }
+            }
             if let a = Int(ends[0]), let b = Int(ends[1]) {
-                guard abs(b - a) / step < limit else { overflow = true; return [] }
+                guard let values = walk(a, b) else { overflow = true; return [] }
                 let width = ends[0...1].contains { $0.hasPrefix("0") && $0.count > 1 || $0.hasPrefix("-0") } ? max(ends[0].count, ends[1].count) : 0
-                return stride(from: a, through: b, by: a <= b ? step : -step).map { n in
-                    let digits = String(abs(n))
+                return values.map { n in
+                    let digits = String(n.magnitude)
                     let padded = String(repeating: "0", count: max(0, width - digits.count - (n < 0 ? 1 : 0))) + digits
                     return (n < 0 ? "-" : "") + padded
                 }
             }
             guard let a = ends[0].unicodeScalars.first, let b = ends[1].unicodeScalars.first, ends[0].count == 1, ends[1].count == 1,
                   a.isASCII, b.isASCII, CharacterSet.letters.contains(a), CharacterSet.letters.contains(b) else { return nil }
-            return stride(from: Int(a.value), through: Int(b.value), by: a.value <= b.value ? step : -step)
-                .compactMap { Unicode.Scalar(UInt32($0)).map { String(Character($0)) } }
+            return (walk(Int(a.value), Int(b.value)) ?? []).compactMap { Unicode.Scalar(UInt32($0)).map { String(Character($0)) } }
         }
         func expand(_ p: [Part]) {
             guard !overflow else { return }
