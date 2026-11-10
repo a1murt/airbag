@@ -509,6 +509,65 @@
     "decision": "ask"
    },
    "rule": "shell.unparsed"
+  },
+  {
+   "cmd": "airbag log",
+   "expect": {
+    "decision": "allow",
+    "snapshot": "none"
+   },
+   "why": "Airbag's own listings need no snapshot (the Claude Code plugin's skills run them)"
+  },
+  {
+   "cmd": "airbag undo --list",
+   "expect": {
+    "decision": "allow",
+    "snapshot": "none"
+   }
+  },
+  {
+   "cmd": "/Users/me/.claude/plugins/cache/airbag/airbag/0.1.4/scripts/airbag undo --dry-run",
+   "expect": {
+    "decision": "allow",
+    "snapshot": "none"
+   }
+  },
+  {
+   "cmd": "airbag hooks status",
+   "expect": {
+    "decision": "allow",
+    "snapshot": "none"
+   }
+  },
+  {
+   "cmd": "airbag guard; airbag sessions",
+   "expect": {
+    "decision": "allow",
+    "snapshot": "none"
+   }
+  },
+  {
+   "cmd": "airbag undo",
+   "expect": {
+    "decision": "allow",
+    "snapshot": "recommended"
+   },
+   "why": "undo writes files back (it snapshots them first itself)"
+  },
+  {
+   "cmd": "airbag undo -- --list",
+   "expect": {
+    "decision": "allow",
+    "snapshot": "recommended"
+   },
+   "why": "after -- an option is an operand"
+  },
+  {
+   "cmd": "airbag hooks install claude-code",
+   "expect": {
+    "decision": "allow",
+    "snapshot": "recommended"
+   }
   }
  ]
 }

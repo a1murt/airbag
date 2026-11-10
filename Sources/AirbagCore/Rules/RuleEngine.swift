@@ -571,6 +571,19 @@ struct Analyzer {
             return !long.isEmpty && long.allSatisfy { $0.hasPrefix("--get") || $0 == "--listapps" }
         case "xcode-select":
             return !argv.isEmpty && argv.allSatisfy { ["-p", "--print-path", "-v", "--version", "-h", "--help"].contains($0) }
+        case "airbag":
+            // Airbag's own listings and previews (what the Claude Code plugin runs) need no snapshot of the project.
+            let before = argv.prefix(while: { $0 != "--" })
+            guard let sub = before.first else { return true }
+            if ["snapshots", "changes", "diff", "usage", "check", "guard", "sessions", "log", "ports", "version", "--version", "-v",
+                "help", "--help", "-h"].contains(sub) { return true }
+            if before.contains(where: { $0 == "--help" || $0 == "-h" }) { return true }
+            switch sub {
+            case "hooks": return before.dropFirst().first == "status"
+            case "undo": return before.contains("--list") || before.contains("--dry-run")
+            case "prune", "cleanup": return before.contains("--dry-run")
+            default: return false
+            }
         default:
             return Analyzer.readOnlyCommands.contains(name)
         }
