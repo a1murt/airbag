@@ -5,7 +5,7 @@ attributed to its session, including servers that survive their session. Uses fa
 import json, os, shutil, signal, subprocess, sys, tempfile, time
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 BIN = subprocess.run(["swift", "build", "-c", "release", "--show-bin-path"], cwd=ROOT, capture_output=True, text=True).stdout.strip() + "/airbag"
-work = os.path.realpath(tempfile.mkdtemp(prefix="airbag-accept-"))
+work = os.path.realpath(tempfile.mkdtemp(prefix="airbag-accept-", dir="/private/tmp"))  # not below /private/var (ADR-032)
 env = {k: v for k, v in os.environ.items() if not k.startswith(("CLAUDE", "CODEX"))}
 env["AIRBAG_HOME"] = os.path.join(work, "home")
 agents_dir = os.path.join(work, "bin"); os.makedirs(agents_dir)
