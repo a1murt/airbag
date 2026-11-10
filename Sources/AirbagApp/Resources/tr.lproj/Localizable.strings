@@ -28,6 +28,7 @@
 "Add Project…" = "Proje Ekle…";
 "Add these entries to the file by hand." = "Bu girdileri dosyaya elle ekleyin.";
 "Add these entries to the file by hand:" = "Bu girdileri dosyaya elle ekleyin:";
+"Through the Airbag plugin for Claude Code. To disconnect, turn the plugin off in Claude Code (/plugin)." = "Claude Code için Airbag eklentisi üzerinden. Bağlantıyı kesmek için eklentiyi Claude Code'da kapatın (/plugin).";
 "added" = "eklendi";
 "After a command" = "Komuttan sonra";
 "After restore" = "Geri yüklemeden sonra";

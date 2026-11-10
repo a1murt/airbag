@@ -260,7 +260,7 @@ final class AppModel: ObservableObject {
         if let free = lowDiskFree { out.append(.lowDisk(free: free)) }
         let broken = hookStatuses.filter { $0.installed && $0.brokenCommand }.map(\.agent)
         if !broken.isEmpty { out.append(.brokenHooks(broken)) }
-        if hookStatuses.contains(where: { $0.detected }) && !hookStatuses.contains(where: { $0.installed }) {
+        if hookStatuses.contains(where: { $0.detected }) && !hookStatuses.contains(where: { $0.connected }) {
             out.append(.noAgentConnected)
         }
         return out
@@ -1250,12 +1250,14 @@ final class AppModel: ObservableObject {
         try? registry?.setSetting("hook.recordInsteadOfAsking", on)
     }
 
-    /// Rewrites each connected agent's hook for the new mode; returns the agents that could not be updated.
+    /// Rewrites each connected agent's hook for the new mode; returns the agents that could not be updated. Claude Code
+    /// connected only through the plugin gets entries of its own: strict mode lives in them, and the plugin then steps
+    /// aside (ADR-041).
     @discardableResult
     func setStrict(_ on: Bool) -> [(agent: AgentKind, error: String)] {
         strictMode = on
         try? registry?.setSetting("hook.strictMode", on)
-        return hookStatuses.filter(\.installed).compactMap { s in connect(s.agent).map { (s.agent, $0) } }
+        return hookStatuses.filter { $0.installed || (on && $0.pluginOnly) }.compactMap { s in connect(s.agent).map { (s.agent, $0) } }
     }
 
     // MARK: pause, retention, settings

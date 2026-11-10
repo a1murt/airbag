@@ -28,6 +28,7 @@
 "Add Project…" = "添加项目…";
 "Add these entries to the file by hand." = "请手动将这些条目添加到文件中。";
 "Add these entries to the file by hand:" = "请手动将以下条目添加到文件中：";
+"Through the Airbag plugin for Claude Code. To disconnect, turn the plugin off in Claude Code (/plugin)." = "通过 Claude Code 的 Airbag 插件连接。要断开连接，请在 Claude Code 中关闭该插件（/plugin）。";
 "added" = "已添加";
 "After a command" = "命令执行后";
 "After restore" = "恢复后";

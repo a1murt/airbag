@@ -1,0 +1,9 @@
+#!/bin/sh
+# The Airbag app's command-line tool, wherever the app put it, for the plugin's skills (undo, changes, status).
+# AIRBAG_CLI may name another airbag binary to use.
+for bin in "${AIRBAG_CLI:-}" /Applications/Airbag.app/Contents/Helpers/airbag "$HOME/Applications/Airbag.app/Contents/Helpers/airbag" \
+    /opt/homebrew/bin/airbag /usr/local/bin/airbag; do
+    if [ -n "$bin" ] && [ -x "$bin" ]; then exec "$bin" "$@"; fi
+done
+echo "Airbag is not installed on this Mac, so nothing has been snapshotted. Install it with: brew install --cask a1murt/airbag/airbag (or get the DMG from https://github.com/a1murt/airbag/releases)."
+exit 0

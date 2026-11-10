@@ -104,6 +104,9 @@ record a fingerprint; uninstall removes only Airbag entries. Codex hooks additio
   §4.4, §4.7). Strict mode (opt-in) sets `onFailure: block` (Claude ≥ 2.1.295) and `failClosed: true` (Cursor) on
   the pre-shell hook only. The Gemini CLI and Copilot CLI entries are shell commands that run the binary only while
   it exists and print `{}` otherwise, so a deleted Airbag.app does not stop those agents (ADR-039).
+- The Claude Code plugin's hook answers `{}` when no Airbag binary is installed, and steps aside (also `{}`) while the
+  settings file Claude Code reads has Airbag's own entries, so a command is checked once (ADR-041). Strict mode
+  works through those entries only.
 - `ask` without a registry never becomes allow: native ask where supported, otherwise deny with explanation.
 - A command whose verdict needs a snapshot (`snapshot: required`) and did not get a usable one becomes an ask
   (`snapshot.unavailable`), also when its verdict was already an ask; a `snapshot: recommended` command still runs.

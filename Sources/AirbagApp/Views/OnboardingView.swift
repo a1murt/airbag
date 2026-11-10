@@ -209,7 +209,7 @@ struct OnboardingView: View {
 
     /// Not connected yet, or connected with an entry that needs rewriting (outdated, or the binary it names is gone).
     private func canConnect(_ s: HookInstaller.AgentStatus) -> Bool {
-        s.detected && (!s.installed || !s.current || s.brokenCommand)
+        s.detected && !s.pluginOnly && (!s.installed || !s.current || s.brokenCommand)
     }
 
     /// Selected agents that have not been tried yet. A failed one is retried with its own Retry button, so after a
@@ -257,7 +257,7 @@ struct OnboardingView: View {
 
     private func isConnected(_ agent: AgentKind) -> Bool {
         if let phase = connectResults[agent] { return phase == .connected }
-        return model.hookStatuses.first { $0.agent == agent }.map { $0.installed && !canConnect($0) } ?? false
+        return model.hookStatuses.first { $0.agent == agent }.map { $0.connected && !canConnect($0) } ?? false
     }
 
     private func agentRow(_ s: HookInstaller.AgentStatus) -> some View {
@@ -329,7 +329,7 @@ struct OnboardingView: View {
             case nil:
                 if !s.detected { Text("Not found on this Mac").foregroundStyle(.tertiary) }
                 else if s.installed && canConnect(s) { Text("Needs repair") }
-                else if s.installed { Text("Already connected") }
+                else if s.connected { Text("Already connected") }
                 else { Text("Found") }
             }
         }

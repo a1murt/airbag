@@ -284,8 +284,9 @@ private enum AgentHealth: Equatable {
 
     /// `editable`: Connect or Repair could rewrite the agent's settings file.
     init(_ s: HookInstaller.AgentStatus, lastCall: Int64?, editable: Bool) {
-        let working = s.installed && s.current && !s.staleCommand && !s.brokenCommand
+        let working = (s.installed && s.current && !s.staleCommand && !s.brokenCommand) || s.pluginOnly
         if !working && (!editable || (!s.installed && s.note != nil)) { self = .cannotEdit }
+        else if s.pluginOnly { self = lastCall.map { .connected(lastCall: $0) } ?? .waiting }
         else if !s.installed { self = s.detected ? .notConnected : .notFound }
         else if s.staleCommand || s.brokenCommand { self = .needsRepair(moved: true) }
         else if !s.current { self = .needsRepair(moved: false) }
@@ -399,6 +400,8 @@ private struct AgentRow: View {
             if let planError { Text(verbatim: model.describe(planError)) }
         case .waiting where status.agent == .codex:
             Text("Codex asks you to trust new hooks once: open Codex, type /hooks and press t.")
+        case .connected, .waiting:
+            if status.pluginOnly { Text("Through the Airbag plugin for Claude Code. To disconnect, turn the plugin off in Claude Code (/plugin).") }
         default: EmptyView()
         }
     }
@@ -422,7 +425,8 @@ private struct AgentRow: View {
                 Button("Repair") { connect() }.buttonStyle(.borderedProminent)
             }
         case .connected, .waiting:
-            Button("Disconnect", role: .destructive) { confirmDisconnect = true }
+            // Through the plugin there is nothing in the settings file to remove (the detail line says where to turn it off).
+            if !status.pluginOnly { Button("Disconnect", role: .destructive) { confirmDisconnect = true } }
         }
     }
 

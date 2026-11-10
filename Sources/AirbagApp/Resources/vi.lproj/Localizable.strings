@@ -28,6 +28,7 @@
 "Add Project…" = "Thêm dự án…";
 "Add these entries to the file by hand." = "Hãy tự thêm các mục này vào tệp.";
 "Add these entries to the file by hand:" = "Hãy tự thêm các mục này vào tệp:";
+"Through the Airbag plugin for Claude Code. To disconnect, turn the plugin off in Claude Code (/plugin)." = "Qua plugin Airbag cho Claude Code. Để ngắt kết nối, hãy tắt plugin trong Claude Code (/plugin).";
 "added" = "đã thêm";
 "After a command" = "Sau khi chạy lệnh";
 "After restore" = "Sau khi khôi phục";

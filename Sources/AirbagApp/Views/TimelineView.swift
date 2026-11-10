@@ -338,7 +338,7 @@ struct TimelineScreen: View {
     // MARK: states
 
     var noProjects: some View {
-        let connected = model.hookStatuses.contains { $0.installed }
+        let connected = model.hookStatuses.contains { $0.connected }
         return ContentUnavailableView {
             Label("Nothing protected yet", systemImage: "shield")
         } description: {

@@ -28,6 +28,7 @@
 "Add Project…" = "프로젝트 추가…";
 "Add these entries to the file by hand." = "이 항목들을 파일에 직접 추가하십시오.";
 "Add these entries to the file by hand:" = "이 항목들을 파일에 직접 추가하십시오:";
+"Through the Airbag plugin for Claude Code. To disconnect, turn the plugin off in Claude Code (/plugin)." = "Claude Code용 Airbag 플러그인을 통해 연결되어 있습니다. 연결을 끊으려면 Claude Code에서 플러그인을 끄세요(/plugin).";
 "added" = "추가됨";
 "After a command" = "명령 실행 후";
 "After restore" = "복원 후";

@@ -775,6 +775,42 @@ func decode(_ s: String?) -> [String: Any] {
         }
     }
 
+    /// ADR-041: with Airbag's Claude Code plugin on, Claude Code counts as connected even without entries of its own.
+    @Test func theClaudeCodePluginCountsAsConnected() throws {
+        let (t, inst) = setup(); defer { t.cleanup() }
+        t.write(".claude/settings.json", #"{"enabledPlugins": {"other@somewhere": true, "airbag@airbag": true}}"#)
+        let s = inst.status(.claudeCode)
+        #expect(!s.installed && s.viaPlugin && s.pluginOnly && s.connected)
+        // Turned off in /plugin, or a different plugin of the same marketplace: not connected.
+        t.write(".claude/settings.json", #"{"enabledPlugins": {"airbag@airbag": false, "airbag-extras@airbag": true}}"#)
+        #expect(!inst.status(.claudeCode).connected)
+        // Both: Airbag's own entries answer, the plugin steps aside.
+        t.write(".claude/settings.json", #"{"enabledPlugins": {"airbag@a1murt-airbag": true}}"#)
+        _ = try inst.install(.claudeCode, backupDirectory: nil)
+        let both = inst.status(.claudeCode)
+        #expect(both.installed && both.viaPlugin && !both.pluginOnly && both.connected)
+        #expect(!inst.status(.codex).viaPlugin)
+    }
+
+    /// The plugin's hook steps aside only for entries that can run: entries whose binary is gone answer nothing.
+    @Test func thePluginStepsAsideOnlyForEntriesThatRun() throws {
+        let t = TempDir("plugin"); defer { t.cleanup() }
+        let settings = t.sub(".claude/settings.json")
+        let gone = HookInstaller(home: t.path, command: t.sub("Trash/Airbag.app/Contents/Helpers/airbag"))
+        #expect(!gone.hasWorkingClaudeEntries(settingsPath: settings))
+        _ = try gone.install(.claudeCode, backupDirectory: nil)
+        #expect(!gone.hasWorkingClaudeEntries(settingsPath: settings))
+        t.write("Apps/airbag", "#!/bin/sh\n", mode: 0o755)
+        let here = HookInstaller(home: t.path, command: t.sub("Apps/airbag"))
+        _ = try here.install(.claudeCode, backupDirectory: nil)
+        #expect(here.hasWorkingClaudeEntries(settingsPath: settings))
+        _ = try here.uninstall(.claudeCode, backupDirectory: nil)
+        #expect(!here.hasWorkingClaudeEntries(settingsPath: settings))
+        // The settings file a running Claude Code reads.
+        #expect(HookInstaller.claudeSettingsPath(home: "/Users/u", environment: [:]) == "/Users/u/.claude/settings.json")
+        #expect(HookInstaller.claudeSettingsPath(home: "/Users/u", environment: ["CLAUDE_CONFIG_DIR": "/tmp/cc"]) == "/tmp/cc/settings.json")
+    }
+
     @Test func entriesOfAnOlderVersionAreRecognisedAndRefreshed() throws {
         let (t, inst) = setup(); defer { t.cleanup() }
         // What 0.1.3 wrote: a plain command for Gemini CLI, exec + args for Copilot CLI.

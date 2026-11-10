@@ -1,0 +1,17 @@
+{
+  "name": "airbag",
+  "owner": {
+    "name": "Alnur Kengesbay",
+    "url": "https://github.com/a1murt"
+  },
+  "description": "Airbag: undo for AI coding agents on macOS.",
+  "plugins": [
+    {
+      "name": "airbag",
+      "source": "./plugin",
+      "description": "A snapshot of your project before each shell command Claude Code runs that can change files, a check of the command first, and /airbag:undo to put things back. Needs the Airbag app for macOS.",
+      "category": "security",
+      "tags": ["undo", "snapshots", "safety", "hooks", "macos"]
+    }
+  ]
+}

@@ -9,6 +9,15 @@ enum HookCommands {
             return 0
         }
         let hint = argv.dropFirst().first
+        // The Claude Code plugin's hooks step aside while the settings file Claude Code reads has Airbag's own entries:
+        // Claude Code runs both for every tool call, in parallel, and a command is checked and snapshotted once (ADR-041).
+        let environment = ProcessInfo.processInfo.environment
+        if agent == .claudeCode, environment["AIRBAG_HOOK_SOURCE"] == "plugin",
+           HookInstaller(command: "").hasWorkingClaudeEntries(settingsPath: HookInstaller.claudeSettingsPath(environment: environment)) {
+            _ = FileHandle.standardInput.readDataToEndOfFile()
+            print("{}")
+            return 0
+        }
         let paths = AirbagPaths.resolve()
         try? paths.prepare()
         Log.shared.configure(file: paths.logs.appendingPathComponent("hook.log"), category: "hook",
@@ -81,7 +90,9 @@ enum HookCommands {
             if a.has("json") { Out.encodable(rows); return 0 }
             print("hook command: \(installer.command)")
             for r in rows {
-                let state = !r.installed ? "not installed" : (r.current ? "installed" : (r.staleCommand ? "installed (points at another airbag binary — reinstall)" : "installed (outdated — reinstall)"))
+                var state = !r.installed ? "not installed" : (r.current ? "installed" : (r.staleCommand ? "installed (points at another airbag binary — reinstall)" : "installed (outdated — reinstall)"))
+                if r.pluginOnly { state = "connected through the Claude Code plugin" }
+                else if r.viaPlugin { state += "; the Claude Code plugin is on too and steps aside" }
                 let name = r.agent.displayName.padding(toLength: 20, withPad: " ", startingAt: 0)
                 let found = (r.detected ? "detected" : "not found").padding(toLength: 10, withPad: " ", startingAt: 0)
                 print("\(name) \(found)  \(state)  \(r.configPath)")

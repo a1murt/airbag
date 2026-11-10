@@ -93,6 +93,37 @@ func airbagCLI(_ args: [String], home: String) -> (status: Int32, output: String
         #expect(airbagCLI(["undo", "--root", sb.root, "--dryrun"], home: home).status == 64)
     }
 
+    /// The plugin's hook (AIRBAG_HOOK_SOURCE=plugin) answers nothing while the settings file Claude Code reads has
+    /// Airbag's own entries, which Claude Code runs too; without them it does the work (ADR-041).
+    @Test func thePluginHookStepsAsideForAirbagsOwnEntries() throws {
+        let sb = Sandbox("plugin"); defer { sb.cleanup() }
+        let bin = Bundle.module.bundleURL.deletingLastPathComponent().appendingPathComponent("airbag").path
+        let config = sb.tmp.sub("claude-config")
+        try FileManager.default.createDirectory(atPath: config, withIntermediateDirectories: true)
+        func hook(_ settings: String) -> String {
+            try! settings.write(toFile: config + "/settings.json", atomically: true, encoding: .utf8)
+            let p = Process()
+            p.executableURL = URL(fileURLWithPath: bin)
+            p.arguments = ["hook", "claude-code"]
+            p.environment = ProcessInfo.processInfo.environment.merging(
+                ["AIRBAG_HOME": sb.paths.home.path, "AIRBAG_HOOK_SOURCE": "plugin", "CLAUDE_CONFIG_DIR": config]) { _, new in new }
+            let input = Pipe(), output = Pipe()
+            p.standardInput = input; p.standardOutput = output; p.standardError = Pipe()
+            try! p.run()
+            let payload = #"{"session_id":"s1","hook_event_name":"PreToolUse","tool_name":"Bash","tool_use_id":"toolu_1","cwd":"\#(sb.root)","tool_input":{"command":"rm -rf ~"}}"#
+            input.fileHandleForWriting.write(Data(payload.utf8))
+            try? input.fileHandleForWriting.close()
+            let out = output.fileHandleForReading.readDataToEndOfFile()
+            p.waitUntilExit()
+            return String(decoding: out, as: UTF8.self)
+        }
+        // Only the plugin: it checks the command (and blocks this one).
+        #expect(hook(#"{"enabledPlugins": {"airbag@airbag": true}}"#).contains("deny"))
+        // Airbag's own entries as well: they answer, the plugin's hook says nothing.
+        let own = try HookInstaller(home: sb.tmp.path, command: bin).plan(.claudeCode, install: true).after ?? ""
+        #expect(hook(own).trimmingCharacters(in: .whitespacesAndNewlines) == "{}")
+    }
+
     @Test func helpAfterASubcommandOnlyPrintsHelp() throws {
         let sb = Sandbox("cli"); defer { sb.cleanup() }
         let home = sb.paths.home.path

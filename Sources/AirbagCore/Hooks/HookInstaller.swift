@@ -40,11 +40,19 @@ public struct HookInstaller {
         public let note: String?
         /// An installed Airbag entry points at a binary that does not exist (app moved, DMG ejected).
         public var brokenCommand = false
+        /// Claude Code only: Airbag's plugin is on (`/plugin install airbag@airbag`), so Claude Code runs Airbag's hooks
+        /// from the plugin even with no entries of Airbag's own in the settings file (ADR-041).
+        public var viaPlugin = false
+        /// Airbag runs for this agent: through entries of its own in the settings file, or through the plugin.
+        public var connected: Bool { installed || viaPlugin }
+        /// Connected only through the plugin: Disconnect has nothing to remove, the plugin is turned off in Claude Code.
+        public var pluginOnly: Bool { viaPlugin && !installed }
 
         public init(agent: AgentKind, detected: Bool, configPath: String, installed: Bool, current: Bool, staleCommand: Bool, note: String?,
-                    brokenCommand: Bool = false) {
+                    brokenCommand: Bool = false, viaPlugin: Bool = false) {
             self.agent = agent; self.detected = detected; self.configPath = configPath; self.installed = installed
             self.current = current; self.staleCommand = staleCommand; self.note = note; self.brokenCommand = brokenCommand
+            self.viaPlugin = viaPlugin
         }
     }
 
@@ -391,6 +399,27 @@ public struct HookInstaller {
         return !strip(json["hooks"] ?? .object([]), nestedGroups: usesNestedGroups(agent)).1.isEmpty
     }
 
+    // MARK: the Claude Code plugin (ADR-041)
+
+    /// The user settings file a running Claude Code reads: `$CLAUDE_CONFIG_DIR/settings.json` when that is set.
+    public static func claudeSettingsPath(home: String = NSHomeDirectory(), environment: [String: String] = ProcessInfo.processInfo.environment) -> String {
+        if let dir = environment["CLAUDE_CONFIG_DIR"], !dir.isEmpty { return (dir as NSString).expandingTildeInPath + "/settings.json" }
+        return home + "/.claude/settings.json"
+    }
+
+    /// Whether Claude Code's `enabledPlugins` turns on Airbag's plugin (`airbag@<marketplace>`).
+    func claudePluginEnabled(settings json: OrderedJSON) -> Bool {
+        guard case .object(let plugins)? = json["enabledPlugins"] else { return false }
+        return plugins.contains { key, value in key.split(separator: "@").first == "airbag" && value == .bool(true) }
+    }
+
+    /// Whether this Claude Code settings file has entries of Airbag's own whose binary exists. The plugin's hooks then
+    /// step aside: Claude Code runs both, in parallel, for every tool call, and a command is checked and snapshotted once.
+    public func hasWorkingClaudeEntries(settingsPath: String) -> Bool {
+        guard let json = try? load(settingsPath).json else { return false }
+        return strip(json["hooks"] ?? .object([]), nestedGroups: true).1.contains { FileManager.default.isExecutableFile(atPath: $0) }
+    }
+
     public func status(_ agent: AgentKind) -> AgentStatus {
         let path = configPath(agent)
         let detected = detect(agent)
@@ -415,7 +444,8 @@ public struct HookInstaller {
             if agent == .codex && installed { note = "Codex runs new hooks only after you trust them: open Codex, type /hooks and press t." }
             return AgentStatus(agent: agent, detected: detected, configPath: path, installed: installed, current: current,
                                staleCommand: commands.contains { $0 != command }, note: note,
-                               brokenCommand: commands.contains { !FileManager.default.isExecutableFile(atPath: $0) })
+                               brokenCommand: commands.contains { !FileManager.default.isExecutableFile(atPath: $0) },
+                               viaPlugin: agent == .claudeCode && claudePluginEnabled(settings: json))
         } catch {
             return AgentStatus(agent: agent, detected: detected, configPath: path, installed: false, current: false, staleCommand: false,
                                note: "cannot read \(path): \(error)")

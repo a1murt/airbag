@@ -28,6 +28,7 @@
 "Add Project…" = "Aggiungi progetto…";
 "Add these entries to the file by hand." = "Aggiungi a mano queste voci al file.";
 "Add these entries to the file by hand:" = "Aggiungi a mano queste voci al file:";
+"Through the Airbag plugin for Claude Code. To disconnect, turn the plugin off in Claude Code (/plugin)." = "Tramite il plugin di Airbag per Claude Code. Per scollegarlo, disattiva il plugin in Claude Code (/plugin).";
 "added" = "aggiunto";
 "After a command" = "Dopo un comando";
 "After restore" = "Dopo il ripristino";

@@ -28,6 +28,7 @@
 "Add Project…" = "Жоба қосу…";
 "Add these entries to the file by hand." = "Бұл жазбаларды файлға қолмен қосыңыз.";
 "Add these entries to the file by hand:" = "Бұл жазбаларды файлға қолмен қосыңыз:";
+"Through the Airbag plugin for Claude Code. To disconnect, turn the plugin off in Claude Code (/plugin)." = "Claude Code-қа арналған Airbag плагині арқылы. Ажырату үшін Claude Code-та плагинді өшіріңіз (/plugin).";
 "added" = "қосылған";
 "After a command" = "Командадан кейін";
 "After restore" = "Қалпына келтіруден кейін";

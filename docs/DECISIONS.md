@@ -257,3 +257,21 @@ roots today (ADR-032, ADR-036) are still left alone while the folder exists; `ai
 with the stores that are due, and `--missing` the ones inside their grace period. Deleting snapshots is the user's
 call: an agent that runs `airbag cleanup` or `airbag prune` is asked first, like anything else that removes Airbag's
 protection (`self.airbag`, ADR-035).
+
+**ADR-041 A Claude Code plugin connects Claude Code without editing its settings, and steps aside for entries that do.**
+`/plugin install airbag@airbag` (the marketplace is this repository) gives Claude Code the same four hooks Airbag
+writes into `~/.claude/settings.json`, plus `/airbag:undo`, `/airbag:changes` and `/airbag:status`. The plugin carries
+no binary: `scripts/airbag-hook` runs the app's `airbag` from the places the app and the cask put it, and without one
+answers `{}` (and at session start says how to install Airbag), so a plugin installed before the app never stands in
+the way. Claude Code runs a plugin's hooks and the settings file's side by side, in parallel, for every tool call,
+and two runs of the same check would both take a snapshot and could both record the command, or turn a lock wait
+into a spurious ask. So the wrapper sets `AIRBAG_HOOK_SOURCE=plugin`, and `airbag hook claude-code` then answers `{}`
+at once while the settings file Claude Code reads (`$CLAUDE_CONFIG_DIR/settings.json` or `~/.claude/settings.json`)
+has Airbag entries whose binary exists. The entries win because the app manages them: strict mode, repair and
+Disconnect act on them. `enabledPlugins` with `airbag@…` on makes Claude Code count as connected in Settings → Agents,
+onboarding and `airbag hooks status`; with no entries of its own there is nothing for Disconnect to remove, so the row
+says to turn the plugin off in Claude Code. The plugin's hooks fail open, as Claude Code's do by default; turning on
+strict mode writes Airbag's own entries, which then take over. Airbag 0.1.3 and older ignore the variable, so with
+both kinds of hook a command would be checked twice: the plugin is for 0.1.4 and later. Its skills run
+`airbag undo --dry-run`, `--list`, `log`, `guard` and `snapshots`, so Airbag's own reading commands now need no
+snapshot of the project.

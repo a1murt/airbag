@@ -1,0 +1,20 @@
+#!/bin/sh
+# Claude Code runs this for each hook event of Airbag's plugin (hooks/hooks.json); $1 names the event. It hands the
+# event to the Airbag app's command-line tool, which checks the command and snapshots the project before it runs.
+# AIRBAG_HOOK_SOURCE tells the tool the call comes from the plugin: when Airbag has also connected Claude Code itself
+# (Settings → Agents), those entries answer and this one steps aside, so a command is checked once (ADR-041).
+# AIRBAG_CLI may name another airbag binary to use.
+export AIRBAG_HOOK_SOURCE=plugin
+for bin in "${AIRBAG_CLI:-}" /Applications/Airbag.app/Contents/Helpers/airbag "$HOME/Applications/Airbag.app/Contents/Helpers/airbag" \
+    /opt/homebrew/bin/airbag /usr/local/bin/airbag; do
+    if [ -n "$bin" ] && [ -x "$bin" ]; then exec "$bin" hook claude-code; fi
+done
+
+# The app is not installed: no objection to anything, and one line when a session starts says how to get it.
+cat >/dev/null
+if [ "${1:-}" = "SessionStart" ]; then
+    printf '%s\n' '{"systemMessage":"Airbag plugin: the Airbag app is not installed, so nothing is snapshotted yet. Install it with: brew install --cask a1murt/airbag/airbag (or get the DMG from https://github.com/a1murt/airbag/releases)."}'
+else
+    printf '{}\n'
+fi
+exit 0

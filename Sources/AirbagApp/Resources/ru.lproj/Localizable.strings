@@ -28,6 +28,7 @@
 "Add Project…" = "Добавить проект…";
 "Add these entries to the file by hand." = "Добавьте эти записи в файл вручную.";
 "Add these entries to the file by hand:" = "Добавьте эти записи в файл вручную:";
+"Through the Airbag plugin for Claude Code. To disconnect, turn the plugin off in Claude Code (/plugin)." = "Через плагин Airbag для Claude Code. Чтобы отключить, выключите плагин в Claude Code (/plugin).";
 "added" = "добавлен";
 "After a command" = "После команды";
 "After restore" = "После восстановления";

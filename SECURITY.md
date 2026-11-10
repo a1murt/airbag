@@ -18,7 +18,10 @@ security boundary against a hostile agent, a malicious plugin, or malware runnin
   that is not valid JSON. GitHub Copilot CLI denies the shell command when the hook errors and runs it when the hook
   times out. Gemini CLI turns a non-zero exit other than 1 that prints text into a deny. So that deleting Airbag.app
   without disconnecting these two does not leave them refusing every command, their entries check that the binary
-  exists first and answer "no objection" when it is gone (ADR-039).
+  exists first and answer "no objection" when it is gone (ADR-039). The Claude Code plugin runs the same binary and
+  answers "no objection" when Airbag is not installed; while Airbag's own entries are in Claude Code's settings file,
+  the plugin's hooks step aside and those entries decide (ADR-041). Through the plugin alone, a failing hook lets
+  the command run; strict mode writes Airbag's own entries.
 - **Bypass.** An agent can always find a command the text analysis does not understand. That is why destructive
   commands inside the project are allowed only after a snapshot, and why the breaker reserves blocks for damage
   outside every snapshot. Known blind spots of the text analysis: scripts run by an interpreter (`python3 x.py`,
