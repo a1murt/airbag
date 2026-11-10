@@ -33,7 +33,7 @@
 "After restore" = "После восстановления";
 "Agents" = "Агенты";
 "Airbag adds one entry to each agent's settings file. A backup is kept, and Disconnect in Settings removes it exactly." = "Airbag добавит по одной записи в файл настроек каждого агента. Резервная копия сохраняется, а «Отключить» в Настройках удалит ровно эту запись.";
-"Airbag adds one line to each agent's settings file. A backup is kept." = "Airbag добавляет одну строку в файл настроек каждого агента. Резервная копия сохраняется.";
+"Airbag adds only its own hooks to each agent's settings file. A backup is kept." = "Airbag добавляет в файл настроек каждого агента только свои хуки. Резервная копия сохраняется.";
 "Airbag at %@ could not start: %@" = "Не удалось запустить Airbag по пути %@: %@";
 "Airbag at %@ did not block the test command." = "Airbag по пути %@ не заблокировал тестовую команду.";
 "Airbag can't read %@." = "Airbag не может прочитать %@.";

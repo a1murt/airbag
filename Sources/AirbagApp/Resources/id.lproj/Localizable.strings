@@ -33,7 +33,7 @@
 "After restore" = "Setelah pemulihan";
 "Agents" = "Agen";
 "Airbag adds one entry to each agent's settings file. A backup is kept, and Disconnect in Settings removes it exactly." = "Airbag menambahkan satu entri ke file pengaturan setiap agen. Cadangan tetap disimpan, dan Putuskan di Pengaturan menghapus entri itu dengan tepat.";
-"Airbag adds one line to each agent's settings file. A backup is kept." = "Airbag menambahkan satu baris ke file pengaturan setiap agen. Cadangan tetap disimpan.";
+"Airbag adds only its own hooks to each agent's settings file. A backup is kept." = "Airbag hanya menambahkan hook miliknya sendiri ke file pengaturan setiap agen. Cadangan tetap disimpan.";
 "Airbag at %@ could not start: %@" = "Airbag di %@ tidak dapat dimulai: %@";
 "Airbag at %@ did not block the test command." = "Airbag di %@ tidak memblokir perintah uji.";
 "Airbag can't read %@." = "Airbag tidak dapat membaca %@.";

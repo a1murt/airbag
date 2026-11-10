@@ -33,7 +33,7 @@
 "After restore" = "Depois da restauração";
 "Agents" = "Agentes";
 "Airbag adds one entry to each agent's settings file. A backup is kept, and Disconnect in Settings removes it exactly." = "O Airbag adiciona uma entrada ao arquivo de configurações de cada agente. Um backup é mantido, e Desconectar nos Ajustes remove exatamente essa entrada.";
-"Airbag adds one line to each agent's settings file. A backup is kept." = "O Airbag adiciona uma linha ao arquivo de configurações de cada agente. Um backup é mantido.";
+"Airbag adds only its own hooks to each agent's settings file. A backup is kept." = "O Airbag adiciona apenas seus próprios hooks ao arquivo de configurações de cada agente. Um backup é mantido.";
 "Airbag at %@ could not start: %@" = "O Airbag em %@ não pôde ser iniciado: %@";
 "Airbag at %@ did not block the test command." = "O Airbag em %@ não bloqueou o comando de teste.";
 "Airbag can't read %@." = "O Airbag não consegue ler %@.";

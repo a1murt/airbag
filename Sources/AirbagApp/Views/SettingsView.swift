@@ -196,7 +196,7 @@ private struct AgentsPane: View {
                     Spacer(minLength: 0)
                 }
             } footer: {
-                Footer(Text("Airbag adds one line to each agent's settings file. A backup is kept."))
+                Footer(Text("Airbag adds only its own hooks to each agent's settings file. A backup is kept."))
             }
             Section {
                 Picker("When a snapshot can't undo a command",

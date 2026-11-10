@@ -33,7 +33,7 @@
 "After restore" = "복원 후";
 "Agents" = "에이전트";
 "Airbag adds one entry to each agent's settings file. A backup is kept, and Disconnect in Settings removes it exactly." = "Airbag은 각 에이전트의 설정 파일에 항목을 하나 추가합니다. 백업이 보관되며, 설정에서 연결 해제를 누르면 그 항목만 정확히 제거됩니다.";
-"Airbag adds one line to each agent's settings file. A backup is kept." = "Airbag은 각 에이전트의 설정 파일에 한 줄을 추가합니다. 백업이 보관됩니다.";
+"Airbag adds only its own hooks to each agent's settings file. A backup is kept." = "Airbag은 각 에이전트의 설정 파일에 자체 훅만 추가합니다. 백업이 보관됩니다.";
 "Airbag at %@ could not start: %@" = "%@에 있는 Airbag을 시작할 수 없음: %@";
 "Airbag at %@ did not block the test command." = "%@에 있는 Airbag이 테스트 명령을 차단하지 않았습니다.";
 "Airbag can't read %@." = "Airbag이 %@ 파일을 읽을 수 없습니다.";

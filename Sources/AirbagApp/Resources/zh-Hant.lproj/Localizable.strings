@@ -33,7 +33,7 @@
 "After restore" = "回復後";
 "Agents" = "代理程式";
 "Airbag adds one entry to each agent's settings file. A backup is kept, and Disconnect in Settings removes it exactly." = "Airbag 會在每個代理程式的設定檔中加入一個項目並保留備份；之後在「設定」裡中斷連接時，只會精確移除這個項目。";
-"Airbag adds one line to each agent's settings file. A backup is kept." = "Airbag 會在每個代理程式的設定檔中加入一行，並保留備份。";
+"Airbag adds only its own hooks to each agent's settings file. A backup is kept." = "Airbag 只會在每個代理程式的設定檔中加入自己的 hook，並保留備份。";
 "Airbag at %@ could not start: %@" = "位於 %@ 的 Airbag 無法啟動：%@";
 "Airbag at %@ did not block the test command." = "位於 %@ 的 Airbag 未阻擋測試指令。";
 "Airbag can't read %@." = "Airbag 無法讀取 %@。";

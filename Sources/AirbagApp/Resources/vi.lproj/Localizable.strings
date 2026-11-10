@@ -33,7 +33,7 @@
 "After restore" = "Sau khi khôi phục";
 "Agents" = "Agent";
 "Airbag adds one entry to each agent's settings file. A backup is kept, and Disconnect in Settings removes it exactly." = "Airbag thêm một mục vào tệp cài đặt của mỗi agent. Bản sao lưu được giữ lại, và Ngắt kết nối trong Cài đặt sẽ gỡ đúng mục đó.";
-"Airbag adds one line to each agent's settings file. A backup is kept." = "Airbag thêm một dòng vào tệp cài đặt của mỗi agent. Bản sao lưu được giữ lại.";
+"Airbag adds only its own hooks to each agent's settings file. A backup is kept." = "Airbag chỉ thêm các hook của riêng mình vào tệp cài đặt của mỗi agent. Bản sao lưu được giữ lại.";
 "Airbag at %@ could not start: %@" = "Không thể khởi động Airbag tại %@: %@";
 "Airbag at %@ did not block the test command." = "Airbag tại %@ đã không chặn lệnh kiểm tra.";
 "Airbag can't read %@." = "Airbag không thể đọc %@.";

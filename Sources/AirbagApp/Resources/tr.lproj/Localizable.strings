@@ -33,7 +33,7 @@
 "After restore" = "Geri yüklemeden sonra";
 "Agents" = "Ajanlar";
 "Airbag adds one entry to each agent's settings file. A backup is kept, and Disconnect in Settings removes it exactly." = "Airbag her ajanın ayar dosyasına tek bir girdi ekler. Bir yedek saklanır ve Ayarlar'daki Bağlantıyı Kes düğmesi bu girdiyi eksiksiz kaldırır.";
-"Airbag adds one line to each agent's settings file. A backup is kept." = "Airbag her ajanın ayar dosyasına tek bir satır ekler. Bir yedek saklanır.";
+"Airbag adds only its own hooks to each agent's settings file. A backup is kept." = "Airbag her ajanın ayar dosyasına yalnızca kendi hook'larını ekler. Bir yedek saklanır.";
 "Airbag at %@ could not start: %@" = "%@ konumundaki Airbag başlatılamadı: %@";
 "Airbag at %@ did not block the test command." = "%@ konumundaki Airbag test komutunu engellemedi.";
 "Airbag can't read %@." = "Airbag %@ dosyasını okuyamıyor.";

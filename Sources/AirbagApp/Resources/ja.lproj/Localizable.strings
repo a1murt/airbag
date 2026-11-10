@@ -33,7 +33,7 @@
 "After restore" = "復元後";
 "Agents" = "エージェント";
 "Airbag adds one entry to each agent's settings file. A backup is kept, and Disconnect in Settings removes it exactly." = "Airbagは各エージェントの設定ファイルに項目を1つ追加します。バックアップが保存され、設定の「接続解除」でその項目だけを取り除けます。";
-"Airbag adds one line to each agent's settings file. A backup is kept." = "Airbagは各エージェントの設定ファイルに1行追加します。バックアップが保存されます。";
+"Airbag adds only its own hooks to each agent's settings file. A backup is kept." = "Airbagは各エージェントの設定ファイルに自身のフックだけを追加します。バックアップが保存されます。";
 "Airbag at %@ could not start: %@" = "%@にあるAirbagを起動できませんでした：%@";
 "Airbag at %@ did not block the test command." = "%@にあるAirbagがテストコマンドをブロックしませんでした。";
 "Airbag can't read %@." = "Airbagは%@を読み込めません。";

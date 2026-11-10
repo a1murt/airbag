@@ -33,7 +33,7 @@
 "After restore" = "Қалпына келтіруден кейін";
 "Agents" = "Агенттер";
 "Airbag adds one entry to each agent's settings file. A backup is kept, and Disconnect in Settings removes it exactly." = "Airbag әр агенттің параметрлер файлына бір жазба қосады. Сақтық көшірмесі сақталады, ал Параметрлердегі «Ажырату» тек сол жазбаны өшіреді.";
-"Airbag adds one line to each agent's settings file. A backup is kept." = "Airbag әр агенттің параметрлер файлына бір жол қосады. Сақтық көшірмесі сақталады.";
+"Airbag adds only its own hooks to each agent's settings file. A backup is kept." = "Airbag әр агенттің параметрлер файлына тек өз хуктарын қосады. Сақтық көшірмесі сақталады.";
 "Airbag at %@ could not start: %@" = "Airbag (%@) іске қосылмады: %@";
 "Airbag at %@ did not block the test command." = "Airbag (%@) сынақ командасын бұғаттамады.";
 "Airbag can't read %@." = "Airbag %@ файлын оқи алмайды.";

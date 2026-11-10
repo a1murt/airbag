@@ -33,7 +33,7 @@
 "After restore" = "रीस्टोर के बाद";
 "Agents" = "एजेंट";
 "Airbag adds one entry to each agent's settings file. A backup is kept, and Disconnect in Settings removes it exactly." = "Airbag हर एजेंट की सेटिंग फ़ाइल में एक एंट्री जोड़ता है। बैकअप रखा जाता है, और सेटिंग में “डिस्कनेक्ट करें” ठीक उसी एंट्री को हटाता है।";
-"Airbag adds one line to each agent's settings file. A backup is kept." = "Airbag हर एजेंट की सेटिंग फ़ाइल में एक लाइन जोड़ता है। बैकअप रखा जाता है।";
+"Airbag adds only its own hooks to each agent's settings file. A backup is kept." = "Airbag हर एजेंट की सेटिंग फ़ाइल में केवल अपने हुक जोड़ता है। बैकअप रखा जाता है।";
 "Airbag at %@ could not start: %@" = "Airbag (%@) शुरू नहीं हो सका: %@";
 "Airbag at %@ did not block the test command." = "Airbag (%@) ने टेस्ट कमांड ब्लॉक नहीं की।";
 "Airbag can't read %@." = "Airbag %@ को पढ़ नहीं सकता।";

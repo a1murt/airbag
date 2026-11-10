@@ -33,7 +33,7 @@
 "After restore" = "恢复后";
 "Agents" = "智能体";
 "Airbag adds one entry to each agent's settings file. A backup is kept, and Disconnect in Settings removes it exactly." = "Airbag 会在每个智能体的设置文件中添加一个条目并保留备份；之后在“设置”里断开连接时，只会精确移除这个条目。";
-"Airbag adds one line to each agent's settings file. A backup is kept." = "Airbag 会在每个智能体的设置文件中添加一行，并保留备份。";
+"Airbag adds only its own hooks to each agent's settings file. A backup is kept." = "Airbag 只会在每个智能体的设置文件中添加自己的 hook，并保留备份。";
 "Airbag at %@ could not start: %@" = "位于 %@ 的 Airbag 无法启动：%@";
 "Airbag at %@ did not block the test command." = "位于 %@ 的 Airbag 未拦截测试命令。";
 "Airbag can't read %@." = "Airbag 无法读取 %@。";
