@@ -1,7 +1,7 @@
 {
   "name": "airbag",
   "displayName": "Airbag",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "Undo for Claude Code: Airbag snapshots your project before each shell command that can change files and checks the command first, so a deleted folder, a git reset --hard or a wiped .env is one command back. Needs the Airbag app for macOS (brew install --cask a1murt/airbag/airbag).",
   "author": {
     "name": "Alnur Kengesbay",
