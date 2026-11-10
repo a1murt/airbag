@@ -52,7 +52,9 @@ security boundary against a hostile agent, a malicious plugin, or malware runnin
   protecting (Stop Protecting…), needs none.
 - **Data at rest.** Snapshots are copies of project files, including `.env` and other secrets. They live in
   `~/Library/Application Support/Airbag` with 0700/0600 permissions and are excluded from Time Machine and
-  Spotlight. Anyone who can read your home folder can read them.
+  Spotlight. Anyone who can read your home folder can read them. The snapshots of a folder that no longer exists are
+  deleted 30 days after it was last seen (3 days for temporary folders and agent worktrees), unless one is pinned;
+  `airbag cleanup` deletes them on request.
 - **Data in the registry.** Command lines are stored after masking token-like secrets; command output is never
   stored. Environment variables of other processes are read only for a fixed allowlist of agent markers.
 - **Signals.** The radar only signals processes of the same user after re-validating `(pid, start time)`, never

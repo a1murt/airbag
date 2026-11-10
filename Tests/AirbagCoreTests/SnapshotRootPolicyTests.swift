@@ -217,3 +217,120 @@ import Testing
         #expect(try SnapshotStore.open(root: h.root, paths: h.paths).limits == nil)
     }
 }
+
+/// Stores that outlive their folder (ADR-040): kept for a grace period, then deleted by retention.
+@Suite(.serialized) struct StoreCleanupTests {
+    let day: Int64 = 86_400_000
+    let t0: Int64 = 1_800_000_000_000
+
+    /// A sandbox with one snapshot, and the location of its store.
+    func seeded(_ label: String) throws -> (Sandbox, StoreLocation) {
+        let sb = Sandbox(label)
+        sb.write("a.txt", "v1")
+        _ = try sb.store().snapshot(SnapshotRequest(trigger: .manual))
+        return (sb, try #require(SnapshotStore.allStores(paths: sb.paths).first))
+    }
+
+    /// Makes a store belong to another folder, as if it had been made for it.
+    func retarget(_ loc: StoreLocation, to root: String) throws {
+        var meta = try #require(JSONSerialization.jsonObject(with: Data(contentsOf: URL(fileURLWithPath: loc.directory + "/store.json"))) as? [String: Any])
+        meta["root"] = root
+        try JSONSerialization.data(withJSONObject: meta).write(to: URL(fileURLWithPath: loc.directory + "/store.json"))
+    }
+
+    @Test func whereFoldersComeAndGo() {
+        let home = "/Users/u"
+        for p in ["/private/tmp/claude-501/x/scratchpad/repo", "/tmp/build", "/private/var/folders/ab/T/x",
+                  "/Users/u/Library/Application Support/Claude/scratch-workspaces/a/b/scratch-1",
+                  "/Users/u/Work/app/.claude/worktrees/agent-1", "/Users/u/.codex/worktrees/3f9a/app/.codex/worktrees/x"] {
+            #expect(StoreCleanup.isEphemeral(p, home: home), "\(p)")
+        }
+        for p in ["/Users/u/Work/app", "/Users/u/Documents/thesis", "/Volumes/External/project", "/Users/u/Work/tmp/app"] {
+            #expect(!StoreCleanup.isEphemeral(p, home: home), "\(p)")
+        }
+    }
+
+    @Test func aStoreOutlivesATemporaryFolderByThreeDays() throws {
+        let (sb, _) = try seeded("gone"); defer { sb.cleanup() }
+        // While the folder exists nothing is noted or deleted.
+        #expect(StoreCleanup.sweep(paths: sb.paths, nowMs: t0).stores == 0)
+        #expect(StoreCleanup.candidates(paths: sb.paths, nowMs: t0).isEmpty)
+        try FileManager.default.removeItem(atPath: sb.root)
+        // First seen missing: noted and kept, since its snapshots can still bring the folder back.
+        #expect(StoreCleanup.sweep(paths: sb.paths, nowMs: t0).stores == 0)
+        let c = try #require(StoreCleanup.candidates(paths: sb.paths, nowMs: t0 + 2 * day).first)
+        #expect(c.reason == .missing && c.missingSince == t0 && !c.due)
+        #expect(StoreCleanup.sweep(paths: sb.paths, nowMs: t0 + 2 * day).stores == 0)
+        // The folder comes back, then goes again: the count starts over.
+        try FileManager.default.createDirectory(atPath: sb.root, withIntermediateDirectories: true)
+        #expect(StoreCleanup.sweep(paths: sb.paths, nowMs: t0 + 2 * day).stores == 0)
+        try FileManager.default.removeItem(atPath: sb.root)
+        #expect(StoreCleanup.sweep(paths: sb.paths, nowMs: t0 + 4 * day).stores == 0)
+        #expect(StoreCleanup.sweep(paths: sb.paths, nowMs: t0 + 6 * day).stores == 0)
+        let swept = StoreCleanup.sweep(paths: sb.paths, nowMs: t0 + 7 * day + 1)
+        #expect(swept.stores == 1 && swept.bytes > 0)
+        #expect(SnapshotStore.allStores(paths: sb.paths).isEmpty)
+    }
+
+    @Test func aProjectFolderGetsThirtyDaysAndRetentionDoesTheSweep() throws {
+        let (sb, loc) = try seeded("gone"); defer { sb.cleanup() }
+        try retarget(loc, to: "/Users/airbag-test-nobody/Work/app-\(ULID.make())")
+        #expect(Retention.run(paths: sb.paths, nowMs: t0).deletedStores == 0)
+        #expect(Retention.run(paths: sb.paths, nowMs: t0 + 29 * day).deletedStores == 0)
+        #expect(SnapshotStore.allStores(paths: sb.paths).count == 1)
+        let report = Retention.run(paths: sb.paths, nowMs: t0 + 30 * day)
+        #expect(report.deletedStores == 1 && report.freedBytes > 0)
+        #expect(SnapshotStore.allStores(paths: sb.paths).isEmpty)
+    }
+
+    @Test func aPinnedSnapshotKeepsItsStoreForGood() throws {
+        let (sb, _) = try seeded("gone"); defer { sb.cleanup() }
+        let store = try sb.store()
+        try store.pin(try #require(try store.latest()).id)
+        try FileManager.default.removeItem(atPath: sb.root)
+        #expect(StoreCleanup.sweep(paths: sb.paths, nowMs: t0).stores == 0)
+        #expect(StoreCleanup.sweep(paths: sb.paths, nowMs: t0 + 400 * day).stores == 0)
+        let c = try #require(StoreCleanup.candidates(paths: sb.paths, nowMs: t0 + 400 * day).first)
+        #expect(c.pinned == 1 && !c.due)
+    }
+
+    @Test func anUnpluggedVolumeIsNotAMissingFolder() throws {
+        let (sb, loc) = try seeded("gone"); defer { sb.cleanup() }
+        try retarget(loc, to: "/Volumes/AirbagNoSuchVolume-\(ULID.make())/project")
+        #expect(StoreCleanup.sweep(paths: sb.paths, nowMs: t0).stores == 0)
+        #expect(StoreCleanup.sweep(paths: sb.paths, nowMs: t0 + 400 * day).stores == 0)
+        #expect(StoreCleanup.candidates(paths: sb.paths, nowMs: t0 + 400 * day).isEmpty)
+        #expect(!FileManager.default.fileExists(atPath: loc.directory + "/missing-since"))
+    }
+
+    @Test func aRefusedFoldersOldStoreWaitsForCleanup() throws {
+        let (sb, loc) = try seeded("gone"); defer { sb.cleanup() }
+        // A folder that exists and is never a root (ADR-032): its store was made by an older version.
+        let refused = try #require(FileSystem.canonicalPath(NSTemporaryDirectory()))
+        try retarget(loc, to: refused)
+        #expect(StoreCleanup.sweep(paths: sb.paths, nowMs: t0 + 400 * day).stores == 0)
+        let c = try #require(StoreCleanup.candidates(paths: sb.paths, nowMs: t0).first)
+        #expect(c.reason == .refused && !c.due)
+        let home = sb.paths.home.path
+        // A preview deletes nothing; a misspelled option runs nothing.
+        let preview = airbagCLI(["cleanup", "--dry-run"], home: home)
+        #expect(preview.status == 0 && preview.output.contains("would delete 1 store(s)") && preview.output.contains("no longer snapshotted"), "\(preview)")
+        #expect(airbagCLI(["cleanup", "--dryrun"], home: home).status == 64)
+        #expect(SnapshotStore.allStores(paths: sb.paths).count == 1)
+        let done = airbagCLI(["cleanup"], home: home)
+        #expect(done.status == 0 && done.output.contains("deleted 1 store(s)"), "\(done)")
+        #expect(SnapshotStore.allStores(paths: sb.paths).isEmpty)
+    }
+
+    @Test func cleanupKeepsAFolderGoneOnlyRecentlyUnlessAsked() throws {
+        let (sb, _) = try seeded("gone"); defer { sb.cleanup() }
+        try FileManager.default.removeItem(atPath: sb.root)
+        let home = sb.paths.home.path
+        let kept = airbagCLI(["cleanup"], home: home)
+        #expect(kept.status == 0 && kept.output.contains("deleted 0 store(s)") && kept.output.contains("kept 1 store(s)"), "\(kept)")
+        #expect(SnapshotStore.allStores(paths: sb.paths).count == 1)
+        let done = airbagCLI(["cleanup", "--missing", "--json"], home: home)
+        #expect(done.status == 0 && (decode(done.output)["deleted"] as? [[String: Any]])?.first?["reason"] as? String == "missing", "\(done)")
+        #expect(SnapshotStore.allStores(paths: sb.paths).isEmpty)
+    }
+}

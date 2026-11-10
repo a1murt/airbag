@@ -11,6 +11,7 @@ enum CLI {
         ("restore", "restore the project or --path entries to a snapshot (never deletes; undoable)", SnapshotCommands.restore),
         ("pin", "keep a snapshot forever (--off to unpin)", SnapshotCommands.pin),
         ("prune", "apply retention (--all, --days, --keep, --max, --dry-run)", SnapshotCommands.prune),
+        ("cleanup", "delete the stores of folders that are long gone or no longer snapshotted (--missing, --dry-run)", SnapshotCommands.cleanup),
         ("export", "write a snapshot's files into an empty directory", SnapshotCommands.export),
         ("usage", "disk usage of all snapshot stores", SnapshotCommands.usage),
         ("check", "show what the circuit breaker decides for a shell command (--cwd, --root)", GuardCommands.check),

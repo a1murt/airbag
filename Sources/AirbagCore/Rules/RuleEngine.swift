@@ -1096,6 +1096,10 @@ struct Analyzer {
                argv.contains(where: { $0 == "--command" || $0.hasPrefix("--command=") || $0 == "--home" || $0.hasPrefix("--home=") }) {
                 add("self.hooks", .ask, .none, "it points the agents' hooks at another program, which can switch Airbag's protection off.", whole)
             }
+            // Deleting snapshots is the user's call: an agent pruning or cleaning up removes what could undo its commands.
+            if ["prune", "cleanup"].contains(argv.first ?? ""), !preview {
+                add("self.airbag", .ask, .none, "it deletes Airbag's snapshots; only the user should do that.", whole)
+            }
             if argv.first == "allow" {
                 add("self.allow", .block, .none, "only the user can approve a command Airbag stopped (menu bar → Guard → Allow once); an agent approving its own command makes the question meaningless.", whole)
             }

@@ -143,6 +143,8 @@ public struct PruneReport: Sendable, Codable {
     public var deletedChanges = 0
     public var deletedObjects = 0
     public var freedBytes: Int64 = 0
+    /// Whole stores deleted because their folder has been gone past its grace period (ADR-040).
+    public var deletedStores = 0
 }
 
 public struct StoreUsage: Sendable, Codable {

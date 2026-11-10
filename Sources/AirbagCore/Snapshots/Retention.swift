@@ -1,12 +1,16 @@
 import Foundation
 
 public enum Retention {
-    /// Applies the per-store policy to every store, then a global byte budget split across stores in proportion to
-    /// their size. Stores whose project folder is gone are pruned too (their snapshots can still restore it).
+    /// Deletes the stores of folders gone past their grace period (ADR-040), applies the per-store policy to every other
+    /// store, then a global byte budget split across stores in proportion to their size. Stores whose project folder is
+    /// gone are pruned too while they are kept (their snapshots can still restore it).
     @discardableResult
     public static func run(paths: AirbagPaths = .resolve(), policy: RetentionPolicy = RetentionPolicy(),
                            globalBudgetBytes: Int64 = 5 << 30, nowMs: Int64 = Clock.nowMsInt(), registry: Registry? = nil) -> PruneReport {
         var total = PruneReport()
+        let swept = StoreCleanup.sweep(paths: paths, nowMs: nowMs, registry: registry)
+        total.deletedStores = swept.stores
+        total.freedBytes = swept.bytes
         var stores: [SnapshotStore] = []
         for loc in SnapshotStore.allStores(paths: paths) {
             guard let s = try? SnapshotStore.openLocation(loc, paths: paths) else { continue }
@@ -34,6 +38,7 @@ extension PruneReport {
     mutating func merge(_ r: PruneReport) {
         deletedSnapshots += r.deletedSnapshots; deletedChanges += r.deletedChanges
         deletedObjects += r.deletedObjects; freedBytes += r.freedBytes
+        deletedStores += r.deletedStores
     }
 }
 

@@ -134,6 +134,36 @@ enum SnapshotCommands {
         return 0
     }
 
+    /// airbag cleanup [--missing] [--dry-run] [--json] — deletes whole stores Airbag no longer uses (ADR-040): those of
+    /// folders it refuses as roots today, and those of folders gone past their grace period (`--missing`: gone at all).
+    /// A store with a pinned snapshot is kept.
+    static func cleanup(_ argv: [String]) throws -> Int32 {
+        let a = try Args(argv, valueOptions: [], flags: ["missing", "dry-run", "json"])
+        guard a.positionals.isEmpty else { throw CLIError.usage("usage: airbag cleanup [--missing] [--dry-run] [--json]") }
+        let all = StoreCleanup.candidates()
+        let chosen = all.filter { $0.pinned == 0 && ($0.reason == .refused || $0.due || a.has("missing")) }
+        let registry = a.has("dry-run") ? nil : try? Registry(paths: .resolve(), role: .cli)
+        var rows: [[String: Any]] = []
+        var total: Int64 = 0
+        for c in chosen {
+            let bytes: Int64
+            if a.has("dry-run") { bytes = StoreCleanup.directoryBytes(c.location.directory) } else {
+                do { bytes = try StoreCleanup.delete(c.location, registry: registry) } catch { Out.err("airbag cleanup: \(c.location.root): \(error)"); continue }
+            }
+            total += bytes
+            rows.append(["root": c.location.root, "reason": c.reason.rawValue, "bytes": bytes])
+        }
+        let kept = all.count - chosen.count
+        if a.has("json") { Out.json(["deleted": a.has("dry-run") ? [] : rows, "wouldDelete": a.has("dry-run") ? rows : [], "bytes": total, "kept": kept]); return 0 }
+        print("\(a.has("dry-run") ? "would delete" : "deleted") \(rows.count) store(s), \(Out.bytes(total))")
+        for r in rows {
+            let why = r["reason"] as? String == "refused" ? "no longer snapshotted" : "folder gone"
+            print("  \(r["root"] ?? "")  (\(why), \(Out.bytes(r["bytes"] as? Int64 ?? 0)))")
+        }
+        if kept > 0 { print("kept \(kept) store(s) of folders gone only recently or with pinned snapshots (--missing deletes the unpinned ones now)") }
+        return 0
+    }
+
     static func export(_ argv: [String]) throws -> Int32 {
         let a = try Args(argv, valueOptions: valueOptions, flags: [])
         guard a.positionals.count == 2 else { throw CLIError.usage("usage: airbag export <snapshot-id> <dest-dir> [--path P ...]") }
@@ -168,7 +198,7 @@ enum SnapshotCommands {
         for r in rows {
             let root = r["root"] as? String ?? "?"
             if r["refused"] as? Bool == true {
-                print("\(root)  (not a project folder; Airbag no longer snapshots it — its store, \(Out.bytes(r["storeBytes"] as? Int64 ?? 0)), can be deleted: \(r["store"] ?? ""))")
+                print("\(root)  (not a project folder; Airbag no longer snapshots it — `airbag cleanup` deletes its store, \(Out.bytes(r["storeBytes"] as? Int64 ?? 0)))")
                 continue
             }
             if r["rootExists"] as? Bool == false { print("\(root)  (folder missing — restorable with `airbag restore <id> --root \"\(root)\"`)"); continue }
@@ -177,14 +207,7 @@ enum SnapshotCommands {
         return 0
     }
 
-    /// Bytes a directory takes on disk (a refused store the user may delete).
-    static func directoryBytes(_ path: String) -> Int64 {
-        let key = URLResourceKey.totalFileAllocatedSizeKey
-        guard let en = FileManager.default.enumerator(at: URL(fileURLWithPath: path), includingPropertiesForKeys: [key]) else { return 0 }
-        var total: Int64 = 0
-        for case let url as URL in en { total += Int64((try? url.resourceValues(forKeys: [key]).totalFileAllocatedSize) ?? 0) }
-        return total
-    }
+    static func directoryBytes(_ path: String) -> Int64 { StoreCleanup.directoryBytes(path) }
 
     static func symbol(_ s: ChangeStatus) -> String {
         switch s {

@@ -251,7 +251,12 @@ deletes its oldest unpinned snapshots beyond the newest 20, in batches, until it
 removes `aside/` folders of restores older than the age limit.
 
 Prune runs in the app 30 s after launch and then hourly, over every store it can open, including stores whose
-project folder is gone; Settings → Clean Up Now runs the same pass. `airbag prune` runs it on demand for one store,
+project folder is gone; Settings → Clean Up Now runs the same pass. The pass starts with the stores that have
+outlived their folder (ADR-040): the first time a root is found missing the store gets a `missing-since` file, and
+once the folder has been gone for 30 days (3 days below `/private/tmp`, `/private/var`, `~/Library` or in an agent
+worktree folder) the whole store is deleted, unless a snapshot in it is pinned or the root is on a volume that is not
+mounted. A folder that comes back clears the file. `airbag cleanup` deletes the stores that are due, and those of
+folders Airbag refuses as roots today (§5); `--missing` also deletes the ones still inside their grace period. `airbag prune` runs it on demand for one store,
 or with `--all` for every store whose folder exists (`--days`, `--keep`, `--max`, `--dry-run`); it applies the age
 and count limits but not the byte budget. Hooks and `airbag snapshot` never prune.
 

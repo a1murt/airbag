@@ -2708,6 +2708,40 @@
    "rule": "self.airbag"
   },
   {
+   "cmd": "airbag cleanup",
+   "expect": {
+    "decision": "ask"
+   },
+   "rule": "self.airbag",
+   "why": "deleting snapshots is the user's call"
+  },
+  {
+   "cmd": "airbag cleanup --missing",
+   "expect": {
+    "decision": "ask"
+   },
+   "rule": "self.airbag"
+  },
+  {
+   "cmd": "airbag prune --all --days 0 --keep 0",
+   "expect": {
+    "decision": "ask"
+   },
+   "rule": "self.airbag"
+  },
+  {
+   "cmd": "airbag cleanup --dry-run",
+   "expect": {
+    "decision": "allow"
+   }
+  },
+  {
+   "cmd": "airbag prune --all --dry-run",
+   "expect": {
+    "decision": "allow"
+   }
+  },
+  {
    "cmd": "rm ~/.claude/settings.json",
    "expect": {
     "decision": "ask"

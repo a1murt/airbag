@@ -1308,7 +1308,7 @@ final class AppModel: ObservableObject {
         snapshotQueue.async {
             let reg = try? Registry(paths: paths, role: .app)
             let r = Retention.run(paths: paths, policy: policy, globalBudgetBytes: budget, registry: reg)
-            Log.shared.info("retention: deleted \(r.deletedSnapshots) snapshots, freed \(r.freedBytes) bytes")
+            Log.shared.info("retention: deleted \(r.deletedSnapshots) snapshots and \(r.deletedStores) stores of folders long gone, freed \(r.freedBytes) bytes")
             Task { @MainActor in self.refreshProjects() }
         }
         if let reg = registry { try? reg.db.execute("PRAGMA wal_checkpoint(PASSIVE)"); reg.ingestSpool(limit: 500) }

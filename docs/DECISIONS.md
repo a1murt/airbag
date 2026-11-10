@@ -244,3 +244,16 @@ helper too. Claude Code, Codex and Cursor keep their entries: they already fail 
 command string, so changing it would ask every user to trust it again. Entries an older version wrote are still
 recognised; `hooks install` (the cask's postflight on upgrade) and the app at launch rewrite them for these two
 agents, where user-level hooks need no new trust. Strict mode is unchanged: there a missing binary blocks, as asked.
+
+**ADR-040 A store outlives its folder for a grace period, not for good.** A store whose project folder is gone used
+to stay: its 20 newest snapshots are what brings a deleted folder back. With every agent worktree a root of its own
+(doc 12) and agents working in temporary folders, such stores pile up: on 2026-11-10 one Mac held 323 stores, 205 of
+them for folders that no longer existed, and the app opens every one on each refresh. Retention now deletes a store
+once its folder has been gone for 30 days, or 3 days where folders come and go (`/private/tmp`, `/private/var`,
+`~/Library`, `.claude/worktrees`, `.codex/worktrees`). The clock starts when retention first finds the folder
+missing (a `missing-since` file in the store) and starts over if the folder comes back. A pinned snapshot keeps its
+store for good, and a root on a volume that is not mounted is not missing. The stores of folders Airbag refuses as
+roots today (ADR-032, ADR-036) are still left alone while the folder exists; `airbag cleanup` deletes them, along
+with the stores that are due, and `--missing` the ones inside their grace period. Deleting snapshots is the user's
+call: an agent that runs `airbag cleanup` or `airbag prune` is asked first, like anything else that removes Airbag's
+protection (`self.airbag`, ADR-035).
