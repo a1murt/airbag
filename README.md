@@ -211,8 +211,8 @@ Airbag.app (menu bar): timeline · restore · Guard · Radar · snapshots after 
 | Snapshot of an unchanged 5k-file project † | **9–11 ms** |
 | Snapshot of an unchanged 50k-file project † | **116–184 ms** |
 | Restoring 100 files, 5k / 50k-file project † | **60 / 410 ms** |
-| Guard test cases, including an adversarial red-team set | **626** |
-| Automated tests, run in CI | **143** |
+| Guard test cases, including an adversarial red-team set | **639** |
+| Automated tests, run in CI | **159** |
 
 <sub>Apple M4, release build. Replay and hook times: 0.1.1, 2026-10-24; method, scripts and full results in
 [benchmarks](docs/BENCHMARKS.md). † From [design/10 §11](docs/design/10-snapshot-engine.md) (2026-10-18), not
@@ -237,6 +237,18 @@ Homebrew also puts the `airbag` command on your PATH, and `brew upgrade` keeps y
 open it. Releases are not notarized yet (there is no Developer ID), so macOS asks once on first launch:
 **System Settings → Privacy & Security → Open Anyway** (macOS 15 and later), or right-click Airbag → **Open** (macOS 14).
 </details>
+
+### Claude Code plugin
+
+```
+/plugin install airbag --marketplace a1murt/airbag
+```
+
+On Claude Code older than 2.1.275: `/plugin marketplace add a1murt/airbag`, then `/plugin install airbag@airbag`.
+The plugin connects Claude Code to Airbag without editing `~/.claude/settings.json` and adds `/airbag:undo`,
+`/airbag:changes` and `/airbag:status`. It needs the app (above), which takes the snapshots; until the app is installed
+the plugin stays out of the way and says how to get it. If Airbag has also connected Claude Code itself, the plugin's
+hooks step aside, so each command is checked once.
 
 <p align="center">
   <picture>
