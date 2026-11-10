@@ -66,64 +66,6 @@ struct Toast: Identifiable {
     var action: (@MainActor () -> Void)?
 }
 
-/// A moment that changed files, as the popover lists it: what changed it and whether it can be undone.
-struct RecentChange: Identifiable, Equatable {
-    var id: String { snapshotID }
-    let root: String
-    let snapshotID: String
-    let at: Int64
-    let trigger: SnapshotTrigger
-    var changedCount: Int
-    /// The shell command that made the changes (after-command snapshots only).
-    let command: String?
-    let agent: AgentKind?
-    let sessionTitle: String?
-    /// For a command that ran long enough for a file-change snapshot to land in the middle: the snapshot taken before
-    /// it. Its Undo then reverts everything between that snapshot and this one (as the Timeline row does).
-    var base: String?
-    var projectName: String { (root as NSString).lastPathComponent }
-
-    /// Recent changes of one project from its timeline (newest first). A command's after snapshot absorbs file-change
-    /// snapshots taken while it ran (back to the snapshot its before event points at), so Undo puts back all it did.
-    static func list(root: String, entries: [TimelineEntry]) -> [RecentChange] {
-        var out: [RecentChange] = []
-        var folded = Set<String>()
-        for (i, e) in entries.enumerated() where !folded.contains(e.id) {
-            guard var change = RecentChange(root: root, entry: e, hasPrevious: i + 1 < entries.count) else { continue }
-            if e.snapshot.trigger == .postCommand, let post = e.commands.last(where: { $0.kind == "post_shell" }),
-               let start = entries[(i + 1)...].firstIndex(where: { o in
-                   o.commands.contains { $0.kind == "pre_shell" && $0.command == post.command && $0.agentSessionID == post.agentSessionID }
-               }), start > i + 1 {
-                let between = entries[(i + 1)..<start]
-                if between.allSatisfy({ $0.snapshot.trigger == .fsevents && $0.commands.isEmpty }),
-                   e.snapshot.createdAt - entries[start].snapshot.createdAt < 15 * 60_000 {
-                    between.forEach { folded.insert($0.id) }
-                    change.base = entries[start].snapshot.id
-                    change.changedCount += between.map(\.snapshot.changedCount).reduce(0, +)
-                }
-            }
-            out.append(change)
-        }
-        return out
-    }
-
-    /// Nil for moments that changed nothing, cannot be undone (no earlier snapshot) or are Airbag's own (restores).
-    init?(root: String, entry: TimelineEntry, hasPrevious: Bool) {
-        let s = entry.snapshot
-        guard hasPrevious, s.changedCount > 0, [.postCommand, .preCommand, .fsevents].contains(s.trigger) else { return nil }
-        self.root = root
-        snapshotID = s.id
-        at = s.createdAt
-        trigger = s.trigger
-        changedCount = s.changedCount
-        let post = entry.commands.last { $0.kind == "post_shell" }
-        command = s.trigger == .postCommand ? (post ?? entry.commands.last)?.command : nil
-        let by = s.trigger == .fsevents ? nil : (post ?? entry.commands.last)
-        agent = by?.agent
-        sessionTitle = by?.sessionTitle
-    }
-}
-
 /// Windows the model can ask for (from a notification, a shortcut or the popover).
 enum WindowRequest: Equatable {
     case main(MainTab)
@@ -836,26 +778,18 @@ final class AppModel: ObservableObject {
     /// message offers Undo. The target is always found in the store, never from what a filtered list shows.
     @discardableResult
     func undoChanges(root: String, snapshot: String, paths only: [String]? = nil) async -> RestoreReport? {
-        await undo(root: root, moment: snapshot, paths: only) { s in
-            guard let info = try s.info(snapshot), let previous = try s.list(limit: 1, beforeSeq: info.seq).first else {
-                throw SnapshotError.notFound(snapshot)
-            }
-            return (previous.id, .paths(try only ?? s.changes(in: snapshot).map(\.path)), info.createdAt)
-        }
+        await undo(root: root, moment: snapshot, paths: only) { try UndoPlan.moment(snapshot, in: $0, paths: only) }
     }
 
     /// Undo of a command whose effect spans several snapshots (a file-change snapshot taken while it ran): the files that
     /// differ between `base` (before the command) and `effect` (after it) go back to `base`.
     @discardableResult
     func undoChanges(root: String, from base: String, to effect: String, paths only: [String]? = nil) async -> RestoreReport? {
-        await undo(root: root, moment: effect, paths: only) { s in
-            guard let info = try s.info(effect), try s.info(base) != nil else { throw SnapshotError.notFound(effect) }
-            return (base, .paths(try only ?? s.diff(from: base, to: effect).map(\.path)), info.createdAt)
-        }
+        await undo(root: root, moment: effect, paths: only) { try UndoPlan.span(from: base, to: effect, in: $0, paths: only) }
     }
 
     private func undo(root: String, moment: String, paths only: [String]?,
-                      _ plan: @escaping @Sendable (SnapshotStore) throws -> (target: String, scope: RestoreScope, at: Int64)) async -> RestoreReport? {
+                      _ plan: @escaping @Sendable (SnapshotStore) throws -> UndoPlan) async -> RestoreReport? {
         let at = OSAllocatedUnfairLock(initialState: Int64(0))
         let result = await performRestore(root: root) { s in
             let p = try plan(s)

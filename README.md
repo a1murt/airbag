@@ -279,6 +279,7 @@ airbag snapshot                        take a snapshot now
 airbag snapshots | log                 snapshots, and agent commands with the snapshot before each
 airbag changes ID                      files changed by a snapshot
 airbag diff FROM [TO] [--path F]       what changed (no TO = working tree)
+airbag undo [ID] [--list] [--dry-run]  put back what the newest change did, or a given one; undoable
 airbag restore ID [--path P]           restore; never deletes, undoable
 airbag check "<command>"               what Guard decides, and why (runs nothing)
 airbag guard | allow ID                flagged commands; let one waiting command run once (you, not the agent)

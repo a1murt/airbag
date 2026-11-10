@@ -38,6 +38,61 @@ func airbagCLI(_ args: [String], home: String) -> (status: Int32, output: String
         #expect(try count() == 3)
     }
 
+    @Test func undoPutsBackWhatTheLastAgentCommandChanged() throws {
+        let h = HookSandbox(); defer { h.cleanup() }
+        let home = h.paths.home.path
+        let command = "rm -rf src/legacy"
+        _ = h.run(.claudeCode, h.claudePre(command, id: "toolu_undo"))
+        func files() throws -> [String] {
+            try FileManager.default.subpathsOfDirectory(atPath: h.root + "/src/legacy").sorted().filter { p in
+                var isDir: ObjCBool = false
+                return FileManager.default.fileExists(atPath: h.root + "/src/legacy/" + p, isDirectory: &isDir) && !isDir.boolValue
+            }
+        }
+        let before = try files()
+        #expect(!before.isEmpty)
+        sh(command, cwd: h.root)
+        var post = h.claudePre(command, id: "toolu_undo")
+        post["hook_event_name"] = "PostToolUse"
+        post["tool_response"] = ["stdout": "", "stderr": "", "interrupted": false]
+        #expect(h.run(.claudeCode, post).snapshot?.trigger == .postCommand)
+
+        let listed = airbagCLI(["undo", "--list", "--root", h.root], home: home)
+        #expect(listed.status == 0 && listed.output.contains("`rm -rf src/legacy` (Claude Code"), "\(listed)")
+        // A preview changes nothing.
+        let preview = airbagCLI(["undo", "--dry-run", "--root", h.root], home: home)
+        #expect(preview.status == 0 && preview.output.contains("would undo `rm -rf src/legacy`"), "\(preview)")
+        #expect(!FileManager.default.fileExists(atPath: h.root + "/src/legacy"))
+
+        let done = airbagCLI(["undo", "--root", h.root, "--json"], home: home)
+        #expect(done.status == 0, "\(done)")
+        let json = decode(done.output)
+        #expect((json["undone"] as? [String: Any])?["command"] as? String == command)
+        #expect((json["restored"] as? [String])?.sorted() == before.map { "src/legacy/" + $0 })
+        #expect(try files() == before)
+        // The undo is a restore like any other: it can be undone, and running undo again finds nothing left to put back.
+        let undoSnapshot = try #require(json["undoSnapshot"] as? String)
+        let again = airbagCLI(["undo", "--root", h.root], home: home)
+        #expect(again.status == 0 && again.output.contains("nothing to put back"), "\(again)")
+        #expect(airbagCLI(["restore", undoSnapshot, "--root", h.root], home: home).status == 0)
+        #expect(!FileManager.default.fileExists(atPath: h.root + "/src/legacy/" + before[0]))
+    }
+
+    @Test func undoWithNothingToUndoSaysSoAndNeverCreatesAStore() throws {
+        let sb = Sandbox("cli"); defer { sb.cleanup() }
+        let home = sb.paths.home.path
+        // No store for this folder: an error, and none is made.
+        let none = airbagCLI(["undo", "--root", sb.root], home: home)
+        #expect(none.status != 0, "\(none)")
+        #expect(!SnapshotStore.storeExists(root: sb.root, paths: sb.paths))
+        // One snapshot and no change after it: nothing to undo.
+        sb.write("a.txt", "v1")
+        #expect(airbagCLI(["snapshot", "--root", sb.root], home: home).status == 0)
+        let r = airbagCLI(["undo", "--root", sb.root], home: home)
+        #expect(r.status == 0 && r.output.contains("nothing to undo"), "\(r)")
+        #expect(airbagCLI(["undo", "--root", sb.root, "--dryrun"], home: home).status == 64)
+    }
+
     @Test func helpAfterASubcommandOnlyPrintsHelp() throws {
         let sb = Sandbox("cli"); defer { sb.cleanup() }
         let home = sb.paths.home.path

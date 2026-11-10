@@ -7,6 +7,7 @@ enum CLI {
         ("snapshots", "list snapshots (--root, --limit)", SnapshotCommands.list),
         ("changes", "files changed by a snapshot", SnapshotCommands.changes),
         ("diff", "diff two snapshots or a snapshot and the working tree (--path for one file)", SnapshotCommands.diff),
+        ("undo", "put back what the newest change in this project did, or a given one (--list, --dry-run; never deletes)", UndoCommand.undo),
         ("restore", "restore the project or --path entries to a snapshot (never deletes; undoable)", SnapshotCommands.restore),
         ("pin", "keep a snapshot forever (--off to unpin)", SnapshotCommands.pin),
         ("prune", "apply retention (--all, --days, --keep, --max, --dry-run)", SnapshotCommands.prune),
