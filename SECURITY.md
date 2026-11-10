@@ -16,7 +16,9 @@ security boundary against a hostile agent, a malicious plugin, or malware runnin
   timeout, missing binary) is up to the agent. Claude Code, Codex and Cursor run the command anyway by default;
   strict mode makes Claude Code and Cursor block instead (Codex has no such switch). Cursor also blocks on a reply
   that is not valid JSON. GitHub Copilot CLI denies the shell command when the hook errors and runs it when the hook
-  times out. Gemini CLI turns a non-zero exit other than 1 that prints text into a deny.
+  times out. Gemini CLI turns a non-zero exit other than 1 that prints text into a deny. So that deleting Airbag.app
+  without disconnecting these two does not leave them refusing every command, their entries check that the binary
+  exists first and answer "no objection" when it is gone (ADR-039).
 - **Bypass.** An agent can always find a command the text analysis does not understand. That is why destructive
   commands inside the project are allowed only after a snapshot, and why the breaker reserves blocks for damage
   outside every snapshot. Known blind spots of the text analysis: scripts run by an interpreter (`python3 x.py`,

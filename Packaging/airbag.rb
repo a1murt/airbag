@@ -30,10 +30,10 @@ cask "airbag" do
     run "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "{{appdir}}/Airbag.app"], must_succeed: false
   end
 
-  # Remove Airbag's hook entries from every agent before the binary disappears: a hook pointing at a missing
-  # program fails open for most agents, but GitHub Copilot CLI denies every shell command when a hook errors.
-  # Homebrew runs this on upgrades as well, so the hooks are remembered and the postflight of the new version puts
-  # them back; after a real uninstall none is left pointing at the missing binary.
+  # Remove Airbag's hook entries from every agent before the binary disappears, so none is left pointing at a
+  # missing program (entries written before 0.1.4 make GitHub Copilot CLI and Gemini CLI refuse every shell command
+  # then). Homebrew runs this on upgrades as well, so the hooks are remembered and the postflight of the new version
+  # puts them back.
   uninstall quit:   "dev.airbag.Airbag",
             script: {
               executable:   "#{appdir}/Airbag.app/Contents/Helpers/airbag",

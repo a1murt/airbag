@@ -231,3 +231,16 @@ rules about the same harm share one, 67 in all), with the agent's reason, paths 
 English it shows the reason itself, which says more. Turned-off rules in Settings show the same sentence. A test
 fails when a rule id the rule engine or the hook can report has no sentence or a sentence belongs to no such rule,
 and `check-l10n.py` when a language lacks one. Agent-facing reasons stay English (ADR-031).
+
+**ADR-039 A deleted Airbag.app must not stop an agent.** Hooks point at the binary inside the app. Dragging the app
+to the Trash while agents are still connected leaves entries that fail: Claude Code, Codex and Cursor run the command
+anyway, but Copilot CLI denies every shell command when a hook errors and Gemini CLI turns the shell's "no such file"
+(exit 127 with text) into a deny, so both stop working until the user finds and removes the entries. For these two
+agents the entry is now a shell command, `[ -x BIN ] || { echo '{}'; exit 0; }; exec BIN hook …`: `{}` with exit 0
+is "no objection" for both, and with the binary present `exec` hands over stdin, output and exit status unchanged.
+Gemini CLI runs hook commands through `bash -c`; Copilot CLI's `bash` field replaces `exec` + `args`, which has no
+shell. The check lives in the entry and not in a helper script, because whatever removes the app can remove a
+helper too. Claude Code, Codex and Cursor keep their entries: they already fail open, and Codex trusts a hook by its
+command string, so changing it would ask every user to trust it again. Entries an older version wrote are still
+recognised; `hooks install` (the cask's postflight on upgrade) and the app at launch rewrite them for these two
+agents, where user-level hooks need no new trust. Strict mode is unchanged: there a missing binary blocks, as asked.

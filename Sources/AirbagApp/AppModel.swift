@@ -359,6 +359,7 @@ final class AppModel: ObservableObject {
     }
 
     var installer: HookInstaller { HookInstaller(command: cliPath) }
+    private var migratedHooks = false
 
     init(paths: AirbagPaths = .resolve(), demo: Bool = false) {
         self.paths = paths
@@ -1228,7 +1229,15 @@ final class AppModel: ObservableObject {
         guard !frozen else { return }
         let inst = installer
         let reg = workRegistry
+        // Once per launch: entries an older version wrote for Gemini CLI and Copilot CLI get this version's shape.
+        let migrate = !migratedHooks && !demo && installLocationProblem == nil
+        migratedHooks = true
+        let backups = paths.backups.path
         work.async {
+            if migrate {
+                let updated = inst.refreshOutdated(backupDirectory: backups)
+                if !updated.isEmpty { Log.shared.info("hooks: updated entries for \(updated.map(\.rawValue).joined(separator: ", "))") }
+            }
             let rows = AgentKind.allCases.map(inst.status)
             let last = reg?.lastHookEvents() ?? [:]
             Task { @MainActor in

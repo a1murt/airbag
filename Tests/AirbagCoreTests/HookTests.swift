@@ -727,6 +727,128 @@ func decode(_ s: String?) -> [String: Any] {
         #expect(back == foreign)
     }
 
+    /// Runs a hook's shell command the way Gemini CLI and Copilot CLI do (`bash -c`), with a payload on stdin.
+    func runShell(_ command: String, stdin: String = "{}") -> (status: Int32, out: String) {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/bin/bash")
+        p.arguments = ["-c", command]
+        let input = Pipe(), output = Pipe()
+        p.standardInput = input; p.standardOutput = output; p.standardError = Pipe()
+        try! p.run()
+        input.fileHandleForWriting.write(Data(stdin.utf8))
+        try? input.fileHandleForWriting.close()
+        let data = output.fileHandleForReading.readDataToEndOfFile()
+        p.waitUntilExit()
+        return (p.terminationStatus, String(decoding: data, as: UTF8.self))
+    }
+
+    func shellCommands(_ inst: HookInstaller, _ agent: AgentKind) -> [String] {
+        inst.desired(agent, strict: false).compactMap { e in
+            agent == .gemini ? e.group["hooks"]?.arrayValue?.first?["command"]?.stringValue : e.group["bash"]?.stringValue
+        }
+    }
+
+    @Test(arguments: [AgentKind.gemini, .copilot])
+    func aHookWhoseBinaryIsGoneAnswersNoObjection(_ agent: AgentKind) throws {
+        // Airbag.app dragged to the Trash with the agent still connected: these two agents refuse every command when
+        // a hook fails, so the entry itself must answer "{}" and exit 0.
+        let t = TempDir("gone"); defer { t.cleanup() }
+        let inst = HookInstaller(home: t.path, command: t.sub("My Apps/Airbag.app/Contents/Helpers/airbag"))
+        let commands = shellCommands(inst, agent)
+        #expect(commands.count == 4)
+        for c in commands {
+            let r = runShell(c, stdin: #"{"tool_name":"run_shell_command"}"#)
+            #expect(r.status == 0 && r.out == "{}\n", "\(c) → \(r)")
+        }
+    }
+
+    @Test(arguments: [AgentKind.gemini, .copilot])
+    func aGuardedHookRunsTheBinaryWithItsArgumentsAndInput(_ agent: AgentKind) throws {
+        let t = TempDir("guarded"); defer { t.cleanup() }
+        let bin = t.sub("My Apps/Airbag.app/Contents/Helpers/airbag")
+        t.write("My Apps/Airbag.app/Contents/Helpers/airbag", "#!/bin/sh\nprintf '%s|' \"$@\"\ncat\nexit 7\n", mode: 0o755)
+        let inst = HookInstaller(home: t.path, command: bin)
+        for c in shellCommands(inst, agent) {
+            let r = runShell(c, stdin: "PAYLOAD")
+            // The binary's own exit status and output pass through: Airbag's deny still denies.
+            #expect(r.status == 7 && r.out.hasPrefix("hook|\(agent.rawValue)|") && r.out.hasSuffix("PAYLOAD"), "\(c) → \(r)")
+        }
+    }
+
+    @Test func entriesOfAnOlderVersionAreRecognisedAndRefreshed() throws {
+        let (t, inst) = setup(); defer { t.cleanup() }
+        // What 0.1.3 wrote: a plain command for Gemini CLI, exec + args for Copilot CLI.
+        t.write(".gemini/settings.json", """
+        {
+          "theme": "dark",
+          "hooks": {
+            "BeforeTool": [
+              {
+                "matcher": "run_shell_command",
+                "hooks": [
+                  {
+                    "name": "airbag",
+                    "type": "command",
+                    "command": "/Applications/Airbag.app/Contents/Helpers/airbag hook gemini",
+                    "timeout": 20000
+                  },
+                  {
+                    "type": "command",
+                    "command": "./mine.sh"
+                  }
+                ]
+              }
+            ]
+          }
+        }
+
+        """)
+        t.write(".copilot/hooks/airbag.json", """
+        {
+          "version": 1,
+          "hooks": {
+            "preToolUse": [
+              {
+                "type": "command",
+                "matcher": "bash|powershell",
+                "exec": "/Applications/Airbag.app/Contents/Helpers/airbag",
+                "args": [
+                  "hook",
+                  "copilot",
+                  "preToolUse"
+                ],
+                "timeoutSec": 20
+              }
+            ]
+          }
+        }
+
+        """)
+        for agent in [AgentKind.gemini, .copilot] {
+            let before = inst.status(agent)
+            #expect(before.installed && !before.current && !before.staleCommand, "\(agent)")
+        }
+        #expect(inst.refreshOutdated(backupDirectory: t.sub("backups")) == [.gemini, .copilot])
+        #expect(inst.refreshOutdated(backupDirectory: t.sub("backups")).isEmpty)
+        let gemini = try #require(t.read(".gemini/settings.json"))
+        #expect(gemini.contains("./mine.sh") && gemini.contains("\"theme\": \"dark\""))
+        #expect(gemini.components(separatedBy: "exec /Applications/Airbag.app/Contents/Helpers/airbag hook gemini").count - 1 == 4)
+        #expect(!gemini.contains("\"command\": \"/Applications/Airbag.app/Contents/Helpers/airbag hook gemini\""))
+        let copilot = try #require(t.read(".copilot/hooks/airbag.json"))
+        #expect(!copilot.contains("\"exec\"") && copilot.components(separatedBy: "\"bash\"").count - 1 == 4)
+        for agent in [AgentKind.gemini, .copilot] {
+            let after = inst.status(agent)
+            #expect(after.installed && after.current && !after.staleCommand, "\(agent)")
+        }
+        // A guarded entry that points at another binary is still seen as stale, and as broken when that binary is gone.
+        let moved = HookInstaller(home: t.path, command: "/opt/homebrew/bin/airbag-elsewhere")
+        #expect(moved.status(.gemini).staleCommand && moved.status(.copilot).staleCommand)
+        #expect(inst.status(.gemini).brokenCommand == !FileManager.default.isExecutableFile(atPath: inst.command))
+        // Codex trusts hooks by their command string, and Claude Code and Cursor fail open: their entries keep their shape.
+        _ = try inst.install(.codex, backupDirectory: nil)
+        #expect(try #require(t.read(".codex/hooks.json")).contains("\"/Applications/Airbag.app/Contents/Helpers/airbag hook codex pre-bash\""))
+    }
+
     @Test func codexCommandStringIsQuotedWhenNeeded() throws {
         let t = TempDir("inst"); defer { t.cleanup() }
         let inst = HookInstaller(home: t.path, command: "/Users/x/My Apps/Airbag.app/Contents/Helpers/airbag")

@@ -102,7 +102,8 @@ record a fingerprint; uninstall removes only Airbag entries. Codex hooks additio
 - On the agent side, Claude Code, Codex and Cursor fail open by default (crash/timeout = command runs); Copilot CLI
   denies on a hook error (a timeout runs), Gemini CLI denies on a non-zero exit other than 1 that prints text (doc 11
   §4.4, §4.7). Strict mode (opt-in) sets `onFailure: block` (Claude ≥ 2.1.295) and `failClosed: true` (Cursor) on
-  the pre-shell hook only.
+  the pre-shell hook only. The Gemini CLI and Copilot CLI entries are shell commands that run the binary only while
+  it exists and print `{}` otherwise, so a deleted Airbag.app does not stop those agents (ADR-039).
 - `ask` without a registry never becomes allow: native ask where supported, otherwise deny with explanation.
 - A command whose verdict needs a snapshot (`snapshot: required`) and did not get a usable one becomes an ask
   (`snapshot.unavailable`), also when its verdict was already an ask; a `snapshot: recommended` command still runs.

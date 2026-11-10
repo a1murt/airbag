@@ -99,6 +99,12 @@ public struct HookInstaller {
         shellCommand + " hook " + agent.rawValue + (event.map { " " + $0 } ?? "")
     }
 
+    /// Shell form for the agents that refuse every command when a hook fails (Gemini CLI, Copilot CLI): once the binary
+    /// is gone (Airbag.app dragged to the Trash without Disconnect) the hook answers "no objection" instead of failing.
+    func guardedCmd(_ agent: AgentKind, _ event: String?) -> String {
+        "[ -x \(shellCommand) ] || { echo '{}'; exit 0; }; exec \(cmd(agent, event))"
+    }
+
     typealias Entry = (event: String, group: OrderedJSON)
 
     func desired(_ agent: AgentKind, strict: Bool) -> [Entry] {
@@ -147,7 +153,7 @@ public struct HookInstaller {
         case .gemini:
             func group(_ matcher: String, _ timeoutMs: Int) -> OrderedJSON {
                 obj([("matcher", s(matcher)), ("hooks", .array([obj([("name", s("airbag")), ("type", s("command")),
-                                                                     ("command", s(cmd(.gemini, nil))), ("timeout", num(timeoutMs))])]))])
+                                                                     ("command", s(guardedCmd(.gemini, nil))), ("timeout", num(timeoutMs))])]))])
             }
             return [
                 ("SessionStart", group("*", 5000)),
@@ -159,7 +165,7 @@ public struct HookInstaller {
             func handler(_ ev: String, _ timeout: Int, matcher: String? = nil) -> OrderedJSON {
                 var kv: [(String, OrderedJSON)] = [("type", s("command"))]
                 if let matcher { kv.append(("matcher", s(matcher))) }
-                kv += [("exec", s(command)), ("args", .array([s("hook"), s("copilot"), s(ev)])), ("timeoutSec", num(timeout))]
+                kv += [("bash", s(guardedCmd(.copilot, ev))), ("timeoutSec", num(timeout))]
                 return obj(kv)
             }
             return [
@@ -187,11 +193,14 @@ public struct HookInstaller {
 
     static func handlerCommand(_ h: OrderedJSON) -> String? {
         if let e = h["exec"]?.stringValue { return e }
-        guard let c = h["command"]?.stringValue else { return nil }
+        guard let c = h["command"]?.stringValue ?? h["bash"]?.stringValue else { return nil }
         if h["args"] != nil { return c }
-        // "'/path with space/airbag' hook x" or "/path/airbag hook x"
-        if c.hasPrefix("'"), let end = c.dropFirst().firstIndex(of: "'") { return String(c[c.index(after: c.startIndex)..<end]) }
-        return c.components(separatedBy: " hook ").first
+        // The part that runs the hook: "'/path with space/airbag' hook x" or "/path/airbag hook x", on its own or after
+        // "exec " in a guarded command.
+        var run = Substring(c)
+        if let r = c.range(of: "; exec ", options: .backwards) { run = c[r.upperBound...] }
+        if run.hasPrefix("'"), let end = run.dropFirst().firstIndex(of: "'") { return String(run[run.index(after: run.startIndex)..<end]) }
+        return run.components(separatedBy: " hook ").first
     }
 
     /// Nested layout used by Claude, Codex and Gemini: event → [group {matcher?, hooks: [handler]}].
@@ -363,6 +372,17 @@ public struct HookInstaller {
         return Change(agent: change.agent, path: change.path, before: change.before, after: after, backup: backup)
     }
 
+    /// Rewrites Airbag's entries where this build writes them differently for the same binary, for the agents whose
+    /// user-level hooks need no new trust (Gemini CLI, Copilot CLI). Returns the agents it updated.
+    @discardableResult
+    public func refreshOutdated(backupDirectory: String?) -> [AgentKind] {
+        [AgentKind.gemini, .copilot].filter { agent in
+            let s = status(agent)
+            guard s.installed, !s.current, !s.staleCommand else { return false }
+            return (try? install(agent, backupDirectory: backupDirectory))?.changed == true
+        }
+    }
+
     // MARK: status
 
     public func isInstalled(_ agent: AgentKind) -> Bool {
@@ -381,7 +401,8 @@ public struct HookInstaller {
                 let current = text.map { (try? OrderedJSON.parse($0)) == (try? OrderedJSON.parse(try plan(agent, install: true).after ?? "")) } ?? false
                 let commands = strip(json["hooks"] ?? .object([]), nestedGroups: false).1
                 return AgentStatus(agent: agent, detected: detected, configPath: path, installed: true, current: current,
-                                   staleCommand: commands.contains { $0 != command }, note: nil)
+                                   staleCommand: commands.contains { $0 != command }, note: nil,
+                                   brokenCommand: commands.contains { !FileManager.default.isExecutableFile(atPath: $0) })
             }
             let (_, json) = try load(path)
             let commands = strip(json["hooks"] ?? .object([]), nestedGroups: usesNestedGroups(agent)).1
