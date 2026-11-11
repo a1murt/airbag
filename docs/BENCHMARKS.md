@@ -16,13 +16,15 @@ python3 -I Scripts/hook-latency.py .build/arm64-apple-macosx/release/airbag 5000
 python3 -I Scripts/hook-latency.py .build/arm64-apple-macosx/release/airbag 500 60
 ```
 
-2026-10-24, Apple M4, macOS 27.0.1, release build of 0.1.1. Three runs of the script per project size, 60 timed calls
-per row in each run; each cell gives the lowest and highest of the three runs:
+2026-11-10, Apple M4, macOS 27.0.1, release build of 0.1.6 (the Guard hardening of ADR-042). Three runs of the script
+per project size, 60 timed calls per row in each run; each cell gives the lowest and highest of the three runs:
 
 | Project | Read-only command (`ls src`, no snapshot), p50 | Changes files (`rm -rf src/m000`), project unchanged since the last snapshot, p50 | First command that changes files, initial snapshot included |
 |---|---|---|---|
-| 5,000 files, 50 MB | 12.5–12.7 ms | 26.0–26.4 ms (p90 26.5–27.3 ms) | 566–729 ms |
-| 500 files, 5 MB | 12.4–13.0 ms | 15.4–15.7 ms | 86–93 ms |
+| 5,000 files, 50 MB | 11.4–11.5 ms | 25.3–25.4 ms (p90 25.7–25.8 ms) | 571–591 ms |
+| 500 files, 5 MB | 11.3–11.4 ms | 14.2–14.4 ms | 88–92 ms |
+
+The 0.1.1 build measured on 2026-10-24 gave 12.4–13.0 ms, 15.4–26.4 ms and 566–729 ms for the same rows.
 
 For a command that changes files the hook also walks the project to find that nothing changed, so that time grows with
 the project's size. The first such command in a new project pays for the initial snapshot (one call per run). Over
@@ -33,7 +35,7 @@ command that needs a snapshot (`rm`, `mv`, `git reset --hard`, …) waits for th
 ## Snapshots and restore
 
 From the snapshot engine's own measurements, [design/10 §11](design/10-snapshot-engine.md) (2026-10-18, Apple M4,
-release build), taken before 0.1.1 and not re-measured for it:
+release build), taken before 0.1.1 and not re-measured since:
 
 | | 5k files (48 MB) | 50k files (388 MB) |
 |---|---|---|
@@ -51,9 +53,24 @@ this Mac through two `airbag` binaries with `airbag check`, which never runs any
 python3 -I Scripts/breaker-corpus.py OLD_AIRBAG NEW_AIRBAG
 ```
 
-2026-10-24, 0.1.1 release build: 2,578 commands. 2,467 allowed (95.7 %), 109 asked (4.2 %), 2 blocked (both an agent
-running `airbag allow` on its own command). Only Claude Code sessions are in this corpus, from one person's work, and
-it grows as sessions happen, so a later run replays more commands.
+2026-11-10, 0.1.6 release build against 0.1.5: 4,944 commands. 4,738 allowed (95.8 %), 204 asked (4.1 %), 2 blocked
+(both an agent running `airbag allow` on its own command); no decision changed between the two builds, and no command
+meets the rules that always wait (ADR-042). Only Claude Code sessions are in this corpus, from one person's work, and
+it grows as sessions happen, so a later run replays more commands. An earlier run, 2026-10-24 on 0.1.1, replayed
+2,578 commands: 95.7 % allowed, 4.2 % asked, 2 blocked.
+
+## Guard under hostile input
+
+`Scripts/guard-fuzz.py` generates commands built to break the parser (brace sequences at the ends of Int, deep
+`$(…)` nesting, unbalanced quotes, very long words, the padding that once slowed the verdict) and fails if `airbag
+check` crashes or takes longer than 2 s on any. CI runs 2,000 of them on every push; `make fuzz` runs 3,000.
+
+```bash
+python3 -I Scripts/guard-fuzz.py --count 3000 --seed 1
+```
+
+2026-11-10, 0.1.6 release build: 0 of 3,008 crashed or took longer than 2 s (seeds 5 and 11 as well). The 0.1.4
+release build crashed on 18 of 203, all from one bug (`abs()` of `Int.min` in brace expansion), fixed in 0.1.5.
 
 ## Not measured yet
 
