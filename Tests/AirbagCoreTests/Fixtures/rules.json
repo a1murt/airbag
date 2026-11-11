@@ -672,7 +672,8 @@
    "expect": {
     "decision": "ask"
    },
-   "rule": "fs.rm.opaque"
+   "rule": "fs.rm.unset-variable",
+   "why": "with DIR empty this is rm -rf /: it always waits for the user"
   },
   {
    "cmd": "rm -rf \"$(cat dirs.txt)\"",
@@ -3156,6 +3157,53 @@
    },
    "rule": "fs.rm.opaque",
    "why": "too many words to expand: unknown"
+  },
+  {
+   "cmd": "rm -rf .jj",
+   "expect": {
+    "decision": "ask"
+   },
+   "why": "snapshots skip version-control history; HN pre-launch review 2026-11-10",
+   "rule": "git.internals.delete"
+  },
+  {
+   "cmd": "rm -rf .hg",
+   "expect": {
+    "decision": "ask"
+   },
+   "why": "snapshots skip version-control history; HN pre-launch review 2026-11-10",
+   "rule": "git.internals.delete"
+  },
+  {
+   "cmd": "rm -rf .svn",
+   "expect": {
+    "decision": "ask"
+   },
+   "why": "snapshots skip version-control history; HN pre-launch review 2026-11-10",
+   "rule": "git.internals.delete"
+  },
+  {
+   "cmd": "rm -rf packages/x/.git",
+   "expect": {
+    "decision": "ask"
+   },
+   "why": "snapshots skip version-control history; HN pre-launch review 2026-11-10",
+   "rule": "git.internals.delete"
+  },
+  {
+   "cmd": "mv .jj /tmp/x",
+   "expect": {
+    "decision": "ask"
+   },
+   "why": "snapshots skip version-control history; HN pre-launch review 2026-11-10",
+   "rule": "git.internals.delete"
+  },
+  {
+   "cmd": "rm -rf node_modules/x/.git",
+   "expect": {
+    "decision": "allow"
+   },
+   "why": "snapshots skip version-control history; HN pre-launch review 2026-11-10"
   }
  ]
 }

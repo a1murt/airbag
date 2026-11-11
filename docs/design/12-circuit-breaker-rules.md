@@ -1,7 +1,7 @@
 # 12 — Circuit breaker (rules engine)
 
 Status: implemented in `Sources/AirbagCore/Rules/` (M3). Fixture: `Tests/AirbagCoreTests/Fixtures/rules.json`
-(427 cases, all green).
+(432 cases; 695 with `rules-redteam.json` and `rules-readonly.json`, all green).
 
 ## Principle
 

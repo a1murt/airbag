@@ -28,6 +28,9 @@
 "Add Project…" = "Tambah Proyek…";
 "Add these entries to the file by hand." = "Tambahkan entri ini ke file secara manual.";
 "Add these entries to the file by hand:" = "Tambahkan entri ini ke file secara manual:";
+"Deletes everything in a folder Airbag cannot determine, which may be your home folder." = "Menghapus semua isi folder yang tidak dapat ditentukan Airbag, yang bisa saja folder rumah Anda.";
+"Deletes from a path that starts with a variable; if it is empty, the path starts at the root of the disk." = "Menghapus di jalur yang diawali variabel; jika variabel itu kosong, jalurnya dimulai dari akar disk.";
+"Runs a program whose name is only known at run time on your home folder, a system folder or Airbag's data." = "Menjalankan program yang namanya baru diketahui saat dijalankan pada folder rumah, folder sistem, atau data Airbag.";
 "Through the Airbag plugin for Claude Code. To disconnect, turn the plugin off in Claude Code (/plugin)." = "Melalui plugin Airbag untuk Claude Code. Untuk memutuskannya, matikan plugin di Claude Code (/plugin).";
 "added" = "ditambahkan";
 "After a command" = "Setelah perintah";

@@ -1,6 +1,6 @@
 # 08 — Independent review (2026-10-18)
 
-Four independent reviewers (snapshot engine, hooks and installer, radar and IPC, app) read the code without the
+Four separate review passes (snapshot engine, hooks and installer, radar and IPC, app) read the code without the
 author's conclusions and reproduced each finding with throwaway probes. All findings were fixed; regressions live in
 `Tests/AirbagCoreTests/ReviewRegressionTests.swift`.
 Totals: 5 blockers, 19 major, 22 minor — all resolved.

@@ -28,6 +28,9 @@
 "Add Project…" = "प्रोजेक्ट जोड़ें…";
 "Add these entries to the file by hand." = "ये एंट्री फ़ाइल में ख़ुद जोड़ें।";
 "Add these entries to the file by hand:" = "ये एंट्री फ़ाइल में ख़ुद जोड़ें:";
+"Deletes everything in a folder Airbag cannot determine, which may be your home folder." = "ऐसे फ़ोल्डर में सब कुछ हटाता है जिसे Airbag तय नहीं कर सकता; वह आपका होम फ़ोल्डर भी हो सकता है।";
+"Deletes from a path that starts with a variable; if it is empty, the path starts at the root of the disk." = "ऐसे पथ में हटाता है जो किसी वेरिएबल से शुरू होता है; अगर वह खाली हो, तो पथ डिस्क के रूट से शुरू होता है।";
+"Runs a program whose name is only known at run time on your home folder, a system folder or Airbag's data." = "आपके होम फ़ोल्डर, किसी सिस्टम फ़ोल्डर या Airbag के डेटा पर ऐसा प्रोग्राम चलाता है जिसका नाम चलने पर ही पता चलता है।";
 "Through the Airbag plugin for Claude Code. To disconnect, turn the plugin off in Claude Code (/plugin)." = "Claude Code के लिए Airbag प्लगइन के ज़रिए। डिस्कनेक्ट करने के लिए Claude Code में प्लगइन बंद करें (/plugin)।";
 "added" = "जोड़ा गया";
 "After a command" = "कमांड के बाद";

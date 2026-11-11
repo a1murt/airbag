@@ -290,7 +290,9 @@ public enum Redactor {
     ].map { try! NSRegularExpression(pattern: $0) }
 
     public static func redact(_ text: String) -> String {
-        var s = text
+        // Stored text is cut at 4,000 characters anyway; cutting first keeps the patterns' backtracking short (a long
+        // `eyJ…` run took seconds, past the hook's deadline).
+        var s = text.count > 6000 ? String(text.prefix(6000)) : text
         for re in patterns {
             let range = NSRange(s.startIndex..., in: s)
             let template: String

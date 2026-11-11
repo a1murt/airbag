@@ -29,7 +29,7 @@ under Airbag's own hooks. Everything below happened in that session, on the owne
 
 ## Independent review of the fixes
 
-Four reviewers (breaker red team, bash/zsh redirect semantics, root resolution, app behaviour) probed the uncommitted
+Four review passes (breaker red team, bash/zsh redirect semantics, root resolution, app behaviour) probed the uncommitted
 fixes with about 300 `airbag check` runs against a build of the previous commit; a skeptic per lens tried to refute
 each finding. Confirmed and fixed:
 

@@ -28,6 +28,9 @@
 "Add Project…" = "프로젝트 추가…";
 "Add these entries to the file by hand." = "이 항목들을 파일에 직접 추가하십시오.";
 "Add these entries to the file by hand:" = "이 항목들을 파일에 직접 추가하십시오:";
+"Deletes everything in a folder Airbag cannot determine, which may be your home folder." = "Airbag이 알아낼 수 없는 폴더의 모든 항목을 삭제합니다. 그 폴더가 홈 폴더일 수도 있습니다.";
+"Deletes from a path that starts with a variable; if it is empty, the path starts at the root of the disk." = "변수로 시작하는 경로에서 삭제합니다. 변수가 비어 있으면 경로가 디스크 루트에서 시작됩니다.";
+"Runs a program whose name is only known at run time on your home folder, a system folder or Airbag's data." = "실행할 때에야 이름을 알 수 있는 프로그램을 홈 폴더, 시스템 폴더 또는 Airbag 데이터에 대해 실행합니다.";
 "Through the Airbag plugin for Claude Code. To disconnect, turn the plugin off in Claude Code (/plugin)." = "Claude Code용 Airbag 플러그인을 통해 연결되어 있습니다. 연결을 끊으려면 Claude Code에서 플러그인을 끄세요(/plugin).";
 "added" = "추가됨";
 "After a command" = "명령 실행 후";

@@ -23,7 +23,11 @@ enum HookCommands {
         Log.shared.configure(file: paths.logs.appendingPathComponent("hook.log"), category: "hook",
                              level: ProcessInfo.processInfo.environment["AIRBAG_HOOK_DEBUG"] == "1" ? .debug : .info)
         let probe = HookEnvelope(agent: agent, replyAs: agent, kind: .preShell, rawEvent: "")
-        let slot = OutputSlot(initial: AgentAdapter.encode(.allow, as: agent, event: probe))
+        // Until Guard has decided, the watchdog's answer stops a shell command: a command built to make the check slow
+        // must not pass by default. The bridge answers "no objection" to other events as soon as it has read them.
+        let undecided = HookReply.deny(agentReason: "Airbag could not check this command in time, so it did not run. Run it again; if this keeps happening, the user can check Airbag with `airbag hooks status`.",
+                                       userMessage: "Airbag could not check this command in time, so it was stopped.")
+        let slot = OutputSlot(initial: AgentAdapter.encode(undecided, as: agent, event: probe))
         let hardMs = (hint == "session-end" || hint == "sessionEnd") ? 800 : 4000
         DispatchQueue.global().asyncAfter(deadline: .now() + .milliseconds(hardMs)) {
             if slot.printDecided() {
@@ -39,8 +43,12 @@ enum HookCommands {
             payload.append(chunk)
         }
         if payload.count > 1 << 20 {
-            Log.shared.warn("hook \(agent.rawValue): payload over 1 MiB ignored")
-            slot.printDecided()
+            // A shell command this long cannot be checked, so it is refused; any other event (a large tool output) passes.
+            let head = String(decoding: payload.prefix(64 * 1024), as: UTF8.self)
+            let pre = hint.map { ["pre-bash", "pre-edit", "preToolUse"].contains($0) }
+                ?? ["\"PreToolUse\"", "beforeShellExecution", "\"BeforeTool\"", "\"preToolUse\""].contains { head.contains($0) }
+            Log.shared.warn("hook \(agent.rawValue): payload over 1 MiB, \(pre ? "refused" : "let through") unchecked")
+            if pre { slot.printDecided() } else { slot.printFinal(AgentAdapter.encode(.neutral, as: agent, event: probe)) }
             return 0
         }
         let outcome = HookBridge(config: HookBridgeConfig(paths: paths)).handle(payload: payload, declared: agent, eventHint: hint, slot: slot)
@@ -136,6 +144,12 @@ enum HookCommands {
     static func allow(_ argv: [String]) throws -> Int32 {
         let a = try Args(argv, valueOptions: [], flags: [])
         guard let id = a.positionals.first else { throw CLIError.usage("usage: airbag allow <guard-entry-id>   (see `airbag guard`)") }
+        // An agent never approves its own stopped command, whatever it calls the binary (`"$(which airbag)" allow`, a
+        // copy, a link): with an agent among the parent processes, `allow` refuses.
+        let environment = ProcessInfo.processInfo.environment
+        if let agent = AgentKind.allCases.first(where: { AgentLocator.locate($0, environment: environment) != nil }) {
+            throw CLIError.failed("refused: this runs inside a \(agent.displayName) session, and an agent may not approve its own command. Approve it in Airbag's menu bar → Guard → Allow Once.")
+        }
         let reg = try Registry(paths: .resolve(), role: .cli)
         guard try reg.allowOnce(guardID: id) else { throw CLIError.failed("no guard entry \(id) with a session") }
         print("allowed once: the agent may now run the same command again within 10 minutes")

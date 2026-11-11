@@ -28,6 +28,9 @@
 "Add Project…" = "添加项目…";
 "Add these entries to the file by hand." = "请手动将这些条目添加到文件中。";
 "Add these entries to the file by hand:" = "请手动将以下条目添加到文件中：";
+"Deletes everything in a folder Airbag cannot determine, which may be your home folder." = "删除 Airbag 无法确定的文件夹中的所有内容，那可能是你的主文件夹。";
+"Deletes from a path that starts with a variable; if it is empty, the path starts at the root of the disk." = "在以变量开头的路径中删除；变量为空时，路径会从磁盘根目录开始。";
+"Runs a program whose name is only known at run time on your home folder, a system folder or Airbag's data." = "对你的主文件夹、系统文件夹或 Airbag 的数据运行一个直到执行时才知道名字的程序。";
 "Through the Airbag plugin for Claude Code. To disconnect, turn the plugin off in Claude Code (/plugin)." = "通过 Claude Code 的 Airbag 插件连接。要断开连接，请在 Claude Code 中关闭该插件（/plugin）。";
 "added" = "已添加";
 "After a command" = "命令执行后";

@@ -7,7 +7,8 @@ quotes and braces, very long words, control characters. Nothing is executed; `ai
 
     python3 -I Scripts/guard-fuzz.py [--bin PATH] [--count N] [--seed S] [--jobs J]
 
-Same seed, same commands. Exit status 1 lists the commands that crashed (exit status 128 or more) or timed out.
+Same seed, same commands. Exit status 1 lists the commands that crashed (exit status 128 or more) or took longer than
+2 s: the hook answers within 4 s, and a verdict that comes too late must never become the answer.
 """
 
 import argparse
@@ -60,6 +61,9 @@ def commands(count, seed):
     # The cases that crashed 0.1.4 (abs() of Int.min in a brace sequence).
     out += ["echo {1..-9223372036854775808}", "rm -rf ~ ; echo {0..1..-9223372036854775808}",
             "echo {9223372036854775807..-9223372036854775808..1}"]
+    # Padding that made the verdict slow in 0.1.5 (each `cd` made later paths costlier to resolve).
+    out += ["rm -rf ~; " + "cd a; " * 2000, "rm -rf ~; " + "pushd a; " * 2000, "cd a; " * 2000 + "rm -rf *",
+            "rm -rf ~; echo " + "eyJaaaaaa-" * 20000, "rm -rf ~; " + "x=" + "a" * 200000]
     return out
 
 
@@ -76,7 +80,7 @@ def main():
     def run(cmd):
         try:
             p = subprocess.run([a.bin, "check", "--cwd", "/private/tmp", "--root", "/private/tmp", cmd],
-                               stdin=subprocess.DEVNULL, capture_output=True, timeout=20)
+                               stdin=subprocess.DEVNULL, capture_output=True, timeout=2)
             return p.returncode, cmd
         except subprocess.TimeoutExpired:
             return "timeout", cmd

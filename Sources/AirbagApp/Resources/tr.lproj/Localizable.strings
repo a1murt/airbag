@@ -28,6 +28,9 @@
 "Add Project…" = "Proje Ekle…";
 "Add these entries to the file by hand." = "Bu girdileri dosyaya elle ekleyin.";
 "Add these entries to the file by hand:" = "Bu girdileri dosyaya elle ekleyin:";
+"Deletes everything in a folder Airbag cannot determine, which may be your home folder." = "Airbag'in belirleyemediği bir klasördeki her şeyi siler; bu, ana klasörünüz olabilir.";
+"Deletes from a path that starts with a variable; if it is empty, the path starts at the root of the disk." = "Bir değişkenle başlayan bir yolda siler; değişken boşsa yol diskin kökünden başlar.";
+"Runs a program whose name is only known at run time on your home folder, a system folder or Airbag's data." = "Adı ancak çalışırken belli olan bir programı ana klasörünüz, bir sistem klasörü veya Airbag verileri üzerinde çalıştırır.";
 "Through the Airbag plugin for Claude Code. To disconnect, turn the plugin off in Claude Code (/plugin)." = "Claude Code için Airbag eklentisi üzerinden. Bağlantıyı kesmek için eklentiyi Claude Code'da kapatın (/plugin).";
 "added" = "eklendi";
 "After a command" = "Komuttan sonra";

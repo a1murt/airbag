@@ -1023,6 +1023,266 @@
     "decision": "ask"
    },
    "why": "too many words to expand: the target is opaque"
+  },
+  {
+   "cmd": "\"$(which rm)\" -rf ~",
+   "expect": {
+    "decision": "block"
+   },
+   "rule": "fs.rm.catastrophic",
+   "why": "a lookup in command position runs that program; HN pre-launch review 2026-11-10"
+  },
+  {
+   "cmd": "`which rm` -rf ~",
+   "expect": {
+    "decision": "block"
+   },
+   "rule": "fs.rm.catastrophic",
+   "why": "HN pre-launch review 2026-11-10"
+  },
+  {
+   "cmd": "$(command -v rm) -rf ~",
+   "expect": {
+    "decision": "block"
+   },
+   "rule": "fs.rm.catastrophic",
+   "why": "HN pre-launch review 2026-11-10"
+  },
+  {
+   "cmd": "R=$(which rm); $R -rf ~",
+   "expect": {
+    "decision": "block"
+   },
+   "rule": "fs.rm.catastrophic",
+   "why": "a variable assigned a lookup on the same line; HN pre-launch review 2026-11-10"
+  },
+  {
+   "cmd": "${RM:-rm} -rf ~",
+   "expect": {
+    "decision": "block"
+   },
+   "rule": "fs.rm.catastrophic",
+   "why": "the default of an unset variable; HN pre-launch review 2026-11-10"
+  },
+  {
+   "cmd": "$(echo rm) -rf ~",
+   "expect": {
+    "decision": "ask"
+   },
+   "rule": "shell.opaque-command",
+   "why": "a program known only at run time, handed the home folder: always waits; HN pre-launch review 2026-11-10"
+  },
+  {
+   "cmd": "\"$X\" -rf ~/Documents",
+   "expect": {
+    "decision": "ask"
+   },
+   "rule": "shell.opaque-command",
+   "why": "HN pre-launch review 2026-11-10"
+  },
+  {
+   "cmd": "\"$(which airbag)\" allow 01M58X3V7PXP798CC39VAVH5DT",
+   "expect": {
+    "decision": "block"
+   },
+   "rule": "self.allow",
+   "why": "HN pre-launch review 2026-11-10"
+  },
+  {
+   "cmd": "A=$(which airbag); $A allow 01M58X3V7PXP798CC39VAVH5DT",
+   "expect": {
+    "decision": "block"
+   },
+   "rule": "self.allow",
+   "why": "HN pre-launch review 2026-11-10"
+  },
+  {
+   "cmd": "$(command -v airbag) hooks uninstall --all",
+   "expect": {
+    "decision": "ask"
+   },
+   "rule": "self.airbag",
+   "why": "HN pre-launch review 2026-11-10"
+  },
+  {
+   "cmd": "rm -rf ~{,}",
+   "expect": {
+    "decision": "block"
+   },
+   "rule": "fs.rm.catastrophic",
+   "why": "braces expand first, then tildes (bash, zsh, sh); HN pre-launch review 2026-11-10"
+  },
+  {
+   "cmd": "rm -rf {~,x}",
+   "expect": {
+    "decision": "block"
+   },
+   "rule": "fs.rm.catastrophic",
+   "why": "HN pre-launch review 2026-11-10"
+  },
+  {
+   "cmd": "rm -rf {~/Documents,x}",
+   "expect": {
+    "decision": "block"
+   },
+   "rule": "fs.rm.catastrophic",
+   "why": "HN pre-launch review 2026-11-10"
+  },
+  {
+   "cmd": "rm -rf {a,~}",
+   "expect": {
+    "decision": "block"
+   },
+   "rule": "fs.rm.catastrophic",
+   "why": "HN pre-launch review 2026-11-10"
+  },
+  {
+   "cmd": "ln -s ~ x && rm -rf x/*",
+   "expect": {
+    "decision": "block"
+   },
+   "rule": "fs.rm.catastrophic",
+   "why": "a link an earlier part of the line makes; HN pre-launch review 2026-11-10"
+  },
+  {
+   "cmd": "ln -s ~ x && rm -rf x/",
+   "expect": {
+    "decision": "block"
+   },
+   "rule": "fs.rm.catastrophic",
+   "why": "HN pre-launch review 2026-11-10"
+  },
+  {
+   "cmd": "ln -s ~ x; cd x; rm -rf *",
+   "expect": {
+    "decision": "block"
+   },
+   "rule": "fs.rm.catastrophic",
+   "why": "HN pre-launch review 2026-11-10"
+  },
+  {
+   "cmd": "find -x ~ -delete",
+   "expect": {
+    "decision": "block"
+   },
+   "rule": "fs.rm.catastrophic",
+   "why": "options before the start point; HN pre-launch review 2026-11-10"
+  },
+  {
+   "cmd": "find -P ~ -delete",
+   "expect": {
+    "decision": "block"
+   },
+   "rule": "fs.rm.catastrophic",
+   "why": "HN pre-launch review 2026-11-10"
+  },
+  {
+   "cmd": "find -L ~ -delete",
+   "expect": {
+    "decision": "block"
+   },
+   "rule": "fs.rm.catastrophic",
+   "why": "HN pre-launch review 2026-11-10"
+  },
+  {
+   "cmd": "find -f ~ -delete",
+   "expect": {
+    "decision": "block"
+   },
+   "rule": "fs.rm.catastrophic",
+   "why": "HN pre-launch review 2026-11-10"
+  },
+  {
+   "cmd": "python3 -c \"import shutil,os; shutil.rmtree(os.environ['HOME'])\"",
+   "expect": {
+    "decision": "block"
+   },
+   "rule": "interp.delete.catastrophic",
+   "why": "the home folder computed at run time; HN pre-launch review 2026-11-10"
+  },
+  {
+   "cmd": "python3 -c \"import shutil,os; shutil.rmtree(os.getenv('HOME'))\"",
+   "expect": {
+    "decision": "block"
+   },
+   "rule": "interp.delete.catastrophic",
+   "why": "HN pre-launch review 2026-11-10"
+  },
+  {
+   "cmd": "node -e \"require('fs').rmSync(require('os').homedir(),{recursive:true})\"",
+   "expect": {
+    "decision": "block"
+   },
+   "rule": "interp.delete.catastrophic",
+   "why": "HN pre-launch review 2026-11-10"
+  },
+  {
+   "cmd": "node -e \"require('fs').rmSync(process.env.HOME,{recursive:true,force:true})\"",
+   "expect": {
+    "decision": "block"
+   },
+   "rule": "interp.delete.catastrophic",
+   "why": "HN pre-launch review 2026-11-10"
+  },
+  {
+   "cmd": "ruby -e \"require 'fileutils'; FileUtils.rm_rf(Dir.home)\"",
+   "expect": {
+    "decision": "block"
+   },
+   "rule": "interp.delete.catastrophic",
+   "why": "HN pre-launch review 2026-11-10"
+  },
+  {
+   "cmd": "rm -rf \"$STEAMROOT/\"*",
+   "expect": {
+    "decision": "ask"
+   },
+   "rule": "fs.rm.unset-variable",
+   "why": "with STEAMROOT empty this is rm -rf /*: always waits; HN pre-launch review 2026-11-10"
+  },
+  {
+   "cmd": "cd \"$X\" && rm -rf *",
+   "expect": {
+    "decision": "ask"
+   },
+   "rule": "fs.rm.unknown-folder",
+   "why": "with X empty, cd goes home: always waits; HN pre-launch review 2026-11-10"
+  },
+  {
+   "cmd": "cd a; cd a; cd a; cd a; cd a; cd a; cd a; cd a; cd a; cd a; cd a; cd a; cd a; cd a; cd a; cd a; cd a; cd a; cd a; cd a; cd a; cd a; cd a; cd a; cd a; cd a; cd a; cd a; cd a; cd a; cd a; cd a; cd a; cd a; cd a; cd a; cd a; cd a; cd a; cd a; cd a; cd a; cd a; cd a; cd a; cd a; cd a; cd a; cd a; cd a; cd a; cd a; cd a; cd a; cd a; cd a; cd a; cd a; cd a; cd a; cd a; cd a; cd a; cd a; cd a; cd a; cd a; cd a; cd a; cd a; cd a; cd a; cd a; cd a; cd a; cd a; cd a; cd a; cd a; cd a; cd a; cd a; cd a; cd a; cd a; cd a; cd a; cd a; cd a; cd a; cd a; cd a; cd a; cd a; cd a; cd a; cd a; cd a; cd a; cd a; cd /; rm -rf *",
+   "expect": {
+    "decision": "ask"
+   },
+   "rule": "fs.rm.unknown-folder",
+   "why": "past 64 cd's the folder is unknown; HN pre-launch review 2026-11-10"
+  },
+  {
+   "cmd": "rm -rf x{,~}",
+   "expect": {
+    "decision": "allow"
+   },
+   "why": "no false alarm; HN pre-launch review 2026-11-10"
+  },
+  {
+   "cmd": "ln -s ~ x && rm -rf x",
+   "expect": {
+    "decision": "allow"
+   },
+   "why": "no false alarm; HN pre-launch review 2026-11-10"
+  },
+  {
+   "cmd": "\"$EDITOR\" README.md",
+   "expect": {
+    "decision": "allow"
+   },
+   "why": "no false alarm; HN pre-launch review 2026-11-10"
+  },
+  {
+   "cmd": "ls -l \"$(which node)\"",
+   "expect": {
+    "decision": "allow"
+   },
+   "why": "no false alarm; HN pre-launch review 2026-11-10"
   }
  ]
 }

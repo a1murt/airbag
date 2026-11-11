@@ -28,6 +28,9 @@
 "Add Project…" = "Voeg project toe…";
 "Add these entries to the file by hand." = "Voeg deze items handmatig toe aan het bestand.";
 "Add these entries to the file by hand:" = "Voeg deze items handmatig toe aan het bestand:";
+"Deletes everything in a folder Airbag cannot determine, which may be your home folder." = "Verwijdert alles in een map die Airbag niet kan bepalen; dat kan je thuismap zijn.";
+"Deletes from a path that starts with a variable; if it is empty, the path starts at the root of the disk." = "Verwijdert in een pad dat met een variabele begint; is die leeg, dan begint het pad bij de root van de schijf.";
+"Runs a program whose name is only known at run time on your home folder, a system folder or Airbag's data." = "Start op je thuismap, een systeemmap of de gegevens van Airbag een programma waarvan de naam pas bij het uitvoeren bekend is.";
 "Through the Airbag plugin for Claude Code. To disconnect, turn the plugin off in Claude Code (/plugin)." = "Via de Airbag-plug-in voor Claude Code. Zet de plug-in in Claude Code uit (/plugin) om de verbinding te verbreken.";
 "added" = "toegevoegd";
 "After a command" = "Na een commando";

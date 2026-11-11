@@ -28,6 +28,9 @@
 "Add Project…" = "Додати проєкт…";
 "Add these entries to the file by hand." = "Додайте ці записи у файл вручну.";
 "Add these entries to the file by hand:" = "Додайте ці записи у файл вручну:";
+"Deletes everything in a folder Airbag cannot determine, which may be your home folder." = "Видаляє все в теці, яку Airbag не може визначити; це може бути домашня тека.";
+"Deletes from a path that starts with a variable; if it is empty, the path starts at the root of the disk." = "Видаляє за шляхом, що починається зі змінної; якщо вона порожня, шлях починається від кореня диска.";
+"Runs a program whose name is only known at run time on your home folder, a system folder or Airbag's data." = "Запускає для домашньої теки, системної теки або даних Airbag програму, назва якої відома лише під час виконання.";
 "Through the Airbag plugin for Claude Code. To disconnect, turn the plugin off in Claude Code (/plugin)." = "Через плагін Airbag для Claude Code. Щоб від’єднати, вимкніть плагін у Claude Code (/plugin).";
 "added" = "додано";
 "After a command" = "Після команди";

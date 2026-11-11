@@ -568,6 +568,118 @@
     "decision": "allow",
     "snapshot": "recommended"
    }
+  },
+  {
+   "cmd": "source cleanup.sh",
+   "expect": {
+    "decision": "allow",
+    "snapshot": "recommended"
+   },
+   "why": "HN pre-launch review 2026-11-10"
+  },
+  {
+   "cmd": ". ./cleanup.sh",
+   "expect": {
+    "decision": "allow",
+    "snapshot": "recommended"
+   },
+   "why": "HN pre-launch review 2026-11-10"
+  },
+  {
+   "cmd": "gh pr checkout 123",
+   "expect": {
+    "decision": "allow",
+    "snapshot": "recommended"
+   },
+   "why": "HN pre-launch review 2026-11-10"
+  },
+  {
+   "cmd": "gh pr view 123",
+   "expect": {
+    "decision": "allow",
+    "snapshot": "none"
+   },
+   "why": "HN pre-launch review 2026-11-10"
+  },
+  {
+   "cmd": "sort -o src/a.js src/a.js",
+   "expect": {
+    "decision": "allow",
+    "snapshot": "recommended"
+   },
+   "why": "HN pre-launch review 2026-11-10"
+  },
+  {
+   "cmd": "sort src/a.js",
+   "expect": {
+    "decision": "allow",
+    "snapshot": "none"
+   },
+   "why": "HN pre-launch review 2026-11-10"
+  },
+  {
+   "cmd": "uniq src/a.js src/b.js",
+   "expect": {
+    "decision": "allow",
+    "snapshot": "recommended"
+   },
+   "why": "HN pre-launch review 2026-11-10"
+  },
+  {
+   "cmd": "uniq src/a.js",
+   "expect": {
+    "decision": "allow",
+    "snapshot": "none"
+   },
+   "why": "HN pre-launch review 2026-11-10"
+  },
+  {
+   "cmd": "yq -i '.a=1' a.yaml",
+   "expect": {
+    "decision": "allow",
+    "snapshot": "recommended"
+   },
+   "why": "HN pre-launch review 2026-11-10"
+  },
+  {
+   "cmd": "yq '.a' a.yaml",
+   "expect": {
+    "decision": "allow",
+    "snapshot": "none"
+   },
+   "why": "HN pre-launch review 2026-11-10"
+  },
+  {
+   "cmd": "base64 -i x -o src/a.js",
+   "expect": {
+    "decision": "allow",
+    "snapshot": "recommended"
+   },
+   "why": "HN pre-launch review 2026-11-10"
+  },
+  {
+   "cmd": "find . -fprint src/a.js",
+   "expect": {
+    "decision": "allow",
+    "snapshot": "recommended"
+   },
+   "why": "HN pre-launch review 2026-11-10"
+  },
+  {
+   "cmd": "xxd -r dump src/a.bin",
+   "expect": {
+    "decision": "allow",
+    "snapshot": "recommended"
+   },
+   "why": "HN pre-launch review 2026-11-10"
+  },
+  {
+   "cmd": "say -o hi.aiff hello",
+   "expect": {
+    "decision": "allow",
+    "snapshot": "recommended"
+   },
+   "why": "HN pre-launch review 2026-11-10"
   }
  ]
 }

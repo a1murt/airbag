@@ -34,8 +34,8 @@ alive. The app is a client of the same files.
 **ADR-009 IPC = unix socket as a wake-up signal only.** No decision ever waits on the app. XPC rejected (needs a
 launchd Mach service). Distributed notifications rejected (no sender identity).
 
-**ADR-010 Fail-open by default, strict mode opt-in.** A safety tool that bricks the agent gets uninstalled. Rules
-are evaluated before any I/O so the common failure modes (DB, store) never weaken a deny.
+**ADR-010 Fail-open by default, strict mode opt-in.** A safety tool that bricks the agent gets uninstalled. No rule
+turns off when the registry or the snapshot store fails, so the common failure modes (DB, store) never weaken a deny.
 
 **ADR-011 Snapshot first, block only the unrecoverable.** Text-based blocking is unbounded (CC Safety Net's
 release stream, research 05 §3). Commands inside a protected root that a snapshot can undo are allowed after a
@@ -80,8 +80,8 @@ resolve both forms to one file. Normalising every key to NFC keeps the three in 
 the card's own snapshot.
 
 **ADR-024 The reply is printed before persistence.** The agent waits only for the decision and the snapshot; registry
-writes, spool ingestion and the app ping follow. A watchdog timeout prints the conservative reply prepared before
-the snapshot started, never a bare allow.
+writes, spool ingestion and the app ping follow. A watchdog timeout prints a deny until Guard has decided, then the
+conservative reply prepared before the snapshot started, never a bare allow (ADR-042).
 
 **ADR-025 Measure the breaker on real agent history.** Fixtures encode what we thought of; the owner's own sessions
 encode what agents actually run. `Scripts/breaker-corpus.py` replays every shell command in `~/.claude/projects`
@@ -275,3 +275,25 @@ strict mode writes Airbag's own entries, which then take over. Airbag 0.1.3 and 
 both kinds of hook a command would be checked twice: the plugin is for 0.1.4 and later. Its skills run
 `airbag undo --dry-run`, `--list`, `log`, `guard` and `snapshots`, so Airbag's own reading commands now need no
 snapshot of the project.
+
+**ADR-042 What Guard cannot read waits when it could reach the home folder, and a late verdict never passes.** A
+review before the public launch (2026-11-10) found commands that reached the home folder while Guard read them as
+harmless: a program name built at run time (`"$(which rm)" -rf ~`, `${RM:-rm} -rf ~`, `$(echo rm) -rf ~`), a tilde that
+brace expansion produces (`rm -rf ~{,}`: braces expand first, tildes after), a link an earlier part of the line makes
+(`ln -s ~ x && rm -rf x/*`), find options before the start point (`find -x ~ -delete`), the home folder computed in
+inline interpreter code (`shutil.rmtree(os.environ['HOME'])`), and a command padded until the verdict took longer than
+the hook's 4 s watchdog, whose answer until then was "allow". The lexer now applies lookups (`which`, `command -v`,
+`type -P`, also through a variable assigned one on the same line) and `${NAME:-default}`, expands tildes after braces,
+the analyser follows `ln -s` within the line, parses find's leading options, and blocks inline code that deletes the
+computed home folder. Where the program stays unknown, what it is handed decides: the home folder, a system folder,
+Airbag's data or a hook file make it `shell.opaque-command`. A delete that starts at the root of the disk if a
+variable is empty (`rm -rf "$DIR/"*`, the Steam bug) is `fs.rm.unset-variable`, and emptying a folder Airbag cannot
+determine (`cd "$DIR" && rm -rf *`, also past 64 `cd`s in one line, where tracking stops so that resolving stays
+linear) is `fs.rm.unknown-folder`. These three always wait for the user, like `self.*` and `snapshot.unavailable`
+(`GuardFinding.alwaysWaits`), because recording them after a snapshot of the project would not protect what they
+reach. The watchdog's answer is a refusal until Guard has decided; each later stage sets the answer it would give, so
+a slow snapshot after an allow still allows. A shell command whose payload is over 1 MiB is refused unchecked; other
+events pass. `airbag allow` refuses to run with an agent among its parent processes, which no renaming of the binary
+gets around. Replaying 4,944 commands from the author's sessions changed no decision, and none of them meets the three
+new rules. `Scripts/guard-fuzz.py` now also fails on a check slower than 2 s and includes the padding that was slow.
+

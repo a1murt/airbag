@@ -138,6 +138,8 @@ public struct HookBridge {
         let env = AgentAdapter.parse(json, declared: declared, eventHint: eventHint, environment: config.environment)
         outcome.envelope = env
         timing["parse"] = Clock.elapsedMs(since: t0)
+        // Only a shell command waits for Guard's verdict; any other event has "no objection" from here on.
+        if env.kind != .preShell && env.kind != .permissionRequest { slot?.setDecided(AgentAdapter.encode(.neutral, as: declared, event: env)) }
 
         // Cursor runs hooks it imported from ~/.claude/settings.json; when Airbag's native Cursor hook is installed it
         // handles the command, so this route stays out of the way.
@@ -279,12 +281,17 @@ public struct HookBridge {
         var reply: HookReply = .neutral
         switch env.kind {
         case .preShell, .permissionRequest:
-            guard let command = env.command, !command.isEmpty else { reply = env.kind == .permissionRequest ? .neutral : .allow; break }
+            guard let command = env.command, !command.isEmpty else {
+                reply = env.kind == .permissionRequest ? .neutral : .allow
+                slot?.setDecided(AgentAdapter.encode(reply, as: declared, event: env))
+                break
+            }
             // The same call seen through a second hook route: replay the first decision verbatim (no second
             // snapshot, no second token consumption).
             if let prior = priorDecision {
                 reply = prior.reply
                 record.decision = prior.decision
+                slot?.setDecided(AgentAdapter.encode(reply, as: declared, event: env))
                 break
             }
             let disabled = Set(registry.flatMap { $0.setting("rules.disabled", as: [String].self) } ?? [])
@@ -312,10 +319,15 @@ public struct HookBridge {
             }
             // Codex raises PermissionRequest after PreToolUse, right where it shows its own approval prompt: the
             // breaker already ran for this call, so only hard blocks answer here; everything else is Codex's to ask.
-            if env.kind == .permissionRequest { reply = .neutral; record.decision = "allow"; outcome.verdict = verdict; break }
+            if env.kind == .permissionRequest {
+                reply = .neutral; record.decision = "allow"; outcome.verdict = verdict
+                slot?.setDecided(AgentAdapter.encode(reply, as: declared, event: env))
+                break
+            }
             // Paused by the user: blocks stay (they cost nothing), snapshots and questions are skipped.
             if registry?.pausedUntilMs != nil {
                 reply = .allow
+                slot?.setDecided(AgentAdapter.encode(reply, as: declared, event: env))
                 record.decision = "allow"
                 record.snapshotSkipped = "paused"
                 outcome.verdict = verdict
@@ -351,6 +363,8 @@ public struct HookBridge {
                 slot?.setDecided(AgentAdapter.encode(askReply(verdict, snapshotID: nil).0, as: declared, event: env))
             } else if verdict.snapshot == .required {
                 slot?.setDecided(AgentAdapter.encode(askReply(unavailable("timeout"), snapshotID: nil).0, as: declared, event: env))
+            } else {
+                slot?.setDecided(AgentAdapter.encode(.allow, as: declared, event: env)) // a slow recommended snapshot never stops it
             }
             // Snapshot before anything that may run (allow, or ask that the user may approve).
             var snap: SnapshotInfo?
@@ -422,8 +436,8 @@ public struct HookBridge {
                     reply = .allow
                     record.decision = "allow_once"
                     record.guardEntry = guardRef("allow_once")
-                } else if mode == .allowSnapshot && !verdict.findings.contains(where: { $0.ruleId == "snapshot.unavailable" || $0.ruleId.hasPrefix("self.") }) {
-                    // (Switching Airbag itself off is never just recorded: that one always waits for the user.)
+                } else if mode == .allowSnapshot && !verdict.findings.contains(where: \.alwaysWaits) {
+                    // (Switching Airbag itself off, and the few findings in `alwaysWaits`, are never just recorded.)
                     // Runs and is recorded; when a project change could not be snapshotted, the user still decides.
                     reply = .allow
                     record.decision = "allow_fallback"

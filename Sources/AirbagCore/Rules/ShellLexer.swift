@@ -13,6 +13,9 @@ public struct ShellWord: Sendable, Equatable {
     public var assignmentName: String?
     /// The body of a here-document when this word is its delimiter (`<<EOF`).
     public var heredoc: String?
+    /// The program a word that is only a lookup substitution names (`"$(which rm)"`, `` `command -v rm` ``): in command
+    /// position that program runs. The word stays opaque: as an argument it is a path Airbag does not know.
+    public var program: String?
 
     public init(_ text: String, opaque: Bool = false, hasGlob: Bool = false, quoted: Bool = false, assignmentName: String? = nil,
                 heredoc: String? = nil) {
@@ -156,7 +159,7 @@ public struct ShellLexer {
             let (word, next, marks) = readWord(c, i)
             i = next
             let op: String? = { if afterRedirect, case .op(let o)? = tokens.last { return o }; return nil }()
-            let words = op == "<<<" ? [word] : ShellLexer.expandBraces(word, marks) // a here-string is not brace-expanded
+            let words = op == "<<<" ? [word] : ShellLexer.expandBraces(word, marks, home: home) // a here-string is not brace-expanded
             if afterRedirect {
                 // `> {a,b}`: zsh writes to both files (bash refuses the line), so each is a redirect target.
                 for (k, w) in words.enumerated() {
@@ -181,6 +184,8 @@ public struct ShellLexer {
             guard let name = w.assignmentName else { continue }
             if w.opaque || w.hasGlob { environment.removeValue(forKey: name); shadowed.insert(name) }
             else { environment[name] = String(w.text.dropFirst(name.count + 1)); shadowed.remove(name) }
+            programVars[name] = w.program // `A=$(which airbag)`: `$A allow …` runs airbag
+
         }
     }
 
@@ -210,6 +215,7 @@ public struct ShellLexer {
         var opaque = false, glob = false, quoted = false
         var assignmentName: String?
         var marks: [Int: Character] = [:]
+        lastVariable = nil
         let atStart = { (pos: Int) in pos == start }
         while i < c.count {
             let ch = c[i]
@@ -275,9 +281,16 @@ public struct ShellLexer {
                 var user = ""
                 while j < c.count, c[j].isLetter || c[j].isNumber || c[j] == "_" || c[j] == "-" || c[j] == "." { user.append(c[j]); j += 1 }
                 let terminated = j >= c.count || isWordBreak(c[j]) || c[j] == "/" || c[j] == ":" || c[j] == "\\"
+                // `~{,}`, `~{a,}`: braces expand first and tildes after, so the words brace expansion makes decide.
+                if !terminated, assignmentName == nil, j < c.count, "{,}".contains(c[j]) || "{,}".contains(c[i + 1]) {
+                    marks[out.count] = "~"; out.append("~"); i += 1; break
+                }
                 if !terminated { out.append("~"); i += 1; break }
                 out += user.isEmpty ? home : "/Users/" + user
                 i = j
+            case "~" where assignmentName == nil && !out.isEmpty && (marks[out.count - 1] == "{" || marks[out.count - 1] == ","):
+                // `{~,x}`, `{a,~/Documents}`: an alternative that starts with a tilde is tilde-expanded once braces are.
+                marks[out.count] = "~"; out.append("~"); i += 1
             case "*", "?", "[":
                 glob = true
                 marks[out.count] = ch
@@ -294,20 +307,41 @@ public struct ShellLexer {
                 out.append(ch); i += 1
             }
         }
-        return (ShellWord(out, opaque: opaque, hasGlob: glob, quoted: quoted, assignmentName: assignmentName), i, marks)
+        var word = ShellWord(out, opaque: opaque, hasGlob: glob, quoted: quoted, assignmentName: assignmentName)
+        let value = assignmentName.map { String(out.dropFirst($0.count + 1)) } ?? out
+        if opaque, value == "$(…)" || value == "`…`", let inner = substitutions.last { word.program = ShellLexer.lookedUpProgram(inner) }
+        if opaque, assignmentName == nil, let v = lastVariable, out == "$" + v || out == "${" + v + "}" { word.program = programVars[v] }
+        return (word, i, marks)
+    }
+
+    /// The program a lookup prints the path of: `which rm`, `command -v rm`, `type -P rm`, `whence -p rm`.
+    static func lookedUpProgram(_ text: String) -> String? {
+        var w = text.split(whereSeparator: { $0 == " " || $0 == "\t" }).map(String.init)
+        guard w.count >= 2, let name = w.popLast(), !name.hasPrefix("-"),
+              name.unicodeScalars.allSatisfy({ CharacterSet.alphanumerics.contains($0) || "_.+-".unicodeScalars.contains($0) }) else { return nil }
+        let tool = ((w[0].hasPrefix("\\") ? String(w[0].dropFirst()) : w[0]) as NSString).lastPathComponent
+        let options = Array(w.dropFirst())
+        guard options.allSatisfy({ $0.hasPrefix("-") }) else { return nil }
+        switch tool {
+        case "which": return name
+        case "command": return options == ["-v"] || options == ["-V"] ? name : nil
+        case "type", "whence": return !options.isEmpty && options.allSatisfy({ $0.contains("p") || $0.contains("P") }) ? name : nil
+        default: return nil
+        }
     }
 
     /// Brace expansion, which bash and zsh apply to unquoted braces before anything else: `x/{a,b}` is `x/a x/b`, `{1..3}`
     /// is `1 2 3` (also `{01..10..2}`, `{a..e}`). A brace without a comma or a sequence (`{}`, `@{u}`) stays as it is; an
     /// assignment is not expanded. More than 256 words make the word opaque.
-    static func expandBraces(_ word: ShellWord, _ marks: [Int: Character]) -> [ShellWord] {
+    static func expandBraces(_ word: ShellWord, _ marks: [Int: Character], home: String = NSHomeDirectory()) -> [ShellWord] {
         guard word.assignmentName == nil, marks.values.contains("{"), marks.values.contains("}") else { return [word] }
-        enum Part: Equatable { case char(Character), open, comma, close, glob(Character) }
+        enum Part: Equatable { case char(Character), open, comma, close, glob(Character), tilde }
         let parts: [Part] = word.text.enumerated().map { k, ch in
             switch marks[k] {
             case "{"?: return .open
             case ","?: return .comma
             case "}"?: return .close
+            case "~"?: return .tilde
             case let g?: return .glob(g)
             case nil: return .char(ch)
             }
@@ -392,8 +426,19 @@ public struct ShellLexer {
                 case .open: return "{"
                 case .comma: return ","
                 case .close: return "}"
+                case .tilde: return "~"
                 }
             })
+            // A word that now starts with an unquoted tilde is tilde-expanded, as the shell does after brace expansion:
+            // `~` and `~/x` are the home folder, `~name` another user's (`x~` and a quoted `~` stay as they are).
+            if p.first == .tilde {
+                let rest = w.text.dropFirst()
+                let user = rest.prefix { $0.isLetter || $0.isNumber || $0 == "_" || $0 == "-" || $0 == "." }
+                let after = rest.dropFirst(user.count)
+                if after.isEmpty || after.first == "/" {
+                    w.text = (user.isEmpty ? home : "/Users/" + user) + after
+                }
+            }
             w.hasGlob = p.contains { if case .glob = $0 { return true }; return false }
             return w
         }
@@ -430,6 +475,15 @@ public struct ShellLexer {
             let (inner, next) = readBalanced(c, i + 2, open: "{", close: "}")
             let name = String(inner.prefix(while: { $0.isLetter || $0.isNumber || $0 == "_" }))
             if name.count == inner.count, let v = lookup(name) { return (v, false, next) }
+            if name.count == inner.count { lastVariable = name }
+            // `${RM:-rm}`, `${RM-rm}`: the default when the variable is unset (or empty, for `:-`), unless this line set it.
+            let rest = inner.dropFirst(name.count)
+            if !name.isEmpty, !shadowed.contains(name), rest.hasPrefix(":-") || rest.hasPrefix("-") {
+                let fallback = String(rest.dropFirst(rest.hasPrefix(":-") ? 2 : 1))
+                let value = name == "HOME" ? (environment["HOME"] ?? home) : environment[name]
+                if let value, !value.isEmpty { return (value, false, next) }
+                if value == nil || rest.hasPrefix(":-"), !fallback.contains(where: { "$`'\"{}\\".contains($0) }) { return (fallback, false, next) }
+            }
             return ("${\(inner)}", true, next)
         }
         if n.isLetter || n == "_" {
@@ -437,6 +491,7 @@ public struct ShellLexer {
             var name = ""
             while j < c.count, c[j].isLetter || c[j].isNumber || c[j] == "_" { name.append(c[j]); j += 1 }
             if let v = lookup(name) { return (v, false, j) }
+            lastVariable = name
             return ("$" + name, true, j)
         }
         if n.isNumber || "@*#?$!-".contains(n) { return ("$" + String(n), true, i + 2) }
@@ -486,6 +541,10 @@ public struct ShellLexer {
 
     /// Variables reassigned on this line to something Airbag cannot resolve.
     var shadowed: Set<String> = []
+    /// Variables assigned a lookup on this line (`A=$(which airbag)`), and the program it names.
+    var programVars: [String: String] = [:]
+    /// The variable the last unresolved `$NAME` or `${NAME}` named.
+    var lastVariable: String?
 
     func lookup(_ name: String) -> String? {
         if shadowed.contains(name) { return nil }

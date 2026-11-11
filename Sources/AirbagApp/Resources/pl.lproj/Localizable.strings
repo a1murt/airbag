@@ -28,6 +28,9 @@
 "Add Project…" = "Dodaj projekt…";
 "Add these entries to the file by hand." = "Dodaj te wpisy do pliku ręcznie.";
 "Add these entries to the file by hand:" = "Dodaj te wpisy do pliku ręcznie:";
+"Deletes everything in a folder Airbag cannot determine, which may be your home folder." = "Usuwa wszystko w folderze, którego Airbag nie potrafi ustalić; może to być folder domowy.";
+"Deletes from a path that starts with a variable; if it is empty, the path starts at the root of the disk." = "Usuwa w ścieżce zaczynającej się od zmiennej; jeśli zmienna jest pusta, ścieżka zaczyna się od katalogu głównego dysku.";
+"Runs a program whose name is only known at run time on your home folder, a system folder or Airbag's data." = "Uruchamia na folderze domowym, folderze systemowym lub danych Airbaga program, którego nazwa jest znana dopiero w chwili wykonania.";
 "Through the Airbag plugin for Claude Code. To disconnect, turn the plugin off in Claude Code (/plugin)." = "Przez wtyczkę Airbag dla Claude Code. Aby rozłączyć, wyłącz wtyczkę w Claude Code (/plugin).";
 "added" = "dodany";
 "After a command" = "Po poleceniu";

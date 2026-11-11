@@ -21,7 +21,7 @@ file or with doc 10, this file and doc 10 win (see "Overrides" at the end).
 ┌────────────────────────────── Airbag.app (menu bar, long-lived, optional) ───────────────────────┐
 │ status item + popover summary │ Timeline (snapshots → changes → diff → restore)                  │
 │ Radar (libproc poll, attribution, orphans, stop) │ Guard (log, allow-once tokens, rule toggles)  │
-│ FSEvents watcher → snapshots between commands │ retention scheduler │ hooks installer/doctor     │
+│ FSEvents watcher → snapshots between commands │ retention scheduler │ hooks installer            │
 └──────────────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -33,7 +33,7 @@ snapshots between agent commands (FSEvents), the UI, the radar, retention and ho
 | Target | Kind | Contents |
 |---|---|---|
 | `AirbagCore` | library | `Support/` (paths, permissions, ULID, JSON, SHA-256, logging, SQLite wrapper, clock), `Snapshots/` (walker, store, manifest, restore, retention, diff), `Rules/` (shell lexer, analyzer, catalog, engine), `Registry/` (schema, migrations, DAO, spool), `Hooks/` (agent adapters, reply encoders, bridge pipeline, installer), `Processes/` (libproc, sysctl env reader, radar, attribution, stopper), `IPC/` (unix socket client/server) |
-| `airbag` | executable | CLI: `hook`, `snapshot`, `snapshots`, `changes`, `diff`, `restore`, `pin`, `prune`, `check`, `ports`, `stop`, `sessions`, `hooks install|uninstall|status`, `doctor`, `version` — JSON output with `--json` |
+| `airbag` | executable | CLI: `hook`, `snapshot`, `snapshots`, `changes`, `diff`, `undo`, `restore`, `pin`, `prune`, `cleanup`, `export`, `usage`, `check`, `hooks status`/`install`/`uninstall`, `guard`, `allow`, `sessions`, `log`, `ports`, `stop`, `version` — JSON output with `--json` |
 | `AirbagApp` | executable (product `Airbag`) | SwiftUI `MenuBarExtra(.window)` app, view models over `AirbagCore` |
 | `AirbagCoreTests` | Swift Testing | unit + integration (synthetic roots, fake agent trees, rule fixture) |
 
@@ -138,7 +138,7 @@ Everything runs as the user; no root helper, no Full Disk Access, no network exc
 (GitHub Releases API) planned for later. Store and registry are 0700/0600, excluded from Time Machine and
 Spotlight, and hold copies of `.env` files — documented in SECURITY.md. Command text is redacted (token-like
 patterns) before it is stored; command output is never stored. The hook path is absolute inside the signed app
-bundle (or the Homebrew symlink); the doctor flags configs that point elsewhere.
+bundle (or the Homebrew symlink); `airbag hooks status` flags configs that point elsewhere.
 
 ## 8. Conventions
 

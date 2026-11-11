@@ -28,6 +28,9 @@
 "Add Project…" = "Жоба қосу…";
 "Add these entries to the file by hand." = "Бұл жазбаларды файлға қолмен қосыңыз.";
 "Add these entries to the file by hand:" = "Бұл жазбаларды файлға қолмен қосыңыз:";
+"Deletes everything in a folder Airbag cannot determine, which may be your home folder." = "Airbag анықтай алмайтын қалтадағы барлығын жояды; бұл үй қалтасы болуы мүмкін.";
+"Deletes from a path that starts with a variable; if it is empty, the path starts at the root of the disk." = "Айнымалыдан басталатын жолдағы файлдарды жояды; айнымалы бос болса, жол дискінің түбірінен басталады.";
+"Runs a program whose name is only known at run time on your home folder, a system folder or Airbag's data." = "Аты тек орындалғанда белгілі болатын бағдарламаны үй қалтасына, жүйелік қалтаға немесе Airbag деректеріне қолданады.";
 "Through the Airbag plugin for Claude Code. To disconnect, turn the plugin off in Claude Code (/plugin)." = "Claude Code-қа арналған Airbag плагині арқылы. Ажырату үшін Claude Code-та плагинді өшіріңіз (/plugin).";
 "added" = "қосылған";
 "After a command" = "Командадан кейін";

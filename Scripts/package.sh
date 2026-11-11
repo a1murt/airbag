@@ -1,7 +1,7 @@
 #!/bin/bash
 # Release packaging: universal build → sign → (notarize + staple) → zip + dmg + sha256.
 #
-#   Scripts/package.sh                         # ad-hoc signed, not notarized (local testing)
+#   Scripts/package.sh                         # ad-hoc signed, not notarized (how 0.1.x releases ship)
 #   SIGN_IDENTITY="Developer ID Application: Name (TEAMID)" NOTARY_PROFILE=airbag-notary Scripts/package.sh
 #
 # NOTARY_PROFILE is a keychain profile created once with:
@@ -47,5 +47,5 @@ echo "==> checksums"
 if [ "${SIGN_IDENTITY:--}" != "-" ] && [ -n "${NOTARY_PROFILE:-}" ]; then
     spctl --assess --type execute --verbose "$APP"
 else
-    echo "note: ad-hoc build — Gatekeeper will reject it on other Macs; use for local testing only"
+    echo "note: ad-hoc signed, not notarized: from the DMG, macOS asks once on first launch (Open Anyway); the Homebrew cask removes the quarantine flag"
 fi

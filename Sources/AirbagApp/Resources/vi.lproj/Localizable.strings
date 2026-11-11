@@ -28,6 +28,9 @@
 "Add Project…" = "Thêm dự án…";
 "Add these entries to the file by hand." = "Hãy tự thêm các mục này vào tệp.";
 "Add these entries to the file by hand:" = "Hãy tự thêm các mục này vào tệp:";
+"Deletes everything in a folder Airbag cannot determine, which may be your home folder." = "Xóa mọi thứ trong một thư mục mà Airbag không xác định được, có thể là thư mục nhà.";
+"Deletes from a path that starts with a variable; if it is empty, the path starts at the root of the disk." = "Xóa trong một đường dẫn bắt đầu bằng biến; nếu biến rỗng, đường dẫn bắt đầu từ gốc ổ đĩa.";
+"Runs a program whose name is only known at run time on your home folder, a system folder or Airbag's data." = "Chạy trên thư mục nhà, thư mục hệ thống hoặc dữ liệu của Airbag một chương trình mà tên chỉ biết được khi chạy.";
 "Through the Airbag plugin for Claude Code. To disconnect, turn the plugin off in Claude Code (/plugin)." = "Qua plugin Airbag cho Claude Code. Để ngắt kết nối, hãy tắt plugin trong Claude Code (/plugin).";
 "added" = "đã thêm";
 "After a command" = "Sau khi chạy lệnh";

@@ -36,6 +36,15 @@ public struct GuardFinding: Sendable, Codable, Equatable {
     public var paths: [String] = []
 }
 
+extension GuardFinding {
+    /// Waits for the user even where other questions are only recorded (ADR-030, ADR-035): switching Airbag off
+    /// (`self.*`), a command that needs a snapshot Airbag could not take, a program whose name is only known at run time
+    /// handed the home folder or a system folder, and a delete that starts at the root of the disk if a variable is empty.
+    public var alwaysWaits: Bool {
+        ruleId == "snapshot.unavailable" || ruleId.hasPrefix("self.") || ["shell.opaque-command", "fs.rm.unset-variable", "fs.rm.unknown-folder"].contains(ruleId)
+    }
+}
+
 public struct GuardVerdict: Sendable, Codable, Equatable {
     public let decision: GuardDecision
     public let snapshot: SnapshotNeed
@@ -154,6 +163,12 @@ struct Analyzer {
     var current = ""
     var cwd: String?
     var visited: [String] = []
+    /// Symbolic links an earlier part of the line makes (`ln -s ~ x && rm -rf x/*`), absolute link → absolute target;
+    /// nil when the target is unknown. The file system does not have them yet, so `resolve` applies them.
+    var links: [String: String?] = [:]
+    /// `cd`s and `pushd`s seen in the line: past 64 the folder is unknown (each one makes later paths costlier to resolve,
+    /// and a verdict that comes too late loses to the hook's deadline).
+    var cdCount = 0
 
     init(context: GuardContext) {
         self.context = context
@@ -276,6 +291,14 @@ struct Analyzer {
             base = cwd + "/" + text
         }
         var p = normalize(base)
+        if !links.isEmpty {
+            let follows = contents || word.text.hasSuffix("/")
+            for _ in 0..<8 {
+                guard let link = links.keys.filter({ p.hasPrefix($0 + "/") || (p == $0 && follows) }).max(by: { $0.count < $1.count }) else { break }
+                guard case let target?? = links[link] else { return nil }
+                p = normalize(target + p.dropFirst(link.count))
+            }
+        }
         if context.useFileSystem {
             if contents || word.text.hasSuffix("/") {
                 // `dir/` and `dir/*` act on the directory a symlink points to.
@@ -357,7 +380,9 @@ struct Analyzer {
         let p = r.path
         if p == root { return r.contents ? .insideProject(root) : .projectRoot(root) } // `*` skips dotfiles such as .git
         let comps = p.dropFirst(root.count + 1).split(separator: "/").map(String.init)
-        if comps.first == ".git" { return .gitInternals(root) }
+        // Version-control history (`.git`, `.jj`, `.hg`, `.svn`) is never in a snapshot.
+        let history: Set<String> = [".git", ".jj", ".hg", ".svn"]
+        if let first = comps.first, history.contains(first) { return .gitInternals(root) }
         switch agentWorktree(comps, in: root) {
         case .worktree(let w)?: return classify(r, in: w)
         case .absent?: return .regenerable // nothing there to lose
@@ -366,6 +391,8 @@ struct Analyzer {
         let rel = comps.joined(separator: "/")
         if comps.contains(where: { Analyzer.excludedNames.contains($0) })
             || Exclusions.defaultRelativePaths.contains(where: { rel == $0 || rel.hasPrefix($0 + "/") }) { return .regenerable }
+        // A nested repository's history (`packages/x/.git`); in a regenerable folder (`node_modules/x/.git`) it is regenerable.
+        if comps.contains(where: { history.contains($0) }) { return .gitInternals(root) }
         return .insideProject(root)
     }
 
@@ -478,7 +505,7 @@ struct Analyzer {
         "which", "whereis", "type", "file", "stat", "wc", "du", "df", "diff", "cmp", "sort", "uniq", "cut", "tr", "jq", "yq",
         "awk", "basename", "dirname", "realpath", "readlink", "date", "whoami", "id", "uname", "env", "printenv", "hostname",
         "sw_vers", "ps", "top", "lsof", "netstat", "uptime", "history", "true", "false", "test", "[", "sleep", "cd", "pushd",
-        "popd", "export", "set", "unset", "alias", "source", ".", "man", "help", "open", "pbcopy", "pbpaste", "say", "nproc",
+        "popd", "export", "set", "unset", "alias", "man", "help", "open", "pbcopy", "pbpaste", "say", "nproc",
         "sysctl", "vm_stat", "pgrep", "md5", "shasum", "sha256sum", "md5sum", "base64", "xxd", "hexdump", "strings", "otool",
         "nm", "lipo", "spctl", "defaults", "mdfind", "mdls", "column", "fold", "fmt", "nl", "rev", "seq",
         "yes", "clear", "tput", "stty", "tty", "locale", "command", "hash", "wait", "jobs", "fg", "bg", "read", "exit", "return",
@@ -573,6 +600,23 @@ struct Analyzer {
             return !long.isEmpty && long.allSatisfy { $0.hasPrefix("--get") || $0 == "--listapps" }
         case "xcode-select":
             return !argv.isEmpty && argv.allSatisfy { ["-p", "--print-path", "-v", "--version", "-h", "--help"].contains($0) }
+        // Read-only tools with a writing form: those forms get a snapshot like any other write.
+        case "gh":
+            let sub = argv.prefix(2).joined(separator: " ")
+            return !["pr checkout", "pr co", "repo clone", "repo sync", "release download", "run download", "gist clone"].contains(sub)
+                && !(sub == "repo fork" && argv.contains("--clone"))
+        case "sort":
+            return !argv.contains { $0 == "-o" || $0.hasPrefix("--output") || ($0.hasPrefix("-o") && !$0.hasPrefix("--")) }
+        case "uniq":
+            return operands.count < 2 // `uniq IN OUT` writes OUT
+        case "base64":
+            return !argv.contains { $0 == "-o" || $0.hasPrefix("--output") }
+        case "xxd":
+            return !(flags.contains("r") && operands.count >= 2)
+        case "say":
+            return !argv.contains { $0 == "-o" || $0.hasPrefix("--output-file") }
+        case "yq":
+            return !argv.contains { $0 == "-i" || $0 == "--inplace" || ($0.hasPrefix("-") && !$0.hasPrefix("--") && $0.contains("i")) }
         case "airbag":
             // Airbag's own listings and previews (what the Claude Code plugin runs) need no snapshot of the project.
             let before = argv.prefix(while: { $0 != "--" })
@@ -781,7 +825,7 @@ struct Analyzer {
             case .outside where truncates && replacesOrUnknown(resolve(r.target)?.path):
                 add("fs.truncate.outside", .ask, .recommended, "it overwrites \(r.target.text) outside the protected project, where no snapshot can restore it.", r.target.text)
             case .unknown where truncates: add("fs.truncate.opaque", .ask, .recommended, "it overwrites a file whose path depends on an unresolved variable.", r.target.text)
-            case .gitInternals where truncates: add("git.internals.write", .ask, .recommended, "it overwrites a file inside .git, which snapshots do not cover.", r.target.text)
+            case .gitInternals where truncates: add("git.internals.write", .ask, .recommended, "it overwrites a file inside version-control history (.git, .jj, .hg or .svn), which snapshots do not cover.", r.target.text)
             case .insideProject, .projectRoot: if truncates { add("fs.truncate.project", .allow, .required, "it overwrites a project file (a snapshot is taken first).", r.target.text, roots: cls.roots,
                                                                          paths: [resolve(r.target)?.path]) }
             default: break
@@ -835,7 +879,7 @@ struct Analyzer {
         }
         cmd.words = words
         guard let first = words.first else { return }
-        var name = (first.text as NSString).lastPathComponent
+        var name = first.program ?? (first.text as NSString).lastPathComponent
         // Homebrew GNU coreutils/findutils install `grm`, `gmv`, `gfind`, ….
         let gnuTools: Set<String> = ["rm", "mv", "cp", "ln", "dd", "chmod", "chown", "chgrp", "truncate", "find", "xargs", "install",
                                      "tee", "shred", "rmdir", "unlink", "touch", "tar", "sed"]
@@ -846,6 +890,23 @@ struct Analyzer {
         let whole = words.map(\.text).joined(separator: " ")
 
         if sudo { add("sys.sudo", .ask, .recommended, "it runs with root privileges, outside what Airbag can snapshot or undo.", whole) }
+        // A program whose name is only known when the line runs (`"$X" -rf ~`, `$(echo rm) -rf ~`): Guard cannot tell what
+        // it does, so what it is handed decides. The home folder, a system folder, Airbag's data or an agent's hook
+        // settings make it wait for the user, also where questions are only recorded.
+        if first.opaque, first.program == nil {
+            for a in args where !a.text.hasPrefix("-") {
+                let r = resolve(a)
+                var sensitive = r.map { isHookConfig($0.path) || holdsHookConfig($0.path) } ?? false
+                switch classify(r) {
+                case .catastrophic, .airbag: sensitive = true
+                default: break
+                }
+                if sensitive {
+                    add("shell.opaque-command", .ask, .none, "it runs a program whose name is only known when the line runs, and hands it \(a.text).", whole)
+                    break
+                }
+            }
+        }
         // A pipe into a shell or interpreter runs downloaded or generated code. Literal text an echo or printf writes is
         // the script itself (judged like `-c`); `cat file | sh` runs a script file; anything else is code Airbag cannot see.
         if cmdIn.connector == .pipe, Analyzer.shells.contains(name) || ["python", "python3", "node", "ruby", "perl"].contains(name), args.allSatisfy({ $0.text.hasPrefix("-") }),
@@ -910,6 +971,8 @@ struct Analyzer {
             return
         }
         if name == "cd" || name == "pushd" {
+            cdCount += 1
+            if cdCount > 64 { cwd = nil; return }
             if let target = args.first(where: { !$0.text.hasPrefix("-") }) {
                 cwd = resolve(target)?.path
             } else {
@@ -973,6 +1036,7 @@ struct Analyzer {
         case "ln":
             let operands = args.filter { !$0.text.hasPrefix("-") }
             if operands.count >= 2, let last = operands.last { writeCheck(last, truncates: args.contains { $0.text.hasPrefix("-") && $0.text.contains("f") }, whole: whole) }
+            recordLinks(args, operands)
         case "script":
             // script [-q] [-c 'cmd'] file   (util-linux)   or   script [-q] file cmd args…   (BSD/macOS)
             if let ci = argv.firstIndex(of: "-c"), ci + 1 < args.count { analyze(args[ci + 1].text, depth: depth + 1) }
@@ -1148,7 +1212,7 @@ struct Analyzer {
                 if recursive || t.hasGlob { add("fs.rm.catastrophic", .block, .none, "it would \(verb) \(describe(p)), which no snapshot covers.", t.text) }
                 else { add("fs.rm.outside", .ask, .none, "it would \(verb) \(t.text) outside the protected project.", t.text) }
             case .airbag: add("self.airbag", .block, .none, "it would \(verb) Airbag's own data, which protects this project.", t.text)
-            case .gitInternals: add("git.internals.delete", .ask, .recommended, "it would \(verb) git internals (.git), and git history is not part of Airbag snapshots.", t.text)
+            case .gitInternals: add("git.internals.delete", .ask, .recommended, "it would \(verb) version-control history (.git, .jj, .hg or .svn), which is not part of Airbag snapshots.", t.text)
             case .projectRoot(let r) where hasGitDirectory(r):
                 add("fs.rm.project-root", .ask, .required, "it would \(verb) the whole project including its git history, which snapshots do not cover.", t.text, roots: [r] + (held ?? []), paths: [r])
             case .projectRoot where held != [], .insideProject where held != [], .regenerable where held != []:
@@ -1165,6 +1229,10 @@ struct Analyzer {
             case .temporary: break
             case .device: add("fs.device.write", .block, .none, "it targets a device.", t.text)
             case .outside: add("fs.rm.outside", .ask, .none, "it would \(verb) \(t.text) outside the protected project, where no snapshot can restore it.", t.text)
+            case .unknown where cwd == nil && recursive && !t.opaque && Analyzer.everythingHere(t.text):
+                add("fs.rm.unknown-folder", .ask, .none, "it would \(verb) everything in a folder Airbag cannot determine (an earlier `cd` goes somewhere unresolved; with an empty variable, `cd` goes to the home folder).", t.text)
+            case .unknown where Analyzer.rootIfEmpty(t.text):
+                add("fs.rm.unset-variable", .ask, .none, "it would \(verb) \(t.text): if that variable or substitution is empty, the path starts at the root of the disk (`rm -rf \"$STEAMROOT/\"*` wiped home folders this way). Use ${NAME:?} or a literal path.", t.text)
             case .unknown: add("fs.rm.opaque", .ask, .recommended, "it would \(verb) a path built from an unresolved variable or command substitution (an empty value can turn it into a much wider path).", t.text)
             }
         }
@@ -1281,9 +1349,30 @@ struct Analyzer {
             let t = (w[0].text as NSString).lastPathComponent
             return Analyzer.shells.contains(t) || !readsOnly(t, Array(w.dropFirst()))
         }
+        // -fprint and friends write their results into a file.
+        if argv.contains(where: { ["-fprint", "-fprint0", "-fprintf", "-fls"].contains($0) }) { mayWrite("find") }
         guard deletes else { return } // read-only
         mayWrite("find")
-        var bases = args.prefix(while: { !$0.text.hasPrefix("-") && $0.text != "(" && $0.text != "!" })
+        // Options before the start points: BSD -H -L -P -E -X -d -s -x (also combined), -f PATH (a start point too),
+        // GNU -D LIST and -O<n>. With -L or -H a start point that is a link is followed.
+        var k = 0
+        var bases: [ShellWord] = []
+        var follow = false
+        while k < args.count {
+            let t = args[k].text
+            if t == "--" { k += 1; break }
+            if t == "-f", k + 1 < args.count { bases.append(args[k + 1]); k += 2; continue }
+            if t == "-D", k + 1 < args.count { k += 2; continue }
+            if t.hasPrefix("-O"), t.dropFirst(2).allSatisfy(\.isNumber) { k += 1; continue }
+            if t.count > 1, t.hasPrefix("-"), t.dropFirst().allSatisfy({ "HLPEXdsx".contains($0) }) {
+                follow = follow || t.contains("L") || t.contains("H")
+                k += 1
+                continue
+            }
+            break
+        }
+        bases += args[k...].prefix(while: { !$0.text.hasPrefix("-") && $0.text != "(" && $0.text != "!" })
+        if follow { bases = bases.map { $0.text.hasSuffix("/") ? $0 : ShellWord($0.text + "/", opaque: $0.opaque, hasGlob: $0.hasGlob, quoted: $0.quoted) } }
         if bases.isEmpty { bases = [ShellWord(".")] }
         let filtered = argv.contains(where: { ["-name", "-iname", "-path", "-ipath", "-regex", "-iregex", "-newer", "-mtime", "-mmin", "-size", "-type", "-empty", "-user", "-perm"].contains($0) })
         deletionUnderBases(Array(bases), filtered: filtered, whole: whole)
@@ -1356,7 +1445,7 @@ struct Analyzer {
             case .airbag: add("self.airbag", .block, .none, "it would move Airbag's own data.", s.text)
             case .outside: add("fs.mv.outside", .ask, .none, "it moves \(s.text), which is outside the protected project.", s.text)
             case .unknown: add("fs.mv.opaque", .ask, .recommended, "it moves a path built from an unresolved variable.", s.text)
-            case .gitInternals: add("git.internals.delete", .ask, .recommended, "it moves git internals (.git), which snapshots do not cover.", s.text)
+            case .gitInternals: add("git.internals.delete", .ask, .recommended, "it moves version-control history (.git, .jj, .hg or .svn), which snapshots do not cover.", s.text)
             case .projectRoot where held != [], .insideProject where held != [], .regenerable where held != []:
                 add("fs.mv.worktree", .ask, .required, "it moves \(s.text), \(holdsWorktreesReason(held))", s.text, roots: cls.roots + (held ?? []))
             case .projectRoot, .insideProject: add("fs.mv.project", .allow, .required, "it moves project files (restorable from the snapshot taken first).", s.text, roots: cls.roots)
@@ -1491,7 +1580,7 @@ struct Analyzer {
         case .device: add("fs.device.write", .block, .none, "it writes to a device.", target.text)
         case .outside where truncates && replacesOrUnknown(resolved?.path):
             add("fs.write.outside", .ask, .recommended, "it overwrites \(target.text) outside the protected project, where no snapshot can restore it.", target.text)
-        case .gitInternals: add("git.internals.write", .ask, .recommended, "it overwrites a file inside .git, which snapshots do not cover.", target.text)
+        case .gitInternals: add("git.internals.write", .ask, .recommended, "it overwrites a file inside version-control history (.git, .jj, .hg or .svn), which snapshots do not cover.", target.text)
         case .insideProject, .projectRoot:
             add("fs.write.project", .allow, .recommended, "it edits project files (a snapshot is taken first).", target.text, roots: cls.roots, paths: [resolved?.path])
         default: break
@@ -1753,6 +1842,15 @@ struct Analyzer {
                         "deno.remove", "remove_dir_all", "fs::remove", "os.removeall", "dir.delete", "unlink_missing", ".unlink(", "pathlib",
                         "remove_tree", "remove_entry", "remove_dir"]
         guard deleting.contains(where: { lowered.contains($0) }) else { return }
+        // The home folder computed at run time: `shutil.rmtree(os.environ['HOME'])`, `fs.rmSync(os.homedir(), …)`,
+        // `FileUtils.rm_rf(Dir.home)`.
+        if code.range(of: Analyzer.homeDeletePattern, options: .regularExpression) != nil {
+            add("interp.delete.catastrophic", .block, .none, "its inline \(name) code deletes your home directory.", whole)
+            return
+        }
+        // A path computed at run time (environment, the home folder) is not one of the literals Airbag can read.
+        let computed = ["environ", "getenv", "process.env", "homedir", "dir.home", "path.home", "env[", "env.get", "env.fetch", "env::var",
+                        "home_dir", "userhomedir", "$env", "bun.env", "expanduser", "gethome", "pwd.getpw"].contains { lowered.contains($0) }
         let paths = extractPaths(code)
         let classes = paths.map { classify(resolve(ShellWord($0))) }
         if let bad = classes.first(where: { if case .catastrophic = $0 { return true }; return false }), case .catastrophic(let p) = bad {
@@ -1762,7 +1860,7 @@ struct Analyzer {
         // Agent worktrees in a folder it deletes, and any root it names, get snapshots of their own.
         let held = paths.flatMap { worktrees(below: ShellWord($0)) ?? [] }
         let roots = classes.flatMap(\.roots) + held
-        if !classes.isEmpty, held.isEmpty, classes.allSatisfy({ if case .insideProject = $0 { return true }; if case .regenerable = $0 { return true }; if case .temporary = $0 { return true }; return false }) {
+        if !computed, !classes.isEmpty, held.isEmpty, classes.allSatisfy({ if case .insideProject = $0 { return true }; if case .regenerable = $0 { return true }; if case .temporary = $0 { return true }; return false }) {
             add("interp.delete.project", .allow, .required, "it deletes files from inline \(name) code inside the project (snapshot taken first).", whole,
                 roots: roots, paths: paths.map { resolve(ShellWord($0))?.path })
         } else {
@@ -1908,6 +2006,47 @@ struct Analyzer {
             i += 1
         }
         return out
+    }
+
+    /// Deleting the home folder computed in Python, Node, Ruby, Deno, Rust or Go code.
+    static let homeDeletePattern = #"(rmtree|rm_rf|rm_r|rmSync|rmdirSync|rimraf|remove_dir_all|RemoveAll|rm)\(\s*(os\.environ\[['"]HOME['"]\]|os\.environ\.get\(['"]HOME['"]\)|os\.getenv\(['"]HOME['"]\)|os\.path\.expanduser\(['"]~['"]\)|(require\(['"]os['"]\)|os)\.homedir\(\)|process\.env\.HOME|process\.env\[['"]HOME['"]\]|Dir\.home|ENV\[['"]HOME['"]\]|(pathlib\.)?Path\.home\(\)|Deno\.env\.get\(['"]HOME['"]\)|std::env::var\(['"]HOME['"]\)|home_dir\(\)|os\.UserHomeDir\(\))\s*[,)]"#
+
+    /// `*`, `.*`, `./*`, `.`, `./`: everything in the current folder.
+    static func everythingHere(_ text: String) -> Bool {
+        let t = text.hasPrefix("./") ? String(text.dropFirst(2)) : text
+        return t.isEmpty || t == "." || t.allSatisfy { "*.?/".contains($0) } && t.contains("*")
+    }
+
+    /// Whether an empty value turns this deletion target into the root of the disk or everything under it:
+    /// `$X/`, `"$X/"*`, `${X}/.*`, `$(cmd)/*` (the variable or substitution first, then only a slash and globs).
+    static func rootIfEmpty(_ text: String) -> Bool {
+        guard let m = text.range(of: #"^(\$\{?[A-Za-z_][A-Za-z0-9_]*\}?|\$[0-9@*#?]|\$\(…\)|`…`)/"#, options: .regularExpression) else { return false }
+        return text[m.upperBound...].allSatisfy { "*?./".contains($0) }
+    }
+
+    /// `ln -s TARGET [LINK | DIR]`: records the links the line makes, for the commands after it.
+    mutating func recordLinks(_ args: [ShellWord], _ operands: [ShellWord]) {
+        let flags = args.filter { $0.text.hasPrefix("-") && !$0.text.hasPrefix("--") }.map { String($0.text.dropFirst()) }.joined()
+        guard flags.contains("s") || args.contains(where: { $0.text == "--symbolic" }), let first = operands.first else { return }
+        var pairs: [(target: ShellWord, link: String?)] = []
+        if operands.count == 1 {
+            pairs = [(first, cwd.map { $0 + "/" + (first.text as NSString).lastPathComponent })]
+        } else {
+            let last = operands[operands.count - 1]
+            let lastPath = resolve(last)?.path
+            var isDir: ObjCBool = false
+            let intoDir = operands.count > 2 || last.text.hasSuffix("/") || (!flags.contains("n") && !flags.contains("h") && !flags.contains("T")
+                && context.useFileSystem && lastPath.map { FileManager.default.fileExists(atPath: $0, isDirectory: &isDir) && isDir.boolValue } == true)
+            for t in operands.dropLast() {
+                pairs.append((t, lastPath.map { intoDir ? $0 + "/" + (t.text as NSString).lastPathComponent : $0 }))
+            }
+        }
+        for (t, link) in pairs {
+            guard let link = link.map(normalize) else { continue }
+            if t.opaque { links[link] = .some(nil); continue }
+            let target = t.text.hasPrefix("/") ? t.text : (link as NSString).deletingLastPathComponent + "/" + t.text
+            links[link] = .some(normalize(target))
+        }
     }
 
     func extractPaths(_ code: String) -> [String] {

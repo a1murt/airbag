@@ -28,6 +28,9 @@
 "Add Project…" = "加入專案…";
 "Add these entries to the file by hand." = "請手動將這些項目加入檔案。";
 "Add these entries to the file by hand:" = "請手動將以下項目加入檔案：";
+"Deletes everything in a folder Airbag cannot determine, which may be your home folder." = "刪除 Airbag 無法確定的資料夾中的所有內容，那可能是你的家目錄。";
+"Deletes from a path that starts with a variable; if it is empty, the path starts at the root of the disk." = "在以變數開頭的路徑中刪除；變數為空時，路徑會從磁碟根目錄開始。";
+"Runs a program whose name is only known at run time on your home folder, a system folder or Airbag's data." = "對你的家目錄、系統資料夾或 Airbag 的資料執行一個直到執行時才知道名稱的程式。";
 "Through the Airbag plugin for Claude Code. To disconnect, turn the plugin off in Claude Code (/plugin)." = "透過 Claude Code 的 Airbag 外掛程式連線。若要中斷連線，請在 Claude Code 中關閉該外掛程式（/plugin）。";
 "added" = "已新增";
 "After a command" = "指令執行後";

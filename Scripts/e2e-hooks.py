@@ -79,9 +79,27 @@ cx["tool_use_id"] = "c1"
 r = hook("codex", cx, "pre-bash")
 check(r and r["hookSpecificOutput"]["permissionDecision"] == "deny", "Codex gets deny with allowance hint")
 gid = json.loads(subprocess.run([BIN, "guard", "--json"], capture_output=True, text=True, env=env).stdout)[0]["id"]
-subprocess.run([BIN, "allow", gid], env=env, check=True, capture_output=True)
+approved = subprocess.run([BIN, "allow", gid], env=env, capture_output=True, text=True)
+if approved.returncode != 0:
+    # `airbag allow` refuses inside an agent's session (this script may run in one): approve the way the menu bar does.
+    check("an agent may not approve" in approved.stderr, "`airbag allow` refuses to run inside an agent session")
+    db = sqlite3.connect(os.path.join(env["AIRBAG_HOME"], "registry.sqlite"))
+    sid, chash, rule = db.execute("SELECT session_id, command_hash, rule_id FROM guard_log WHERE id = ?", (gid,)).fetchone()
+    now = int(time.time() * 1000)
+    token = "01E2E" + gid[5:]
+    db.execute("""INSERT INTO allow_tokens(id, session_id, command_hash, rule_id, created_at, expires_at) VALUES (?,?,?,?,?,?)
+                  ON CONFLICT(session_id, command_hash, rule_id) DO UPDATE SET id = excluded.id, created_at = excluded.created_at,
+                  expires_at = excluded.expires_at, used_at = NULL""", (token, sid, chash, rule, now, now + 600_000))
+    db.execute("UPDATE guard_log SET token_id = ?, resolved_at = ?, resolution = 'user_allowed' WHERE id = ?", (token, now, gid))
+    db.commit(); db.close()
 cx["tool_use_id"] = "c2"
 check(hook("codex", cx, "pre-bash") is None, "after `airbag allow`, the retried command passes (Codex: empty reply)")
+print("== 5b. a command padded to make the check slow is still refused in time")
+for i, padded in enumerate(["rm -rf ~; " + "cd a; " * 1500, "rm -rf ~; echo " + "eyJaaaaaa-" * 20000]):
+    t = time.time()
+    r = hook("claude-code", {"session_id": "e2e-pad", "cwd": proj, "hook_event_name": "PreToolUse", "tool_name": "Bash",
+                             "permission_mode": "bypassPermissions", "tool_input": {"command": padded}, "tool_use_id": "pad%d" % i})
+    check(r and r["hookSpecificOutput"]["permissionDecision"] == "deny" and time.time() - t < 2, "padded `rm -rf ~` denied in under 2 s")
 print("== 6. restore what the agent destroyed")
 log = json.loads(subprocess.run([BIN, "log", "--json"], capture_output=True, text=True, env=env).stdout)
 snap_for = lambda c: next(e["snapshot"] for e in log if e["command"].startswith(c))
