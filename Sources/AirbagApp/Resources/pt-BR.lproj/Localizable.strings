@@ -238,7 +238,7 @@
 "Needs Approval" = "Requer aprovação";
 "Needs repair" = "Precisa de reparo";
 "Needs you" = "Precisa de você";
-"Nests shells too deeply to analyze." = "Aninha shells profundamente demais para analisar.";
+"Too deeply nested or too long for Airbag to check in time." = "Aninhado demais ou longo demais para o Airbag verificar a tempo.";
 "No agent evidence for this process." = "Nenhum indício de que um agente iniciou este processo.";
 "No agents connected. Only file saves are snapshotted." = "Nenhum agente conectado. Só há snapshots quando arquivos são salvos.";
 "No agents found on this Mac yet. When you install one, Airbag will offer to connect it." = "Nenhum agente encontrado neste Mac ainda. Quando você instalar um, o Airbag vai oferecer a conexão.";
@@ -420,6 +420,7 @@
 "Wiping your home folder is blocked; force pushes are flagged in Guard." = "Apagar sua pasta de início é bloqueado; force pushes são sinalizados na Trava.";
 "Working directory is inside the project; agent unknown." = "O diretório de trabalho está dentro do projeto; agente desconhecido.";
 "Would destroy your home folder, a system folder or other files no snapshot covers." = "Destruiria sua pasta pessoal, uma pasta do sistema ou outros arquivos que nenhum snapshot cobre.";
+"Changes the permissions of your home folder, a system folder or a secret file, which can lock you out of it." = "Altera as permissões da sua pasta pessoal, de uma pasta do sistema ou de um arquivo secreto, o que pode bloquear seu acesso a eles.";
 "Writes into your home folder or a similar place, where it can replace files no snapshot covers." = "Grava na sua pasta pessoal ou em um lugar parecido, onde pode substituir arquivos que nenhum snapshot cobre.";
 "Writes straight to a device, which can destroy a disk." = "Grava diretamente em um dispositivo, o que pode destruir um disco.";
 "You're protected" = "Proteção ativada";

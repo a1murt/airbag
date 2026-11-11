@@ -238,7 +238,7 @@
 "Needs Approval" = "Cần phê duyệt";
 "Needs repair" = "Cần sửa";
 "Needs you" = "Cần bạn xử lý";
-"Nests shells too deeply to analyze." = "Lồng các shell quá sâu để phân tích.";
+"Too deeply nested or too long for Airbag to check in time." = "Lồng nhau quá sâu hoặc quá dài để Airbag kiểm tra kịp thời.";
 "No agent evidence for this process." = "Không có dấu hiệu tiến trình này do agent khởi chạy.";
 "No agents connected. Only file saves are snapshotted." = "Chưa kết nối agent nào. Chỉ chụp nhanh khi tệp được lưu.";
 "No agents found on this Mac yet. When you install one, Airbag will offer to connect it." = "Chưa tìm thấy agent nào trên máy Mac này. Khi bạn cài đặt một agent, Airbag sẽ đề nghị kết nối.";
@@ -420,6 +420,7 @@
 "Wiping your home folder is blocked; force pushes are flagged in Guard." = "Việc xóa sạch thư mục nhà bị chặn; force push được đánh dấu trong Chốt an toàn.";
 "Working directory is inside the project; agent unknown." = "Thư mục làm việc nằm trong dự án; không rõ agent.";
 "Would destroy your home folder, a system folder or other files no snapshot covers." = "Sẽ phá hủy thư mục nhà, thư mục hệ thống hoặc các tệp khác mà không ảnh chụp nhanh nào bao gồm.";
+"Changes the permissions of your home folder, a system folder or a secret file, which can lock you out of it." = "Thay đổi quyền của thư mục nhà, thư mục hệ thống hoặc một tệp bí mật, khiến bạn có thể không mở được nó nữa.";
 "Writes into your home folder or a similar place, where it can replace files no snapshot covers." = "Ghi vào thư mục nhà hoặc nơi tương tự, nơi nó có thể thay thế các tệp mà không ảnh chụp nhanh nào bao gồm.";
 "Writes straight to a device, which can destroy a disk." = "Ghi thẳng vào thiết bị, có thể phá hủy ổ đĩa.";
 "You're protected" = "Bạn đã được bảo vệ";

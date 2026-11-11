@@ -238,7 +238,7 @@
 "Needs Approval" = "Perlu Persetujuan";
 "Needs repair" = "Perlu diperbaiki";
 "Needs you" = "Perlu tindakan Anda";
-"Nests shells too deeply to analyze." = "Menyusun shell terlalu dalam untuk dianalisis.";
+"Too deeply nested or too long for Airbag to check in time." = "Terlalu dalam bersarang atau terlalu panjang untuk diperiksa Airbag tepat waktu.";
 "No agent evidence for this process." = "Tidak ada tanda bahwa proses ini dijalankan oleh agen.";
 "No agents connected. Only file saves are snapshotted." = "Tidak ada agen yang terhubung. Snapshot hanya diambil saat file disimpan.";
 "No agents found on this Mac yet. When you install one, Airbag will offer to connect it." = "Belum ada agen yang ditemukan di Mac ini. Saat Anda menginstal agen, Airbag akan menawarkan untuk menghubungkannya.";
@@ -420,6 +420,7 @@
 "Wiping your home folder is blocked; force pushes are flagged in Guard." = "Menghapus isi folder rumah diblokir; force push ditandai di Pengaman.";
 "Working directory is inside the project; agent unknown." = "Direktori kerja ada di dalam proyek; agen tidak diketahui.";
 "Would destroy your home folder, a system folder or other files no snapshot covers." = "Akan menghancurkan folder rumah, folder sistem, atau file lain yang tidak tercakup snapshot mana pun.";
+"Changes the permissions of your home folder, a system folder or a secret file, which can lock you out of it." = "Mengubah izin folder rumah, folder sistem, atau file rahasia, sehingga Anda bisa kehilangan akses ke sana.";
 "Writes into your home folder or a similar place, where it can replace files no snapshot covers." = "Menulis ke folder rumah atau tempat serupa, tempat ia dapat mengganti file yang tidak tercakup snapshot mana pun.";
 "Writes straight to a device, which can destroy a disk." = "Menulis langsung ke perangkat, yang dapat menghancurkan disk.";
 "You're protected" = "Anda sudah terlindungi";

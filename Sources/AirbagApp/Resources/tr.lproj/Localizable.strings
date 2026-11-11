@@ -238,7 +238,7 @@
 "Needs Approval" = "Onay Gerekiyor";
 "Needs repair" = "Onarım gerekiyor";
 "Needs you" = "Sizi bekleyenler";
-"Nests shells too deeply to analyze." = "Kabukları analiz edilemeyecek kadar derin iç içe kullanır.";
+"Too deeply nested or too long for Airbag to check in time." = "Airbag'in zamanında denetleyemeyeceği kadar iç içe veya uzun.";
 "No agent evidence for this process." = "Bu işlemi bir ajanın başlattığına dair iz yok.";
 "No agents connected. Only file saves are snapshotted." = "Bağlı ajan yok. Yalnızca dosya kaydedildiğinde anlık görüntü alınır.";
 "No agents found on this Mac yet. When you install one, Airbag will offer to connect it." = "Bu Mac'te henüz ajan bulunamadı. Bir ajan yüklediğinizde Airbag onu bağlamayı önerecek.";
@@ -420,6 +420,7 @@
 "Wiping your home folder is blocked; force pushes are flagged in Guard." = "Ana klasörünüzün silinmesi engellenir; force push'lar Kalkan'da işaretlenir.";
 "Working directory is inside the project; agent unknown." = "Çalışma dizini proje içinde; ajan bilinmiyor.";
 "Would destroy your home folder, a system folder or other files no snapshot covers." = "Ana klasörünüzü, bir sistem klasörünü veya hiçbir anlık görüntünün kapsamadığı başka dosyaları yok ederdi.";
+"Changes the permissions of your home folder, a system folder or a secret file, which can lock you out of it." = "Ana klasörünüzün, bir sistem klasörünün veya gizli bir dosyanın izinlerini değiştirir; ona erişiminizi kaybedebilirsiniz.";
 "Writes into your home folder or a similar place, where it can replace files no snapshot covers." = "Ana klasörünüze veya benzer bir yere yazar; orada hiçbir anlık görüntünün kapsamadığı dosyaları değiştirebilir.";
 "Writes straight to a device, which can destroy a disk." = "Doğrudan bir aygıta yazar; bu bir diski yok edebilir.";
 "You're protected" = "Korunuyorsunuz";

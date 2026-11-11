@@ -2470,15 +2470,16 @@
    "expect": {
     "decision": "ask"
    },
-   "rule": "fs.write.outside",
-   "why": "copies into /Applications; /Applications itself is not overwritten"
+   "rule": "self.airbag",
+   "why": "replacing Airbag.app changes the binary agents' hooks run: waits for the user, like brew uninstall"
   },
   {
    "cmd": "cp -R build/Airbag.app /Applications",
    "expect": {
     "decision": "ask"
    },
-   "rule": "fs.write.outside"
+   "rule": "self.airbag",
+   "why": "replacing Airbag.app changes the binary agents' hooks run: waits for the user, like brew uninstall"
   },
   {
    "cmd": "mv notes.txt ~/Documents",

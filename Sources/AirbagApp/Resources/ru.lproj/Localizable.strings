@@ -238,7 +238,7 @@
 "Needs approval" = "Ждёт подтверждения";
 "Needs repair" = "Нужно починить";
 "Needs you" = "Нужно ваше решение";
-"Nests shells too deeply to analyze." = "Слишком глубоко вкладывает оболочки, чтобы их разобрать.";
+"Too deeply nested or too long for Airbag to check in time." = "Слишком глубокая вложенность или слишком длинная команда: Airbag не успевает её проверить.";
 "No agent evidence for this process." = "Нет признаков, что процесс запустил агент.";
 "No agents connected. Only file saves are snapshotted." = "Агенты не подключены. Снимки делаются только при сохранении файлов.";
 "No agents found on this Mac yet. When you install one, Airbag will offer to connect it." = "На этом Mac пока не найдено агентов. Когда вы установите агента, Airbag предложит его подключить.";
@@ -420,6 +420,7 @@
 "Wiping your home folder is blocked; force pushes are flagged in Guard." = "Стирание домашней папки блокируется, а force push отмечается в Предохранителе.";
 "Working directory is inside the project; agent unknown." = "Рабочая папка внутри проекта, агент неизвестен.";
 "Would destroy your home folder, a system folder or other files no snapshot covers." = "Может уничтожить домашнюю папку, системную папку или другие файлы, которых нет в снимках.";
+"Changes the permissions of your home folder, a system folder or a secret file, which can lock you out of it." = "Меняет права доступа к домашней папке, системной папке или секретному файлу, из-за чего вы можете потерять к ним доступ.";
 "Writes into your home folder or a similar place, where it can replace files no snapshot covers." = "Записывает в домашнюю папку или похожее место, где может заменить файлы, которых нет в снимках.";
 "Writes straight to a device, which can destroy a disk." = "Пишет прямо на устройство, что может уничтожить диск.";
 "You're protected" = "Защита включена";

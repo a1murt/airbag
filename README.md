@@ -134,8 +134,9 @@ on another volume, 1 MiB when the disk is low), and a folder that isn't a git re
 
 ### Guard: blocks the catastrophic, flags the risky
 
-Deleting your home folder or system folders, wiping a disk, deleting Airbag's own data: blocked before it runs, and
-the agent is told to ask you instead of retrying. An agent can't approve its own stopped command: `airbag allow`
+Deleting your home folder or system folders, wiping a disk, deleting, overwriting or locking a secret no snapshot
+holds (an SSH private key or `authorized_keys`, `~/.aws/credentials`, a keychain), deleting Airbag's own data: blocked
+before it runs, and the agent is told to ask you instead of retrying. An agent can't approve its own stopped command: `airbag allow`
 refuses to run inside an agent's session.
 
 Other risky commands (force push, deleting or overwriting files outside the project, dropping databases, deleting cloud
@@ -147,10 +148,12 @@ a dot on the menu bar icon. To make them wait for you instead, set **When a snap
 Some always wait for you, whatever that setting says:
 
 - switching Airbag off or deleting its snapshots: shell commands that edit, move or remove an agent's user-level hook
-  settings, `airbag hooks uninstall`, `airbag prune`, `airbag cleanup`, `brew uninstall` of Airbag;
+  settings, removing, replacing or locking Airbag's app or its `airbag` command, `airbag hooks uninstall`,
+  `airbag prune`, `airbag cleanup`, `brew uninstall` of Airbag;
 - a command that needs a snapshot (`rm`, `mv`, `git reset --hard`, `git clean`…) when Airbag couldn't take one;
 - a delete that starts at the root of the disk or in your home folder if a variable is empty (`rm -rf "$DIR/"*`,
-  `cd "$DIR" && rm -rf *`), and a program whose name is only known at run time handed your home or a system folder.
+  `cd "$DIR" && rm -rf *`), a program whose name is only known at run time handed your home or a system folder, and a
+  command too long or too deeply nested for Guard to check in time.
 
 While Airbag is paused nothing waits; blocks still apply. Guard reads the command text: it catches an agent's
 mistakes, not an agent set on hiding what it runs. Inside the project, the snapshot covers what Guard can't read.
@@ -230,20 +233,20 @@ Airbag.app (menu bar): timeline · restore · Guard · Radar · snapshots after 
 
 | | |
 |---|---|
-| Distinct Claude Code shell commands replayed from the author's Mac | **4,944** |
-| Allowed (a snapshot first when they can change files) | **95.8 %** |
-| Flagged as risky | **4.1 %** |
-| Blocked (both an agent running `airbag allow` on its own command) | **2** |
+| Distinct Claude Code shell commands replayed from the author's Mac | **5,090** |
+| Allowed (a snapshot first when they can change files) | **95.9 %** |
+| Flagged as risky | **4.0 %** |
+| Blocked (twice an agent running `airbag allow` on its own command, once deleting a folder that holds a git project) | **3** |
 | Hook time per read-only command, process start to reply, median | **11 ms** |
 | Hook time per file-changing command, unchanged 500- to 5k-file project, median | **14–25 ms** |
 | First file-changing command in a new 5k-file project, initial snapshot included | **571–591 ms** |
 | Snapshot of an unchanged 5k-file project † | **9–11 ms** |
 | Snapshot of an unchanged 50k-file project † | **116–184 ms** |
 | Restoring 100 files, 5k / 50k-file project † | **60 / 410 ms** |
-| Guard test cases, including an adversarial red-team set | **695** |
-| Automated tests, run in CI | **159** |
+| Guard test cases, including an adversarial red-team set | **732** |
+| Automated tests, run in CI | **161** |
 
-<sub>Apple M4, release build. Replay and hook times: 0.1.6, 2026-11-10; method, scripts and full results in
+<sub>Apple M4, release build of 0.1.6. Replay 2026-11-11, hook times 2026-11-10; method, scripts and full results in
 [benchmarks](docs/BENCHMARKS.md). † From [design/10 §11](docs/design/10-snapshot-engine.md) (2026-10-18), not
 re-measured since.<br>
 Deep dives: [architecture](docs/ARCHITECTURE.md) · [decisions](docs/DECISIONS.md) ·
@@ -378,9 +381,9 @@ reply); that time grows with the project's size. The first command that can chan
 snapshotted yet waits for that first snapshot: 571–591 ms for 5,000 files. In a large project (tens of thousands of
 files) the first snapshot takes longer than the hook's 1.5 s limit and finishes in the background; until it is done,
 commands that need a snapshot (`rm`, `mv`, `git reset --hard`…) wait for you. In a project of more than 400,000 files
-(outside the skipped folders) snapshots never complete, so there those commands always wait for you. Replaying 4,944
-distinct Claude Code shell commands from the author's Mac, 95.8 % were allowed, 4.1 % were flagged as risky, and 2 were
-blocked (both an agent running `airbag allow` on its own command).
+(outside the skipped folders) snapshots never complete, so there those commands always wait for you. Replaying 5,090
+distinct Claude Code shell commands from the author's Mac, 95.9 % were allowed, 4.0 % were flagged as risky, and 3 were
+blocked (twice an agent running `airbag allow` on its own command, once deleting a folder that holds a git project).
 </details>
 
 <details>
@@ -447,12 +450,13 @@ cloud-resource deletions are flagged as risky and recorded in Guard, or go to th
 <summary><b>Can an agent switch Airbag off?</b></summary>
 
 File commands that target Airbag's data (`rm`, `mv`, `cp`, `sed -i`, redirects…) and SQL written into its database are
-blocked. Shell commands that edit, move or remove an agent's user-level hook settings, `airbag hooks uninstall` and
-`brew uninstall` of Airbag stop the agent until you approve them (in the agent's own prompt, or with **Allow Once** in
+blocked. Shell commands that edit, move or remove an agent's user-level hook settings (also `plutil`, or inline
+`python -c` or `node -e` code that names them), removing, replacing or locking Airbag's app or its `airbag` command,
+`airbag hooks uninstall` and `brew uninstall` of Airbag stop the agent until you approve them (in the agent's own prompt, or with **Allow Once** in
 Airbag), even where other risky commands are only recorded; so do `airbag prune` and `airbag cleanup`. And agents can't
 approve their own commands: `airbag allow` refuses to run inside an agent's session. Guard reads the command text, so it doesn't see an agent's own file-edit
-tools, project-level settings (such as `disableAllHooks` in a project's `.claude/settings.json`), or a script or
-`python -c` that writes the file; while Airbag is paused only its blocks apply, and a hostile program running as you
+tools, project-level settings (such as `disableAllHooks` in a project's `.claude/settings.json`), or a script, or
+interpreter code that builds the file's path at run time, that writes the file; while Airbag is paused only its blocks apply, and a hostile program running as you
 can get around all of it.
 </details>
 

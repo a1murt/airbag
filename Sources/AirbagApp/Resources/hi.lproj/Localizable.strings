@@ -238,7 +238,7 @@
 "Needs Approval" = "मंज़ूरी ज़रूरी";
 "Needs repair" = "ठीक करना ज़रूरी";
 "Needs you" = "आपकी ज़रूरत है";
-"Nests shells too deeply to analyze." = "शेल को इतनी गहराई तक नेस्ट करता है कि उसका विश्लेषण नहीं हो सकता।";
+"Too deeply nested or too long for Airbag to check in time." = "इतना गहराई तक नेस्टेड या इतना लंबा कि Airbag समय पर जाँच नहीं कर सकता।";
 "No agent evidence for this process." = "इस प्रोसेस के किसी एजेंट से जुड़े होने का कोई संकेत नहीं।";
 "No agents connected. Only file saves are snapshotted." = "कोई एजेंट कनेक्ट नहीं है। सिर्फ़ फ़ाइल सहेजने पर स्नैपशॉट लिए जाते हैं।";
 "No agents found on this Mac yet. When you install one, Airbag will offer to connect it." = "इस Mac पर अभी तक कोई एजेंट नहीं मिला। जब आप कोई एजेंट इंस्टॉल करेंगे, Airbag उसे कनेक्ट करने का सुझाव देगा।";
@@ -420,6 +420,7 @@
 "Wiping your home folder is blocked; force pushes are flagged in Guard." = "होम फ़ोल्डर मिटाना ब्लॉक होता है; force push गार्ड में चिह्नित होते हैं।";
 "Working directory is inside the project; agent unknown." = "वर्किंग डायरेक्टरी प्रोजेक्ट के अंदर है; एजेंट अज्ञात।";
 "Would destroy your home folder, a system folder or other files no snapshot covers." = "आपके होम फ़ोल्डर, किसी सिस्टम फ़ोल्डर या ऐसी अन्य फ़ाइलों को नष्ट कर देगा जो किसी स्नैपशॉट में नहीं हैं।";
+"Changes the permissions of your home folder, a system folder or a secret file, which can lock you out of it." = "आपके होम फ़ोल्डर, किसी सिस्टम फ़ोल्डर या किसी गोपनीय फ़ाइल की अनुमतियाँ बदलता है, जिससे आप उस तक पहुँच खो सकते हैं।";
 "Writes into your home folder or a similar place, where it can replace files no snapshot covers." = "आपके होम फ़ोल्डर या ऐसी ही जगह में लिखता है, जहाँ यह उन फ़ाइलों को बदल सकता है जो किसी स्नैपशॉट में नहीं हैं।";
 "Writes straight to a device, which can destroy a disk." = "सीधे किसी डिवाइस पर लिखता है, जिससे डिस्क नष्ट हो सकती है।";
 "You're protected" = "आप सुरक्षित हैं";

@@ -187,3 +187,30 @@ struct RuleFixture: Decodable {
         #expect(v.decision == .block && v.primary?.ruleId == "sys.security", "\(v)")
     }
 }
+
+/// Paths and lines Guard has to judge from what the disk and the clock say (red team before launch, 2026-11-11).
+@Suite struct GuardFileSystemTests {
+    /// On a case-insensitive volume `~/DOCUMENTS` is `~/Documents`: the leaf is judged as the disk spells it.
+    @Test func aPathIsJudgedAsTheDiskSpellsIt() throws {
+        let t = TempDir("case"); defer { t.cleanup() }
+        try FileManager.default.createDirectory(atPath: t.sub("Documents"), withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(atPath: t.sub("proj"), withIntermediateDirectories: true)
+        let home = try #require(FileSystem.canonicalPath(t.path))
+        let ctx = GuardContext(cwd: home + "/proj", home: home, roots: [home + "/proj"])
+        for target in ["Documents", "DOCUMENTS", "documents"] {
+            #expect(RuleEngine().evaluate("rm -rf " + home + "/" + target, context: ctx).decision == .block, "\(target)")
+        }
+        #expect(RuleEngine().evaluate("rm -rf " + home + "/proj/x", context: ctx).decision == .allow)
+    }
+
+    /// A line too long to analyse in time waits for the user instead of passing.
+    @Test func aLineTooSlowToCheckWaits() {
+        let ctx = GuardContext(cwd: "/Users/u/Work/proj", home: "/Users/u", roots: ["/Users/u/Work/proj"], useFileSystem: false)
+        let line = (0..<60_000).map { "c\($0) x" }.joined(separator: ";")
+        let t0 = Clock.monotonicNs()
+        let v = RuleEngine().evaluate(line, context: ctx)
+        #expect(v.findings.contains { $0.ruleId == "shell.too-deep" && $0.alwaysWaits }, "\(v.findings.map(\.ruleId).prefix(3))")
+        #expect(v.decision == .ask)
+        #expect(Clock.monotonicNs() - t0 < 8_000_000_000) // stops at the budget, not at the end of the line
+    }
+}

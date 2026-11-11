@@ -238,7 +238,7 @@
 "Needs Approval" = "需要批准";
 "Needs repair" = "需要修复";
 "Needs you" = "需要你处理";
-"Nests shells too deeply to analyze." = "shell 嵌套过深，无法分析。";
+"Too deeply nested or too long for Airbag to check in time." = "嵌套太深或太长，Airbag 无法及时检查。";
 "No agent evidence for this process." = "没有迹象表明此进程由智能体启动。";
 "No agents connected. Only file saves are snapshotted." = "未连接智能体。仅在存储文件时创建快照。";
 "No agents found on this Mac yet. When you install one, Airbag will offer to connect it." = "这台 Mac 上尚未找到智能体。安装智能体后，Airbag 会提示你连接。";
@@ -420,6 +420,7 @@
 "Wiping your home folder is blocked; force pushes are flagged in Guard." = "清空个人文件夹的操作会被拦截；强制推送会在“防护”中标记。";
 "Working directory is inside the project; agent unknown." = "工作目录位于项目内；智能体未知。";
 "Would destroy your home folder, a system folder or other files no snapshot covers." = "会毁掉你的主文件夹、系统文件夹或其他不在快照中的文件。";
+"Changes the permissions of your home folder, a system folder or a secret file, which can lock you out of it." = "会更改你的主文件夹、系统文件夹或机密文件的权限，可能让你无法再访问它。";
 "Writes into your home folder or a similar place, where it can replace files no snapshot covers." = "写入你的主文件夹或类似位置，可能替换不在快照中的文件。";
 "Writes straight to a device, which can destroy a disk." = "直接写入设备，可能毁坏磁盘。";
 "You're protected" = "保护已开启";

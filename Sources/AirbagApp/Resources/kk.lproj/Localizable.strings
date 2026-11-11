@@ -238,7 +238,7 @@
 "Needs Approval" = "Растау қажет";
 "Needs repair" = "Жөндеу қажет";
 "Needs you" = "Сізді күтуде";
-"Nests shells too deeply to analyze." = "Қабықшаларды талдау мүмкін болмайтындай тым терең кірістіреді.";
+"Too deeply nested or too long for Airbag to check in time." = "Тым терең кірістірілген немесе тым ұзын: Airbag оны уақытында тексере алмайды.";
 "No agent evidence for this process." = "Бұл процесті агент іске қосқаны туралы белгі жоқ.";
 "No agents connected. Only file saves are snapshotted." = "Агенттер қосылмаған. Снапшот тек файл сақталғанда жасалады.";
 "No agents found on this Mac yet. When you install one, Airbag will offer to connect it." = "Бұл Mac-та әзірге агенттер табылмады. Агент орнатқаныңызда, Airbag оны қосуды ұсынады.";
@@ -420,6 +420,7 @@
 "Wiping your home folder is blocked; force pushes are flagged in Guard." = "Үй қалтасын түгел өшіру бұғатталады; force push Сақтандырғышта белгіленеді.";
 "Working directory is inside the project; agent unknown." = "Жұмыс қалтасы жоба ішінде, агент белгісіз.";
 "Would destroy your home folder, a system folder or other files no snapshot covers." = "Үй қалтасын, жүйелік қалтаны немесе снапшотқа кірмейтін басқа файлдарды жойып жіберуі мүмкін.";
+"Changes the permissions of your home folder, a system folder or a secret file, which can lock you out of it." = "Үй қалтасының, жүйелік қалтаның немесе құпия файлдың рұқсаттарын өзгертеді, сондықтан оған кіре алмай қалуыңыз мүмкін.";
 "Writes into your home folder or a similar place, where it can replace files no snapshot covers." = "Үй қалтасына немесе соған ұқсас орынға жазады, онда снапшотқа кірмейтін файлдарды ауыстыруы мүмкін.";
 "Writes straight to a device, which can destroy a disk." = "Тікелей құрылғыға жазады, бұл дискіні жойып жіберуі мүмкін.";
 "You're protected" = "Қорғау қосулы";

@@ -297,3 +297,24 @@ events pass. `airbag allow` refuses to run with an agent among its parent proces
 gets around. Replaying 4,944 commands from the author's sessions changed no decision, and none of them meets the three
 new rules. `Scripts/guard-fuzz.py` now also fails on a check slower than 2 s and includes the padding that was slow.
 
+**ADR-043 Guard guards the secrets themselves, Airbag's own install, and the code `source` runs.** An adversarial pass
+after ADR-042 (2026-11-11) confirmed fourteen more ways past Guard: `source` or `.` reading code from stdin, a
+here-string or a process substitution (`source /dev/stdin <<< 'rm -rf ~'`, `bash <(printf 'rm -rf ~')`), zsh's `=rm`,
+the `~+` and `~-` tildes, `${HOME%/}` and `${HOME:0}`, `plutil` or inline interpreter code rewriting an agent's hook
+settings, locking instead of deleting (`chmod 000`, `chmod u-r`, `chflags uchg` on the home folder, a system folder or
+a key), deleting or replacing Airbag's app or the `airbag` binary the hooks run, and brace expansions or lines built to
+exhaust the check. `source` and `.` are executors now: what they read from stdin, a here-string or a process
+substitution is analysed like `sh -c`, and a process substitution whose output Airbag cannot know asks. The lexer
+applies `=cmd`, `~+` (the current folder) and the `%`, `#` and `:offset` operators; `~-` and `~N` are a folder Airbag
+cannot determine (`fs.rm.unknown-folder`). A word with more than 64 braces or longer than 16,384 characters is not
+brace-expanded but opaque, and an analysis that passes 1.5 s stops and asks (`shell.too-deep`, which always waits).
+Taking the owner's access away from a critical folder or a secret (no read, no execute on a folder, an immutable flag)
+blocks like deleting it. Airbag's app and binary are a path class of their own: deleting, moving, replacing or locking
+them is `self.airbag` and waits for the user, not a block, because installing a fresh build (`cp -R build/Airbag.app
+/Applications`) is what a developer of Airbag does. Secrets were first whole folders (`~/.ssh`, `~/.gnupg`, `~/.aws`,
+`~/.kube`, `~/Library/Keychains`) in which every file counted as critical; replaying the author's history turned five
+everyday commands stricter (a `Host` appended to `~/.ssh/config`, `chmod 600` on it, `perl -i` on it). The rule now
+names the files: an SSH private key or `authorized_keys`, `~/.aws/credentials`, GnuPG private keys and keyrings,
+`~/.kube/config`, keychains. Deleting, overwriting, emptying or locking one blocks; appending to `authorized_keys`
+asks, since it lets someone log in; every other file in those folders is judged as before. Replaying 5,090 commands
+changed no decision against 0.1.5.

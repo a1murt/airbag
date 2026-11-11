@@ -238,7 +238,7 @@
 "Needs Approval" = "承認が必要";
 "Needs repair" = "修復が必要";
 "Needs you" = "対応が必要";
-"Nests shells too deeply to analyze." = "シェルの入れ子が深すぎて解析できません。";
+"Too deeply nested or too long for Airbag to check in time." = "入れ子が深すぎるか長すぎて、Airbag が時間内に確認できません。";
 "No agent evidence for this process." = "エージェントが起動したという形跡はありません。";
 "No agents connected. Only file saves are snapshotted." = "接続されたエージェントがありません。スナップショットはファイルの保存時にのみ作成されます。";
 "No agents found on this Mac yet. When you install one, Airbag will offer to connect it." = "このMacにはまだエージェントが見つかりません。エージェントをインストールすると、Airbagが接続を提案します。";
@@ -420,6 +420,7 @@
 "Wiping your home folder is blocked; force pushes are flagged in Guard." = "ホームフォルダの消去はブロックされ、強制プッシュはガードで警告されます。";
 "Working directory is inside the project; agent unknown." = "作業ディレクトリはプロジェクト内にあります。エージェントは不明です。";
 "Would destroy your home folder, a system folder or other files no snapshot covers." = "ホームフォルダ、システムフォルダ、またはスナップショットの対象外のファイルを破壊するおそれがあります。";
+"Changes the permissions of your home folder, a system folder or a secret file, which can lock you out of it." = "ホームフォルダ、システムフォルダ、または秘密のファイルのアクセス権を変更し、開けなくなるおそれがあります。";
 "Writes into your home folder or a similar place, where it can replace files no snapshot covers." = "ホームフォルダなどに書き込み、スナップショットの対象外のファイルを置き換えるおそれがあります。";
 "Writes straight to a device, which can destroy a disk." = "デバイスに直接書き込みます。ディスクが破壊されるおそれがあります。";
 "You're protected" = "保護が有効になりました";

@@ -41,6 +41,23 @@ public enum FileSystem {
         return String(cString: buf)
     }
 
+    /// Whether the path is a directory (following symlinks).
+    public static func isDirectory(_ path: String) -> Bool {
+        var d: ObjCBool = false
+        return FileManager.default.fileExists(atPath: path, isDirectory: &d) && d.boolValue
+    }
+
+    /// The on-disk spelling of a path whose last component may be a symlink, which is not followed
+    /// (`~/DOCUMENTS` → `~/Documents` on a case-insensitive volume). nil when it does not exist.
+    public static func canonicalLinkPath(_ path: String) -> String? {
+        let fd = open(path, O_RDONLY | O_SYMLINK | O_CLOEXEC | O_NONBLOCK)
+        guard fd >= 0 else { return nil }
+        defer { close(fd) }
+        var buf = [CChar](repeating: 0, count: Int(MAXPATHLEN))
+        guard fcntl(fd, F_GETPATH, &buf) != -1 else { return nil }
+        return String(cString: buf)
+    }
+
     /// Canonical path for a path that may not exist: canonicalises the deepest existing ancestor and appends
     /// the remaining components.
     public static func resolvedPath(_ path: String) -> String {

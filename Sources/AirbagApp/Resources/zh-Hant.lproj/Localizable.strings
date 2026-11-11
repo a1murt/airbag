@@ -238,7 +238,7 @@
 "Needs Approval" = "需要核准";
 "Needs repair" = "需要修復";
 "Needs you" = "需要你處理";
-"Nests shells too deeply to analyze." = "shell 巢狀過深，無法分析。";
+"Too deeply nested or too long for Airbag to check in time." = "巢狀太深或太長，Airbag 無法及時檢查。";
 "No agent evidence for this process." = "沒有跡象顯示此處理程序由代理程式啟動。";
 "No agents connected. Only file saves are snapshotted." = "未連接代理程式。只有儲存檔案時才會建立快照。";
 "No agents found on this Mac yet. When you install one, Airbag will offer to connect it." = "這台 Mac 上尚未找到代理程式。安裝代理程式後，Airbag 會提示你連接。";
@@ -420,6 +420,7 @@
 "Wiping your home folder is blocked; force pushes are flagged in Guard." = "清除個人專屬檔案夾的操作會被阻擋；強制推送會在「防護」中標示。";
 "Working directory is inside the project; agent unknown." = "工作目錄位於專案內，代理程式不明。";
 "Would destroy your home folder, a system folder or other files no snapshot covers." = "會毀掉你的家目錄、系統資料夾或其他不在快照中的檔案。";
+"Changes the permissions of your home folder, a system folder or a secret file, which can lock you out of it." = "會更改你的家目錄、系統資料夾或機密檔案的權限，可能讓你無法再存取它。";
 "Writes into your home folder or a similar place, where it can replace files no snapshot covers." = "寫入你的家目錄或類似位置，可能取代不在快照中的檔案。";
 "Writes straight to a device, which can destroy a disk." = "直接寫入裝置，可能毀損磁碟。";
 "You're protected" = "你已受到保護";

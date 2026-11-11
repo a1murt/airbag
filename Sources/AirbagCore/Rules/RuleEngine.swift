@@ -41,7 +41,8 @@ extension GuardFinding {
     /// (`self.*`), a command that needs a snapshot Airbag could not take, a program whose name is only known at run time
     /// handed the home folder or a system folder, and a delete that starts at the root of the disk if a variable is empty.
     public var alwaysWaits: Bool {
-        ruleId == "snapshot.unavailable" || ruleId.hasPrefix("self.") || ["shell.opaque-command", "fs.rm.unset-variable", "fs.rm.unknown-folder"].contains(ruleId)
+        ruleId == "snapshot.unavailable" || ruleId.hasPrefix("self.")
+            || ["shell.opaque-command", "fs.rm.unset-variable", "fs.rm.unknown-folder", "shell.too-deep"].contains(ruleId)
     }
 }
 
@@ -95,6 +96,7 @@ public struct GuardContext: Sendable {
 enum PathClass: Equatable {
     case catastrophic(String)   // home, system, user data folders, or a parent of a protected root
     case airbag                 // Airbag's own data
+    case airbagApp              // Airbag.app or the `airbag` command agents' hooks run
     case gitInternals(String)   // .git of a protected root (history is not in snapshots)
     case projectRoot(String)    // a protected root itself, or an agent worktree in one (a root of its own)
     case insideProject(String)  // inside a protected root or one of its agent worktrees
@@ -158,7 +160,14 @@ struct Analyzer {
     var findings: [GuardFinding] = []
     /// Commands seen so far that may modify files; empty while every command is known not to.
     var writers: [String] = []
+    var writerSet: Set<String> = []
     var readOnly: Bool { writers.isEmpty }
+    /// Index of `findings` by rule and matched text, so that adding stays linear in a long line.
+    var findingIndex: [String: Int] = [:]
+    /// A line that takes longer than this to analyse waits for the user (`shell.too-deep`): a slow verdict must never
+    /// become a pass by default.
+    let deadlineNs = Clock.monotonicNs() + 1_500_000_000
+    var exhausted = false
     /// Name of the command being analysed (what `mayWrite()` records).
     var current = ""
     var cwd: String?
@@ -177,13 +186,17 @@ struct Analyzer {
 
     mutating func mayWrite(_ what: String? = nil) {
         let w = what ?? current
-        if !writers.contains(w) { writers.append(w) }
+        if writerSet.insert(w).inserted { writers.append(w) }
     }
 
     mutating func add(_ id: String, _ decision: GuardDecision, _ snapshot: SnapshotNeed = .recommended, _ reason: String, _ matched: String,
                       roots: [String] = [], paths: [String?] = []) {
-        let i = findings.firstIndex { $0.ruleId == id && $0.matched == matched } ?? findings.endIndex
-        if i == findings.endIndex { findings.append(GuardFinding(ruleId: id, decision: decision, snapshot: snapshot, reason: reason, matched: matched)) }
+        let key = id + "\u{0}" + matched
+        let i = findingIndex[key] ?? findings.endIndex
+        if i == findings.endIndex {
+            findings.append(GuardFinding(ruleId: id, decision: decision, snapshot: snapshot, reason: reason, matched: matched))
+            findingIndex[key] = i
+        }
         // The same text can target another root (`git clean -fd && cd ../other && git clean -fd`): it needs a snapshot too.
         for r in roots where !findings[i].roots.contains(r) { findings[i].roots.append(r) }
         for case let p? in paths where !findings[i].paths.contains(p) { findings[i].paths.append(p) }
@@ -307,7 +320,9 @@ struct Analyzer {
                 // Without a trailing slash, rm/mv act on the link itself: resolve only the parent.
                 let parent = (p as NSString).deletingLastPathComponent
                 if p != "/", let realParent = FileSystem.canonicalPath(parent) {
-                    p = (realParent == "/" ? "" : realParent) + "/" + (p as NSString).lastPathComponent
+                    // The leaf as the disk spells it (`~/DOCUMENTS` is `~/Documents` on a case-insensitive volume).
+                    let leaf = FileSystem.canonicalLinkPath(p).map { ($0 as NSString).lastPathComponent } ?? (p as NSString).lastPathComponent
+                    p = (realParent == "/" ? "" : realParent) + "/" + leaf
                 }
             }
         }
@@ -356,6 +371,8 @@ struct Analyzer {
             if p == ab || p.hasPrefix(ab + "/") { return .airbag }
             if ab.hasPrefix(p + "/") { return .catastrophic(p) }
         }
+        // Airbag's app and the hook binary agents call: removing or locking them switches the hooks off.
+        if Analyzer.airbagInstalls(home: context.home).contains(where: { p == $0 || p.hasPrefix($0 + "/") }) { return .airbagApp }
         if criticalPaths.contains(p) { return .catastrophic(p) }
         // A parent of a protected root, unless that root is an agent worktree of another root `p` lies in: what deletes
         // or moves `p` then names the worktrees below it (`worktrees(below:)`), each with a snapshot of its own.
@@ -709,8 +726,10 @@ struct Analyzer {
             else if !a.hasPrefix("-") && !sawExpression { scripts.append(a); sawExpression = true } // the first operand is the script
             i += 1
         }
-        let command = #"(^|[;\n{}!\s0-9$/])[gpIimMe0-9]*[wWe](\s|$|;|\})"#
-        return scripts.contains { $0.range(of: command, options: .regularExpression) != nil }
+        // Digits are kept out of the flag run: in a long run of them the pattern backtracked for seconds. A very long
+        // script is taken to write.
+        let command = #"(^|[;\n{}!\s0-9$/])[gpIimMe]*[wWe](\s|$|;|\})"#
+        return scripts.contains { $0.count > 2048 || $0.range(of: command, options: .regularExpression) != nil }
     }
 
     /// sqlite3 with SQL that only reads (SELECT, EXPLAIN, PRAGMA queries and display dot-commands). The SQL comes from
@@ -807,6 +826,12 @@ struct Analyzer {
     }
 
     mutating func analyzeCommand(_ cmdIn: ShellCommand, previous: ShellCommand?, depth: Int) {
+        if exhausted { return }
+        if Clock.monotonicNs() > deadlineNs {
+            exhausted = true
+            add("shell.too-deep", .ask, .none, "it is too long or complex for Airbag to check in time.", "the command")
+            return
+        }
         var cmd = cmdIn
         // Redirections that write.
         for r in cmd.redirects where Analyzer.opensFileForWriting(r) {
@@ -820,8 +845,14 @@ struct Analyzer {
             if cls != .temporary { mayWrite("\(r.op) \(r.target.text)") }
             if case .device = cls { add("fs.device.write", .block, .none, "it writes directly to a device, which can destroy a disk.", r.target.text) }
             switch cls {
+            case .outside where secretFile(resolve(r.target)):
+                if truncates { add("fs.redirect.catastrophic", .block, .none, "it overwrites \(r.target.text), a secret no snapshot holds.", r.target.text) }
+                else if Analyzer.isAuthorizedKeys(resolve(r.target)?.path) {
+                    add("fs.write.outside", .ask, .none, "it adds to \(r.target.text), which lets whoever holds a key listed there log in as you.", r.target.text)
+                }
             case .catastrophic: add("fs.redirect.catastrophic", .block, .none, "it overwrites \(r.target.text), which is not a regular project file.", r.target.text)
             case .airbag: add("self.airbag", .block, .none, "it modifies Airbag's own data, which protects this project.", r.target.text)
+            case .airbagApp: add("self.airbag", .ask, .none, "it changes Airbag's app or the command agents' hooks run, which can switch Airbag's protection off; only the user should do that.", r.target.text)
             case .outside where truncates && replacesOrUnknown(resolve(r.target)?.path):
                 add("fs.truncate.outside", .ask, .recommended, "it overwrites \(r.target.text) outside the protected project, where no snapshot can restore it.", r.target.text)
             case .unknown where truncates: add("fs.truncate.opaque", .ask, .recommended, "it overwrites a file whose path depends on an unresolved variable.", r.target.text)
@@ -880,6 +911,9 @@ struct Analyzer {
         cmd.words = words
         guard let first = words.first else { return }
         var name = first.program ?? (first.text as NSString).lastPathComponent
+        // zsh runs `=rm` as the rm on the PATH (`EQUALS`, on by default).
+        if first.program == nil, !first.quoted, name.count > 1, name.hasPrefix("="),
+           name.dropFirst().allSatisfy({ $0.isLetter || $0.isNumber || "_.+-".contains($0) }) { name = String(name.dropFirst()) }
         // Homebrew GNU coreutils/findutils install `grm`, `gmv`, `gfind`, ….
         let gnuTools: Set<String> = ["rm", "mv", "cp", "ln", "dd", "chmod", "chown", "chgrp", "truncate", "find", "xargs", "install",
                                      "tee", "shred", "rmdir", "unlink", "touch", "tar", "sed"]
@@ -909,14 +943,15 @@ struct Analyzer {
         }
         // A pipe into a shell or interpreter runs downloaded or generated code. Literal text an echo or printf writes is
         // the script itself (judged like `-c`); `cat file | sh` runs a script file; anything else is code Airbag cannot see.
-        if cmdIn.connector == .pipe, Analyzer.shells.contains(name) || ["python", "python3", "node", "ruby", "perl"].contains(name), args.allSatisfy({ $0.text.hasPrefix("-") }),
+        let readsStdin = ["source", "."].contains(name) && ["/dev/stdin", "/dev/fd/0"].contains(args.first?.text ?? "")
+        if cmdIn.connector == .pipe, ((Analyzer.shells.contains(name) || ["python", "python3", "node", "ruby", "perl"].contains(name)) && args.allSatisfy({ $0.text.hasPrefix("-") })) || readsStdin,
            let prev = previous {
             let source = ((prev.words.first?.text ?? "") as NSString).lastPathComponent
             let piped = prev.argv.joined(separator: " ") + " | " + whole
             if ["curl", "wget", "http", "xh", "fetch"].contains(source) {
                 add("net.pipe.shell", .ask, .recommended, "it pipes a downloaded script straight into \(name).", piped)
             } else if let code = Analyzer.printedText(prev), !code.opaque {
-                if Analyzer.shells.contains(name) { analyze(code.text, depth: depth + 1) } else { analyzeInterpreter(name, [ShellWord("-c"), code], whole: piped, depth: depth) }
+                if Analyzer.shells.contains(name) || readsStdin { analyze(code.text, depth: depth + 1) } else { analyzeInterpreter(name, [ShellWord("-c"), code], whole: piped, depth: depth) }
                 return
             } else if source != "cat" {
                 add("shell.opaque", .ask, .recommended, "it pipes text that \(source) produces into \(name) as code, which Airbag cannot check.", piped)
@@ -928,7 +963,18 @@ struct Analyzer {
         // file (snapshot, no text heuristics: on real agent scripts they mostly flag string data).
         let hereString = cmd.redirects.first(where: { $0.op == "<<<" })?.target
         let hereDocument = cmd.redirects.first(where: { ($0.op == "<<" || $0.op == "<<-") && $0.target.heredoc != nil })?.target.heredoc
-        if Analyzer.shells.contains(name) || Analyzer.shells.contains(first.text), let code = hereString ?? hereDocument.map({ ShellWord($0) }) {
+        // `source <(echo CODE)`, `bash <(printf CODE)`: the code another command prints, run as a script.
+        if Analyzer.shells.contains(name) || ["source", "."].contains(name),
+           let inner = args.first(where: { !$0.text.hasPrefix("-") })?.processSubstitution {
+            var lexer = ShellLexer(environment: context.environment, home: context.home)
+            if let producer = lexer.parse(inner, depth: depth + 1).first, let code = Analyzer.printedText(producer), !code.opaque {
+                analyze(code.text, depth: depth + 1)
+            } else {
+                add("shell.opaque", .ask, .recommended, "it runs shell code that another command produces, which Airbag cannot check.", whole)
+            }
+            return
+        }
+        if Analyzer.shells.contains(name) || Analyzer.shells.contains(first.text) || readsStdin, let code = hereString ?? hereDocument.map({ ShellWord($0) }) {
             if code.opaque { add("shell.opaque", .ask, .recommended, "it feeds a shell text built from unresolved variables.", whole) }
             analyze(code.text, depth: depth + 1)
             return
@@ -1057,6 +1103,9 @@ struct Analyzer {
         case "tee":
             let append = args.contains { $0.text == "-a" || $0.text == "--append" }
             for t in args where !t.text.hasPrefix("-") { writeCheck(t, truncates: !append, whole: whole) }
+        case "plutil":
+            // -insert, -replace, -remove, -create and -convert rewrite the file unless the result goes to stdout.
+            if !readsOnly(name, args), let target = args.last(where: { !$0.text.hasPrefix("-") }) { writeCheck(target, truncates: true, whole: whole) }
         case "awk", "gawk", "mawk", "nawk": analyzeAwk(args, whole: whole, depth: depth)
         case "vim", "vi", "nvim", "ex", "view", "gvim", "mvim": analyzeVim(args, whole: whole, depth: depth)
         case "dd": analyzeDD(argv, whole: whole)
@@ -1212,6 +1261,7 @@ struct Analyzer {
                 if recursive || t.hasGlob { add("fs.rm.catastrophic", .block, .none, "it would \(verb) \(describe(p)), which no snapshot covers.", t.text) }
                 else { add("fs.rm.outside", .ask, .none, "it would \(verb) \(t.text) outside the protected project.", t.text) }
             case .airbag: add("self.airbag", .block, .none, "it would \(verb) Airbag's own data, which protects this project.", t.text)
+            case .airbagApp: add("self.airbag", .ask, .none, "it changes Airbag's app or the command agents' hooks run, which can switch Airbag's protection off; only the user should do that.", t.text)
             case .gitInternals: add("git.internals.delete", .ask, .recommended, "it would \(verb) version-control history (.git, .jj, .hg or .svn), which is not part of Airbag snapshots.", t.text)
             case .projectRoot(let r) where hasGitDirectory(r):
                 add("fs.rm.project-root", .ask, .required, "it would \(verb) the whole project including its git history, which snapshots do not cover.", t.text, roots: [r] + (held ?? []), paths: [r])
@@ -1228,7 +1278,11 @@ struct Analyzer {
             case .regenerable: break
             case .temporary: break
             case .device: add("fs.device.write", .block, .none, "it targets a device.", t.text)
+            case .outside where secretFile(resolve(t)):
+                add("fs.rm.catastrophic", .block, .none, "it would \(verb) \(t.text), a secret no snapshot holds.", t.text)
             case .outside: add("fs.rm.outside", .ask, .none, "it would \(verb) \(t.text) outside the protected project, where no snapshot can restore it.", t.text)
+            case .unknown where Analyzer.unknownFolderPath(t.text):
+                add("fs.rm.unknown-folder", .ask, .none, "it would \(verb) \(t.text), in a folder Airbag cannot determine (`~-` and the directory stack, or the home folder changed by an expansion it cannot apply).", t.text)
             case .unknown where cwd == nil && recursive && !t.opaque && Analyzer.everythingHere(t.text):
                 add("fs.rm.unknown-folder", .ask, .none, "it would \(verb) everything in a folder Airbag cannot determine (an earlier `cd` goes somewhere unresolved; with an empty variable, `cd` goes to the home folder).", t.text)
             case .unknown where Analyzer.rootIfEmpty(t.text):
@@ -1443,6 +1497,7 @@ struct Analyzer {
             switch cls {
             case .catastrophic(let p): add("fs.mv.catastrophic", .block, .none, "it would move \(describe(p)) away, breaking the system or your files.", s.text)
             case .airbag: add("self.airbag", .block, .none, "it would move Airbag's own data.", s.text)
+            case .airbagApp: add("self.airbag", .ask, .none, "it changes Airbag's app or the command agents' hooks run, which can switch Airbag's protection off; only the user should do that.", s.text)
             case .outside: add("fs.mv.outside", .ask, .none, "it moves \(s.text), which is outside the protected project.", s.text)
             case .unknown: add("fs.mv.opaque", .ask, .recommended, "it moves a path built from an unresolved variable.", s.text)
             case .gitInternals: add("git.internals.delete", .ask, .recommended, "it moves version-control history (.git, .jj, .hg or .svn), which snapshots do not cover.", s.text)
@@ -1523,6 +1578,7 @@ struct Analyzer {
         switch classify(resolve(dest)) {
         case .catastrophic(let p): add("fs.overwrite.catastrophic", .block, .none, "it would \(verb) \(describe(p)).", dest.text)
         case .airbag: add("self.airbag", .block, .none, "it would \(verb) Airbag's own data.", dest.text)
+        case .airbagApp: add("self.airbag", .ask, .none, "it changes Airbag's app or the command agents' hooks run, which can switch Airbag's protection off; only the user should do that.", dest.text)
         case .device: add("fs.device.write", .block, .none, "it writes to a device.", dest.text)
         default: break
         }
@@ -1574,9 +1630,17 @@ struct Analyzer {
             return
         }
         let cls = classify(resolved)
+        if cls == .outside, secretFile(resolved) {
+            if truncates { add("fs.overwrite.catastrophic", .block, .none, "it would overwrite \(target.text), a secret no snapshot holds.", target.text) }
+            else if Analyzer.isAuthorizedKeys(resolved?.path) {
+                add("fs.write.outside", .ask, .none, "it adds to \(target.text), which lets whoever holds a key listed there log in as you.", target.text)
+            }
+            return
+        }
         switch cls {
         case .catastrophic(let p): add("fs.overwrite.catastrophic", .block, .none, "it would overwrite \(describe(p)).", target.text)
         case .airbag: add("self.airbag", .block, .none, "it modifies Airbag's own data, which protects this project.", target.text)
+        case .airbagApp: add("self.airbag", .ask, .none, "it changes Airbag's app or the command agents' hooks run, which can switch Airbag's protection off; only the user should do that.", target.text)
         case .device: add("fs.device.write", .block, .none, "it writes to a device.", target.text)
         case .outside where truncates && replacesOrUnknown(resolved?.path):
             add("fs.write.outside", .ask, .recommended, "it overwrites \(target.text) outside the protected project, where no snapshot can restore it.", target.text)
@@ -1597,6 +1661,8 @@ struct Analyzer {
             switch cls {
             case .catastrophic(let p): add("fs.redirect.catastrophic", .block, .none, "it empties \(describe(p)).", t.text)
             case .airbag: add("self.airbag", .block, .none, "it empties Airbag's own data.", t.text)
+            case .airbagApp: add("self.airbag", .ask, .none, "it changes Airbag's app or the command agents' hooks run, which can switch Airbag's protection off; only the user should do that.", t.text)
+            case .outside where secretFile(resolve(t)): add("fs.redirect.catastrophic", .block, .none, "it empties \(t.text), a secret no snapshot holds.", t.text)
             case .outside where replacesOrUnknown(resolve(t)?.path): add("fs.truncate.outside", .ask, .recommended, "it empties \(t.text) outside the protected project.", t.text)
             case .unknown: add("fs.truncate.opaque", .ask, .recommended, "it empties a file whose path depends on an unresolved variable.", t.text)
             case .insideProject, .projectRoot:
@@ -1626,8 +1692,15 @@ struct Analyzer {
         for t in targets {
             switch classify(resolve(t)) {
             case .catastrophic(let p):
-                add("fs.perm.catastrophic", recursive ? .block : .ask, .none, "it changes \(name == "xattr" ? "attributes" : "ownership or permissions") of \(describe(p))\(recursive ? " recursively" : "").", t.text)
+                // Taking away the owner's access or making it immutable locks you out as surely as deleting it.
+                // A glob (`~/.ssh/*`) changes the entries inside, mostly files: only taking away read access locks those.
+                let locks = Analyzer.locksAccess(name, args, isDirectory: resolve(t).map { !$0.contents && FileSystem.isDirectory($0.path) } ?? false)
+                add("fs.perm.catastrophic", recursive || locks ? .block : .ask, .none,
+                    "it \(locks ? "locks" : "changes \(name == "xattr" ? "attributes" : "ownership or permissions") of") \(describe(p) == t.text || resolve(t)?.path == p ? describe(p) : t.text)\(recursive ? " recursively" : "").", t.text)
             case .airbag: add("self.airbag", .block, .none, "it changes Airbag's own data.", t.text)
+            case .airbagApp: add("self.airbag", .ask, .none, "it changes Airbag's app or the command agents' hooks run, which can switch Airbag's protection off; only the user should do that.", t.text)
+            case .outside where secretFile(resolve(t)) && Analyzer.locksAccess(name, args, isDirectory: false):
+                add("fs.perm.catastrophic", .block, .none, "it locks \(t.text), a secret you could then no longer use.", t.text)
             case .outside where recursive: add("fs.perm.outside", .ask, .none, "it recursively changes permissions outside the protected project.", t.text)
             case .unknown where recursive: add("fs.perm.opaque", .ask, .recommended, "it recursively changes permissions of a path built from an unresolved variable.", t.text)
             default: break
@@ -1841,6 +1914,14 @@ struct Analyzer {
                         "rm_rf", "rm_r", "shutil.move", "send2trash", "truncate(", "deletesync", "fs.promises.rm", "removesync",
                         "deno.remove", "remove_dir_all", "fs::remove", "os.removeall", "dir.delete", "unlink_missing", ".unlink(", "pathlib",
                         "remove_tree", "remove_entry", "remove_dir"]
+        // Code that writes an agent's hook settings (`fs.writeFileSync(os.homedir() + '/.claude/settings.json', …)`)
+        // switches Airbag off like editing them with sed.
+        let hookFiles = [".claude/settings.json", ".claude/settings.local.json", ".codex/hooks.json", ".codex/config.toml",
+                         ".cursor/hooks.json", ".gemini/settings.json", ".copilot/hooks", ".copilot/settings.json", ".copilot/settings.local.json"]
+        let writes = ["write", "dump", "unlink", "remove", "rename", "rmsync", "truncate", "copyfile", "symlink", "move(", "replace("]
+        if hookFiles.contains(where: { lowered.contains($0) }), writes.contains(where: { lowered.contains($0) }) {
+            add("self.hooks", .ask, .none, "its inline \(name) code writes an agent's hook configuration, which can switch Airbag's protection off.", whole)
+        }
         guard deleting.contains(where: { lowered.contains($0) }) else { return }
         // The home folder computed at run time: `shutil.rmtree(os.environ['HOME'])`, `fs.rmSync(os.homedir(), …)`,
         // `FileUtils.rm_rf(Dir.home)`.
@@ -1852,6 +1933,10 @@ struct Analyzer {
         let computed = ["environ", "getenv", "process.env", "homedir", "dir.home", "path.home", "env[", "env.get", "env.fetch", "env::var",
                         "home_dir", "userhomedir", "$env", "bun.env", "expanduser", "gethome", "pwd.getpw"].contains { lowered.contains($0) }
         let paths = extractPaths(code)
+        if let secret = paths.first(where: { secretFile(resolve(ShellWord($0))) }) {
+            add("interp.delete.catastrophic", .block, .none, "its inline \(name) code deletes \(secret), a secret no snapshot holds.", whole)
+            return
+        }
         let classes = paths.map { classify(resolve(ShellWord($0))) }
         if let bad = classes.first(where: { if case .catastrophic = $0 { return true }; return false }), case .catastrophic(let p) = bad {
             add("interp.delete.catastrophic", .block, .none, "its inline \(name) code deletes \(describe(p)).", whole)
@@ -2010,6 +2095,72 @@ struct Analyzer {
 
     /// Deleting the home folder computed in Python, Node, Ruby, Deno, Rust or Go code.
     static let homeDeletePattern = #"(rmtree|rm_rf|rm_r|rmSync|rmdirSync|rimraf|remove_dir_all|RemoveAll|rm)\(\s*(os\.environ\[['"]HOME['"]\]|os\.environ\.get\(['"]HOME['"]\)|os\.getenv\(['"]HOME['"]\)|os\.path\.expanduser\(['"]~['"]\)|(require\(['"]os['"]\)|os)\.homedir\(\)|process\.env\.HOME|process\.env\[['"]HOME['"]\]|Dir\.home|ENV\[['"]HOME['"]\]|(pathlib\.)?Path\.home\(\)|Deno\.env\.get\(['"]HOME['"]\)|std::env::var\(['"]HOME['"]\)|home_dir\(\)|os\.UserHomeDir\(\))\s*[,)]"#
+
+    /// A file holding a secret no snapshot keeps: a private key or `authorized_keys` in ~/.ssh, AWS credentials, GnuPG
+    /// keys and keyrings, a Kubernetes config, a keychain. Deleting, overwriting or locking one blocks. The other files in
+    /// those folders (`~/.ssh/config`, `known_hosts`, `*.pub`) are judged like any file outside the project; a glob over
+    /// one of the folders themselves (`~/.ssh/*`) is already the folder's contents, which `classify` treats as critical.
+    func secretFile(_ resolved: Resolved?) -> Bool {
+        guard let r = resolved else { return false }
+        let h = context.home, p = r.path
+        let gpgKeys = h + "/.gnupg/private-keys-v1.d"
+        if p == gpgKeys || p.hasPrefix(gpgKeys + "/") { return true }
+        if r.contents { return false }
+        let name = (p as NSString).lastPathComponent
+        if p.hasPrefix(h + "/.ssh/") {
+            return Analyzer.isAuthorizedKeys(p) || (name.hasPrefix("id_") && !name.hasSuffix(".pub")) || name.hasSuffix(".pem") || name.hasSuffix(".key")
+        }
+        if p.hasPrefix(h + "/.aws/") { return name == "credentials" }
+        if p.hasPrefix(h + "/.gnupg/") { return ["secring.gpg", "pubring.kbx", "pubring.gpg", "trustdb.gpg"].contains(name) }
+        if p.hasPrefix(h + "/.kube/") { return name == "config" }
+        return p.hasPrefix(h + "/Library/Keychains/")
+    }
+
+    /// Whoever holds a key listed in `authorized_keys` can log in as you.
+    static func isAuthorizedKeys(_ path: String?) -> Bool {
+        guard let p = path else { return false }
+        return ["authorized_keys", "authorized_keys2"].contains((p as NSString).lastPathComponent)
+    }
+
+    /// Airbag's app and its command: deleting, moving or locking them switches the hooks off.
+    static func airbagInstalls(home: String) -> [String] {
+        var out = ["/Applications/Airbag.app", home + "/Applications/Airbag.app", "/opt/homebrew/bin/airbag", "/usr/local/bin/airbag",
+                   "/opt/homebrew/Caskroom/airbag", "/usr/local/Caskroom/airbag"]
+        let me = ProcInfo.currentExecutablePath()
+        if let r = me.range(of: ".app/", options: .backwards) { out.append(String(me[..<r.lowerBound]) + ".app") }
+        return out
+    }
+
+    /// `~-`, `~-1`, `~+1`, `~1` (the previous folder and the directory stack) and `${HOME…}` with an operator Airbag
+    /// could not apply: a folder it cannot determine, which may be the home folder.
+    static func unknownFolderPath(_ text: String) -> Bool {
+        if text.range(of: #"^~[+-]?[0-9]*(/|$)"#, options: .regularExpression) != nil, text.hasPrefix("~-") || text.dropFirst().first?.isNumber == true
+            || (text.hasPrefix("~+") && text.dropFirst(2).first?.isNumber == true) { return true }
+        return text.hasPrefix("${HOME") || text.hasPrefix("$HOME:") || text.hasPrefix("${ZDOTDIR") || text.hasPrefix("${USER")
+    }
+
+    /// Whether this chmod or chflags takes the owner's access away (no read; no execute on a folder) or makes the target
+    /// immutable or append-only.
+    static func locksAccess(_ name: String, _ args: [ShellWord], isDirectory: Bool) -> Bool {
+        let operands = args.map(\.text).filter { !$0.hasPrefix("-") }
+        guard let mode = operands.first else { return false }
+        if name == "chflags" {
+            return mode.lowercased().split(separator: ",").contains { ["uchg", "uchange", "uimmutable", "schg", "schange", "simmutable",
+                                                                       "uappnd", "uappend", "sappnd", "sappend"].contains(String($0)) }
+        }
+        guard name == "chmod" else { return false }
+        if mode.allSatisfy(\.isNumber), (3...4).contains(mode.count), let owner = mode.dropFirst(mode.count - 3).first?.wholeNumberValue {
+            return owner & 4 == 0 || (isDirectory && owner & 1 == 0)
+        }
+        for clause in mode.split(separator: ",") {
+            guard let opIndex = clause.firstIndex(where: { "+-=".contains($0) }) else { continue }
+            let who = clause[..<opIndex], op = clause[opIndex], perms = clause[clause.index(after: opIndex)...]
+            guard who.isEmpty || who.contains("u") || who.contains("a") else { continue }
+            if op == "-" && (perms.contains("r") || (isDirectory && perms.contains("x"))) { return true }
+            if op == "=" && (!perms.contains("r") || (isDirectory && !perms.contains("x") && !perms.contains("X"))) { return true }
+        }
+        return false
+    }
 
     /// `*`, `.*`, `./*`, `.`, `./`: everything in the current folder.
     static func everythingHere(_ text: String) -> Bool {

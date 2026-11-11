@@ -238,7 +238,7 @@
 "Needs Approval" = "Da approvare";
 "Needs repair" = "Da riparare";
 "Needs you" = "Richiede il tuo intervento";
-"Nests shells too deeply to analyze." = "Annida le shell troppo in profondità per analizzarle.";
+"Too deeply nested or too long for Airbag to check in time." = "Troppo annidato o troppo lungo perché Airbag lo controlli in tempo.";
 "No agent evidence for this process." = "Nessun indizio che questo processo sia legato a un agente.";
 "No agents connected. Only file saves are snapshotted." = "Nessun agente collegato. Gli snapshot vengono creati solo al salvataggio dei file.";
 "No agents found on this Mac yet. When you install one, Airbag will offer to connect it." = "Nessun agente trovato su questo Mac. Quando ne installerai uno, Airbag ti proporrà di collegarlo.";
@@ -420,6 +420,7 @@
 "Wiping your home folder is blocked; force pushes are flagged in Guard." = "La cancellazione della cartella Inizio viene bloccata; i force push vengono segnalati in Salvavita.";
 "Working directory is inside the project; agent unknown." = "La cartella di lavoro è all'interno del progetto; agente sconosciuto.";
 "Would destroy your home folder, a system folder or other files no snapshot covers." = "Distruggerebbe la tua cartella Inizio, una cartella di sistema o altri file non coperti da alcuno snapshot.";
+"Changes the permissions of your home folder, a system folder or a secret file, which can lock you out of it." = "Modifica i permessi della tua cartella Inizio, di una cartella di sistema o di un file segreto, e può impedirti di accedervi.";
 "Writes into your home folder or a similar place, where it can replace files no snapshot covers." = "Scrive nella tua cartella Inizio o in un posto simile, dove può sostituire file non coperti da alcuno snapshot.";
 "Writes straight to a device, which can destroy a disk." = "Scrive direttamente su un dispositivo, il che può distruggere un disco.";
 "You're protected" = "Protezione attiva";

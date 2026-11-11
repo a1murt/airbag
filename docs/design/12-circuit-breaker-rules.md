@@ -1,7 +1,7 @@
 # 12 — Circuit breaker (rules engine)
 
 Status: implemented in `Sources/AirbagCore/Rules/` (M3). Fixture: `Tests/AirbagCoreTests/Fixtures/rules.json`
-(432 cases; 695 with `rules-redteam.json` and `rules-readonly.json`, all green).
+(438 cases; 732 with `rules-redteam.json` and `rules-readonly.json`, all green).
 
 ## Principle
 
@@ -96,6 +96,7 @@ snapshot root of its own (doc 10 §5). The rules treat it as one:
 | `db.reset.script` | ask | none | the package script `(scriptName!)` looks like it wipes a database, which file snapshots cannot restore. |
 | `docker.destructive` | ask | none | it deletes container volumes or images, which can hold local databases that file snapshots do not cover. |
 | `docker.mount.delete` | ask | recommended | it mounts host folders into a container and deletes files there, bypassing host-side checks. |
+| `docker.mount.delete.project` | allow | required | it deletes files in a project folder mounted into a container (snapshot taken first). |
 | `fs.device.write` | block | none | it targets a device. |
 | `fs.extract.overwrite` | ask | recommended | it extracts an archive straight into (describe(p)), where it can replace files no snapshot covers. |
 | `fs.find.delete.broad` | ask | none | it deletes matching files anywhere under (describe(p)), outside what snapshots cover. |
@@ -106,6 +107,7 @@ snapshot root of its own (doc 10 §5). The rules treat it as one:
 | `fs.mv.project` | allow | required | it moves project files (restorable from the snapshot taken first). |
 | `fs.mv.worktree` | ask | required | it moves (s.text), which holds (n) agent worktrees (names): each gets a snapshot of its own first, but taking every agent's working tree at once is the user's call. |
 | `fs.overwrite.catastrophic` | block | none | it would (verb) (describe(p)). |
+| `fs.perm.catastrophic` | ask, block | none | it changes ownership or permissions of (describe(p)). Blocks when recursive, or when it takes the owner's access away (also from a secret file). |
 | `fs.perm.opaque` | ask | recommended | it recursively changes permissions of a path built from an unresolved variable. |
 | `fs.perm.outside` | ask | none | it recursively changes permissions outside the protected project. |
 | `fs.redirect.catastrophic` | block | none | it empties (describe(p)). |
@@ -114,12 +116,15 @@ snapshot root of its own (doc 10 §5). The rules treat it as one:
 | `fs.rm.outside` | ask | none | it would (verb) (t.text) outside the protected project, where no snapshot can restore it. |
 | `fs.rm.project` | allow | required | it deletes project files (restorable from the snapshot taken first). |
 | `fs.rm.project-root` | allow, ask | required | it deletes the whole project folder (restorable from the snapshot taken first). |
+| `fs.rm.unknown-folder` | ask (always waits) | none | it would (verb) everything in a folder Airbag cannot determine (`~-`, the directory stack, an unresolved `cd`). |
+| `fs.rm.unset-variable` | ask (always waits) | none | it would (verb) (t.text): if that variable or substitution is empty, the path starts at the root of the disk. |
 | `fs.rm.worktree` | ask | required | it would (verb) (t.text), which holds (n) agent worktrees (names): each gets a snapshot of its own first, but taking every agent's working tree at once is the user's call. |
 | `fs.rsync.delete.remote` | ask | none | it deletes files on a remote machine that are missing locally. |
 | `fs.trash.empty` | block | none | it empties the Trash permanently. |
 | `fs.truncate.opaque` | ask | recommended | it empties a file whose path depends on an unresolved variable. |
 | `fs.truncate.outside` | ask | recommended | it empties (t.text) outside the protected project. |
 | `fs.truncate.project` | allow | required | it empties a project file (a snapshot is taken first). |
+| `fs.write.into.catastrophic` | ask | none | it copies files into (describe(p)), where they can overwrite files no snapshot covers. |
 | `fs.write.outside` | ask | recommended | it overwrites (target.text) outside the protected project, where no snapshot can restore it. |
 | `fs.write.project` | allow | recommended | it edits project files (a snapshot is taken first). |
 | `gh.api.delete` | ask | none | it sends a DELETE request to the GitHub API. |
@@ -133,6 +138,7 @@ snapshot root of its own (doc 10 §5). The rules treat it as one:
 | `git.history.rewrite` | ask | recommended | it rewrites the entire repository history. |
 | `git.internals.delete` | ask | recommended | it moves git internals (.git), which snapshots do not cover. |
 | `git.internals.write` | ask | recommended | it overwrites a file inside .git, which snapshots do not cover. |
+| `git.outside-root` | ask | recommended | it runs a destructive git command in (where), outside the protected project, so no snapshot covers it. |
 | `git.push.delete` | ask | none | it deletes a branch or tag on the remote. |
 | `git.push.force` | ask | none | it rewrites history on the remote, which cannot be undone from this machine. |
 | `git.push.mirror` | ask | none | it can delete remote branches that do not exist locally. |
@@ -151,9 +157,13 @@ snapshot root of its own (doc 10 §5). The rules treat it as one:
 | `pkg.unpublish` | ask | none | it removes a published package from the registry, which no local snapshot can bring back. |
 | `remote.destructive` | ask | none | it runs a destructive command on a remote machine, outside anything Airbag can snapshot. |
 | `self.airbag` | ask, block | none | it removes Airbag's protection; only the user should do that. |
+| `self.allow` | block | none | only the user can approve a command Airbag stopped (menu bar → Guard → Allow once). |
 | `self.hooks` | ask | none | it edits an agent's hook configuration, which can switch Airbag's protection off. |
 | `shell.opaque` | ask | recommended | it evaluates text built from unresolved variables. |
-| `shell.too-deep` | ask | recommended | it nests shells too deeply to analyze. |
+| `shell.opaque-command` | ask (always waits) | none | it runs a program whose name is only known when the line runs, and hands it (a.text). |
+| `shell.too-deep` | ask (always waits) | recommended, none | it nests shells too deeply to analyze; it is too long or complex for Airbag to check in time (analysis past 1.5 s). |
+| `shell.unparsed` | ask | recommended | it has a quote, substitution or case pattern that is never closed, so Airbag cannot tell which commands it runs. |
+| `snapshot.unavailable` | ask (always waits) | required | the snapshot this command needs could not be taken (set by the hook, not the rule engine). |
 | `sys.crontab.remove` | block | none | it deletes every cron job of the user without confirmation. |
 | `sys.defaults.delete` | ask | recommended | it deletes application preferences. |
 | `sys.disk.erase` | block | none | it can erase or repartition a disk. |
@@ -161,6 +171,7 @@ snapshot root of its own (doc 10 §5). The rules treat it as one:
 | `sys.keychain.item.delete` | ask | none | it deletes saved passwords, keys or certificates from the keychain, which file snapshots cannot restore. |
 | `sys.kill.all` | block | none | it kills every process of the user, including the agent and all open apps. |
 | `sys.kill.broad` | ask | none | it kills every process matching a broad name, possibly including the agent itself, editors or other projects' servers. |
+| `sys.launchctl.run` | ask | recommended | it starts a program through launchd, outside the agent's view. |
 | `sys.launchctl.session` | ask | none | it ends the user's login session: every app and agent quits and unsaved work is lost. |
 | `sys.launchctl.system` | block | none | it stops or removes system services. |
 | `sys.osascript` | ask | recommended | it runs an AppleScript that can delete or run commands outside the project. |
@@ -168,6 +179,11 @@ snapshot root of its own (doc 10 §5). The rules treat it as one:
 | `sys.security` | block | none | it changes low-level system security or boot settings. |
 | `sys.sudo` | ask | recommended | it runs with root privileges, outside what Airbag can snapshot or undo. |
 | `sys.tmutil` | block | none | it deletes Time Machine backups or disables them. |
+
+Rules marked *always waits* stop the agent until the user approves, also where other `ask` findings only run after a
+snapshot and are recorded (bypass modes, Codex, Gemini CLI); so do all `self.*` asks (`GuardFinding.alwaysWaits`,
+ADR-042). Secret files (ADR-043): an SSH private key or `authorized_keys`, `~/.aws/credentials`, GnuPG private keys
+and keyrings, `~/.kube/config` and keychains are deleted, overwritten, emptied or locked only by the user.
 
 ## Messages
 

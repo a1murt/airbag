@@ -238,7 +238,7 @@
 "Needs Approval" = "Goedkeuring nodig";
 "Needs repair" = "Herstel nodig";
 "Needs you" = "Wacht op jou";
-"Nests shells too deeply to analyze." = "Nest shells te diep om te analyseren.";
+"Too deeply nested or too long for Airbag to check in time." = "Te diep genest of te lang voor Airbag om op tijd te controleren.";
 "No agent evidence for this process." = "Geen aanwijzingen dat een agent dit proces heeft gestart.";
 "No agents connected. Only file saves are snapshotted." = "Geen agents gekoppeld. Alleen bewaarde bestanden krijgen een snapshot.";
 "No agents found on this Mac yet. When you install one, Airbag will offer to connect it." = "Nog geen agents gevonden op deze Mac. Zodra je er een installeert, biedt Airbag aan om hem te koppelen.";
@@ -420,6 +420,7 @@
 "Wiping your home folder is blocked; force pushes are flagged in Guard." = "Het wissen van je thuismap wordt geblokkeerd; force-pushes worden gemarkeerd in Zekering.";
 "Working directory is inside the project; agent unknown." = "Werkmap ligt binnen het project; agent onbekend.";
 "Would destroy your home folder, a system folder or other files no snapshot covers." = "Zou je thuismap, een systeemmap of andere bestanden zonder snapshot vernietigen.";
+"Changes the permissions of your home folder, a system folder or a secret file, which can lock you out of it." = "Wijzigt de rechten van je thuismap, een systeemmap of een geheim bestand, waardoor je er niet meer bij kunt.";
 "Writes into your home folder or a similar place, where it can replace files no snapshot covers." = "Schrijft in je thuismap of een vergelijkbare plek, waar het bestanden zonder snapshot kan vervangen.";
 "Writes straight to a device, which can destroy a disk." = "Schrijft direct naar een apparaat, wat een schijf kan vernietigen.";
 "You're protected" = "Je bent beschermd";
